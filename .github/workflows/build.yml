@@ -22,12 +22,15 @@ jobs:
           mkdir -p "$THEOS/sdks"
           tar xJf /tmp/sdk.tar.xz -C "$THEOS/sdks/"
           mv "$THEOS/sdks/iPhoneOS16.5.sdk" "$THEOS/sdks/iPhoneOS14.5.sdk"
-          ls "$THEOS/sdks/"
       - name: Install ldid
         run: brew install ldid
-      - name: Build package
+      - name: Build FolderX
         run: make package
+      - name: Build IAPHunter
+        run: cd IAP && make package
       - uses: actions/upload-artifact@v4
         with:
-          name: folderx-deb
-          path: packages/*.deb
+          name: deb-packages
+          path: |
+            packages/*.deb
+            IAP/packages/*.deb
