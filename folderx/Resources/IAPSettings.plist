@@ -24,6 +24,16 @@
 			<key>label</key>
 			<string>启用 IAPHunter</string>
 		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSLinkCell</string>
+			<key>detail</key>
+			<string>MinisFixAppListController</string>
+			<key>isController</key>
+			<true/>
+			<key>label</key>
+			<string>应用程序</string>
+		</dict>
 	</array>
 	<key>title</key>
 	<string>IAPHunter</string>

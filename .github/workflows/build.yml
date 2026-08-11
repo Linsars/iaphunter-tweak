@@ -24,6 +24,14 @@ jobs:
           mv "$THEOS/sdks/iPhoneOS16.5.sdk" "$THEOS/sdks/iPhoneOS14.5.sdk"
       - name: Install ldid
         run: brew install ldid
+      - name: Install AltList
+        run: |
+          cp -R "$THEOS/sdks/iPhoneOS14.5.sdk" "$THEOS/sdks/iPhoneOS16.5.sdk"
+          git clone --depth 1 https://github.com/opa334/AltList.git /tmp/AltList
+          cd /tmp/AltList && THEOS_PACKAGE_SCHEME=rootless make
+          mkdir -p "$THEOS/vendor/lib" "$THEOS/vendor/include/AltList"
+          cp -R $(find .theos -name "AltList.framework" -type d | head -1) "$THEOS/vendor/lib/"
+          cp *.h "$THEOS/vendor/include/AltList/"
       - name: Build package
         run: make package
       - uses: actions/upload-artifact@v4

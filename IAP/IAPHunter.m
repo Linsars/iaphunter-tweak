@@ -656,11 +656,22 @@ static BOOL iaphIsEnabled(void) {
     return on;
 }
 
+// ================= per-app 注入开关（MinisFix 设置 → 应用程序） =================
+// 默认全开；IAPDisabledApps 数组里的 app 不注入
+static BOOL iaphIsAppAllowed(void) {
+    NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier];
+    if (bundleID == nil) return YES;
+    NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:@"/var/jb/var/mobile/Library/Preferences/com.linsars.minisfix.plist"];
+    NSArray *disabled = d[@"IAPDisabledApps"];
+    if ([disabled containsObject:bundleID]) return NO;
+    return YES;
+}
+
 // ================= 入口 =================
 __attribute__((constructor)) static void IAPHunterCtor(void) {
     @autoreleasepool {
         // v1.3.4: 设置开关——关则完全禁用（不 hook 不加手势，重启 app 生效）
-        if (!iaphIsEnabled()) return;
+        if (!iaphIsEnabled() || !iaphIsAppAllowed()) return;
 
         ensureStoreKit();
 

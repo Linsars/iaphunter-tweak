@@ -1,8 +1,11 @@
 #import <Foundation/Foundation.h>
 #import "FolderRootListController.h"
 #import <spawn.h>
+#import <AltList/AltList.h>
 
-static NSString *saveSettings = @"/var/jb/var/mobile/Library/Preferences/com.lizynz.folderx.plist";
+#define kMinisFixPrefsPath @"/var/jb/var/mobile/Library/Preferences/com.linsars.minisfix.plist"
+
+static NSString *saveSettings = @"/var/jb/var/mobile/Library/Preferences/com.linsars.minisfix.plist";
 
 static NSBundle *tweakBundle = nil;
 #define LOCALIZED(str) [tweakBundle localizedStringForKey:str value:@"" table:nil]
@@ -440,5 +443,54 @@ typedef NS_ENUM(NSInteger, XXDynamicSpecifierOperatorType) {
         _specifiers = [self loadSpecifiersFromPlistName:@"FolderXSettings" target:self];
     }
     return _specifiers;
+}
+@end
+
+// ================= per-app 注入配置（AltList） =================
+// IAPHunter 子页 → 应用程序：列出用户 app，开关默认开，关掉的 app 不注入
+@interface MinisFixAppListController : ATLApplicationListControllerBase
+@end
+
+@implementation MinisFixAppListController
+
+- (instancetype)init {
+    NSDictionary *sectionDict = @{@"sectionType": @"User"};
+    self = [super initWithSections:@[[ATLApplicationSection applicationSectionWithDictionary:sectionDict]]];
+    return self;
+}
+
+- (PSCellType)cellTypeForApplicationCells {
+    return PSCellTypeSwitch;
+}
+
+- (SEL)getterForSpecifierOfApplicationProxy:(LSApplicationProxy *)applicationProxy {
+    return @selector(minisFixIsIAPEnabledForApp:);
+}
+
+- (SEL)setterForSpecifierOfApplicationProxy:(LSApplicationProxy *)applicationProxy {
+    return @selector(minisFixSetIAPEnabled:forApp:);
+}
+
+- (id)minisFixIsIAPEnabledForApp:(PSSpecifier *)specifier {
+    NSString *bundleID = [specifier propertyForKey:@"applicationIdentifier"];
+    NSDictionary *prefs = [NSDictionary dictionaryWithContentsOfFile:kMinisFixPrefsPath];
+    NSArray *disabled = prefs[@"IAPDisabledApps"];
+    if ([disabled containsObject:bundleID]) return @NO;
+    return @YES;
+}
+
+- (void)minisFixSetIAPEnabled:(id)value forApp:(PSSpecifier *)specifier {
+    NSString *bundleID = [specifier propertyForKey:@"applicationIdentifier"];
+    NSMutableDictionary *prefs = [NSMutableDictionary dictionaryWithContentsOfFile:kMinisFixPrefsPath];
+    if (!prefs) prefs = [NSMutableDictionary new];
+    NSMutableArray *disabled = [prefs[@"IAPDisabledApps"] mutableCopy];
+    if (!disabled) disabled = [NSMutableArray new];
+    if ([value boolValue]) {
+        [disabled removeObject:bundleID];
+    } else {
+        [disabled addObject:bundleID];
+    }
+    prefs[@"IAPDisabledApps"] = disabled;
+    [prefs writeToFile:kMinisFixPrefsPath atomically:YES];
 }
 @end
