@@ -1,11 +1,9 @@
-Package: com.lizynz.folderx.rootless
-Name: FolderX
-Depends: mobilesubstrate, preferenceloader, firmware(>=15.0), com.ichitaso.iconorder
-Conflicts: com.twickd.sirius24.folderplus, xyz.burritoz.thomz.folded, com.yourepo.i0s-tweak3r-betas.foldercontroller14, ca.ndoizo.bolders, com.4nni3.coolfolder, com.lizynz.foldercolor, com.ginsu.4ders, com.iadam1n.statusfolder, com.nightwind.dockapplibrary, com.tomaszpoliszuk.dockcontroller
-Version: 1.0
-Architecture: iphoneos-arm
-Description: Allows you to configure folders
-SileoDepiction: https://lizynz.github.io/depictions/com.lizynz.folderx/FolderX.json
-Maintainer: Lizynz <lizynz@ya.ru>
-Author: Lizynz <lizynz@ya.ru>
+Package: com.linsars.iaphunter
+Name: IAPHunter
+Version: 2.0
+Architecture: iphoneos-arm64
+Depends: ellekit (>= 1.0), preferenceloader, firmware(>=15.0), com.ichitaso.iconorder
+Description: IAPHunter - FolderX 文件夹增强 + IAP 自动收集/购买面板
+Maintainer: Linsars
+Author: Linsars
 Section: Tweaks

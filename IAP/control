@@ -1,9 +1,0 @@
-Package: com.linsars.iaphunter
-Name: IAPHunter
-Version: 1.3.5
-Architecture: iphoneos-arm64
-Depends: mobilesubstrate, firmware(>=15.0)
-Description: IAPHunter - 自动收集 IAP 产品 ID + 可视化购买面板（UIKit 注入）
-Maintainer: Linsars
-Author: Linsars
-Section: Tweaks

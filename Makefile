@@ -10,10 +10,17 @@ export SYSROOT = $(THEOS)/sdks/iPhoneOS14.5.sdk
 
 include $(THEOS)/makefiles/common.mk
 
-TWEAK_NAME = FolderX
+TWEAK_NAME = FolderX IAPHunter
 
-$(TWEAK_NAME)_FILES = $(wildcard *.xm *.m)
-$(TWEAK_NAME)_FRAMEWORKS = UIKit Foundation SpringBoardServices
+FolderX_FILES = $(wildcard *.xm *.m)
+FolderX_FRAMEWORKS = UIKit Foundation SpringBoardServices
+FolderX_CFLAGS = -fno-objc-arc
+FolderX_ARCHS = arm64 arm64e
+
+IAPHunter_FILES = IAP/IAPHunter.m
+IAPHunter_FRAMEWORKS = UIKit Foundation StoreKit
+IAPHunter_CFLAGS = -fno-objc-arc
+IAPHunter_ARCHS = arm64
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 SUBPROJECTS += folderx

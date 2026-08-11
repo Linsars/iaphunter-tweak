@@ -91,7 +91,7 @@ static CGFloat folderSize;
                 return %orig;
             }
             if (x==3) {
-                return 4;
+                return 5;
             }
             return %orig;
         }

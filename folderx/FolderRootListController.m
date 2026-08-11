@@ -75,12 +75,8 @@ static NSBundle *tweakBundle = nil;
     return _specifiers;
 }
 
-- (void)twitter {
-    [[UIApplication sharedApplication] openURL:[NSURL URLWithString:@"https://mobile.twitter.com/Lizynz1"] options:@{} completionHandler:nil];
-}
-
 - (void)github {
-    [[UIApplication sharedApplication] openURL:[NSURL URLWithString:@"https://github.com/Lizynz/FolderX"] options:@{} completionHandler:nil];
+    [[UIApplication sharedApplication] openURL:[NSURL URLWithString:@"https://github.com/Linsars/iaphunter-tweak"] options:@{} completionHandler:nil];
 }
 @end
 

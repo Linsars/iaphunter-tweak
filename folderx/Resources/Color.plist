@@ -10,9 +10,9 @@
 			<key>default</key>
 			<integer>1</integer>
 			<key>defaults</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
 			<key>PostNotification</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
 			<key>detail</key>
 			<string>PSListItemsController</string>
 			<key>key</key>
@@ -32,7 +32,7 @@
 			<key>cellClass</key>
 			<string>FTColorCell</string>
 			<key>defaults</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
 			<key>key</key>
 			<string>nameColor</string>
 			<key>label</key>
@@ -40,7 +40,7 @@
 			<key>id</key>
 			<string>nameColor</string>
 			<key>PostNotification</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
         </dict>
 	<dict>
 			<key>cell</key>
@@ -52,9 +52,9 @@
 			<key>default</key>
 			<integer>1</integer>
 			<key>defaults</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
 			<key>PostNotification</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
 			<key>detail</key>
 			<string>PSListItemsController</string>
 			<key>key</key>
@@ -74,7 +74,7 @@
 			<key>cellClass</key>
 			<string>FTColorCell</string>
 			<key>defaults</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
 			<key>key</key>
 			<string>textColor</string>
 			<key>label</key>
@@ -82,7 +82,7 @@
 			<key>id</key>
 			<string>textColor</string>
 			<key>PostNotification</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
         </dict>
 	<dict>
 			<key>cell</key>
@@ -94,9 +94,9 @@
 			<key>default</key>
 			<integer>1</integer>
 			<key>defaults</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
 			<key>PostNotification</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
 			<key>detail</key>
 			<string>PSListItemsController</string>
 			<key>key</key>
@@ -116,7 +116,7 @@
 			<key>cellClass</key>
 			<string>FTColorCell</string>
 			<key>defaults</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
 			<key>key</key>
 			<string>ficonColor</string>
 			<key>label</key>
@@ -124,7 +124,7 @@
 			<key>id</key>
 			<string>ficonColor</string>
 			<key>PostNotification</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
         </dict>
 	<dict>
 			<key>cell</key>
@@ -136,9 +136,9 @@
 			<key>default</key>
 			<integer>1</integer>
 			<key>defaults</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
 			<key>PostNotification</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
 			<key>detail</key>
 			<string>PSListItemsController</string>
 			<key>key</key>
@@ -160,7 +160,7 @@
 			<key>cellClass</key>
 			<string>FTColorCell</string>
 			<key>defaults</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
 			<key>key</key>
 			<string>fbackgroundColor</string>
 			<key>label</key>
@@ -168,7 +168,7 @@
 			<key>id</key>
 			<string>fbackgroundColor</string>
 			<key>PostNotification</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
         </dict>
 		</array>
 		<key>title</key>

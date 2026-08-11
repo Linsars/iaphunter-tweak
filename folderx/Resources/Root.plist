@@ -8,6 +8,34 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
+			<string>IAPHunter</string>
+	</dict>
+	<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.linsars.iaphunter</string>
+			<key>key</key>
+			<string>IAPHunterEnabled</string>
+			<key>label</key>
+			<string>启用 IAPHunter</string>
+			<key>PostNotification</key>
+			<string>com.linsars.iaphunter/settingschanged</string>
+	</dict>
+	<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>FolderX</string>
+			<key>footerText</key>
+			<string>IAPHunter 开关修改后需重启对应 app 生效</string>
+	</dict>
+	<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
 			<string>Title</string>
 	</dict>
 	<dict>
@@ -16,7 +44,7 @@
 			<key>default</key>
 			<false/>
 			<key>defaults</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
 			<key>key</key>
 			<string>BoldTitle</string>
 			<key>label</key>
@@ -28,9 +56,9 @@
 			<key>default</key>
 			<integer>2</integer>
 			<key>defaults</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
 			<key>PostNotification</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
 			<key>detail</key>
 			<string>PSListItemsController</string>
 			<key>key</key>
@@ -54,7 +82,7 @@
 			<key>default</key>
 			<real>40</real>
 			<key>defaults</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
 			<key>key</key>
 			<string>TitleSize</string>
 			<key>id</key>
@@ -68,7 +96,7 @@
 			<key>height</key>
 			<string>40</string>
 			<key>PostNotification</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
 	</dict>
 	<dict>
 			<key>cell</key>
@@ -82,7 +110,7 @@
 			<key>default</key>
 			<false/>
 			<key>defaults</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
 			<key>key</key>
 			<string>fullfolder</string>
 			<key>label</key>
@@ -90,7 +118,7 @@
 	</dict>
 	<dict>
 			<key>PostNotification</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>min</key>
@@ -100,7 +128,7 @@
 			<key>default</key>
 			<string>525</string>
 			<key>defaults</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
 			<key>key</key>
 			<string>FolderSize</string>
 			<key>showValue</key>
@@ -116,7 +144,7 @@
 			<key>default</key>
 			<real>30</real>
 			<key>defaults</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
 			<key>key</key>
 			<string>FolderRadius</string>
 			<key>id</key>
@@ -130,7 +158,7 @@
 			<key>height</key>
 			<string>40</string>
 			<key>PostNotification</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
 	</dict>
         <dict>
 			<key>cell</key>
@@ -144,9 +172,9 @@
 			<key>default</key>
 			<integer>1</integer>
 			<key>defaults</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
 			<key>PostNotification</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
 			<key>detail</key>
 			<string>PSListItemsController</string>
 			<key>key</key>
@@ -188,7 +216,7 @@
 			<key>default</key>
 			<false/>
 			<key>defaults</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
 			<key>key</key>
 			<string>hideanimation</string>
 			<key>label</key>
@@ -200,7 +228,7 @@
 			<key>default</key>
 			<false/>
 			<key>defaults</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
 			<key>key</key>
 			<string>bfh</string>
 			<key>label</key>
@@ -212,7 +240,7 @@
 			<key>default</key>
 			<false/>
 			<key>defaults</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
 			<key>key</key>
 			<string>hidefoldertitlehs</string>
 			<key>label</key>
@@ -224,7 +252,7 @@
 			<key>default</key>
 			<false/>
 			<key>defaults</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
 			<key>key</key>
 			<string>hidefoldername</string>
 			<key>label</key>
@@ -236,7 +264,7 @@
 			<key>default</key>
 			<false/>
 			<key>defaults</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
 			<key>key</key>
 			<string>HideFolderLabel</string>
 			<key>label</key>
@@ -248,7 +276,7 @@
 			<key>default</key>
 			<false/>
 			<key>defaults</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
 			<key>key</key>
 			<string>hidedots</string>
 			<key>label</key>
@@ -270,7 +298,7 @@
 			<key>default</key>
 			<false/>
 			<key>defaults</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
 			<key>key</key>
 			<string>AutoClose</string>
 			<key>label</key>
@@ -282,7 +310,7 @@
 			<key>default</key>
 			<false/>
 			<key>defaults</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
 			<key>key</key>
 			<string>TapClose</string>
 			<key>label</key>
@@ -304,7 +332,7 @@
 			<key>default</key>
 			<false/>
 			<key>defaults</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
 			<key>key</key>
 			<string>DragFolder</string>
 			<key>label</key>
@@ -316,7 +344,7 @@
 			<key>default</key>
 			<false/>
 			<key>defaults</key>
-			<string>com.lizynz.folderx</string>
+			<string>com.linsars.iaphunter</string>
 			<key>key</key>
 			<string>DragWidget</string>
 			<key>label</key>
