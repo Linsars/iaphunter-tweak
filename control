@@ -1,9 +1,9 @@
 Package: com.linsars.minisfix
-Name: IAPHunter
+Name: MinisFix
 Version: 2.0
 Architecture: iphoneos-arm64
 Depends: ellekit (>= 1.0), preferenceloader, firmware(>=15.0), com.ichitaso.iconorder
-Description: IAPHunter - FolderX 文件夹增强 + IAP 自动收集/购买面板
+Description: MinisFix - 文件夹增强（FolderX）+ IAP 收集/购买（IAPHunter）一体工具
 Maintainer: Linsars
 Author: Linsars
 Section: Tweaks
