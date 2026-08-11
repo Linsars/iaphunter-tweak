@@ -231,6 +231,14 @@ static UIViewController *topVC(void) {
 }
 
 static void showMainMenu(UIViewController *vc);
+static void iaphShowPanel(UIViewController *vc);
+static void hookShakeBlock(void);
+static void hookFakeGPS(void);
+static CGFloat mfSectionHeader(UIView *card, CGFloat y, NSString *title);
+static CGFloat mfActionRow(UIView *card, CGFloat y, NSString *title, NSString *icon, SEL action);
+static CGFloat mfSwitchRow(UIView *card, CGFloat y, NSString *title, NSString *pfx, BOOL def, SEL action, BOOL useSwitch);
+static CGFloat mfLabelRow(UIView *card, CGFloat y, NSString *text);
+static NSString *mfPermText(id mediaType);
 
 #pragma mark - IAP 列表页（Product ID 列表风格）
 @interface IAPHunterVC : UIViewController <UITableViewDataSource, UITableViewDelegate>
@@ -521,9 +529,9 @@ static void iaphShowIconSwitcher(UIViewController *vc) {
 
 static void showMainMenu(UIViewController *vc) {
     if (vc == nil) return;
-    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"[IAPHunter]"
-                                                                  message:@"IAP 可视化器"
-                                                           preferredStyle:UIAlertControllerStyleActionSheet];
+    iaphShowPanel(vc);  // v3.0: 新毛玻璃悬浮面板（替代 actionSheet）
+    return;
+#if 0  // 旧 actionSheet 保留（备用）
     [sheet addAction:[UIAlertAction actionWithTitle:@"扫描并列出 IAP 产品" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
         NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
         NSArray *saved = [d objectForKey:@"SavedIAPIDs"];
@@ -575,16 +583,9 @@ static void showMainMenu(UIViewController *vc) {
     [vc presentViewController:sheet animated:YES completion:nil];
 }
 
-// 长按手势 action（顶部区域限制——防误触）
+// 长按手势 action（v3.0: 双指长按呼出——全屏区域，双指误触率极低）
 static void longPressAction(id self, SEL _cmd, UILongPressGestureRecognizer *g) {
     if (g.state != UIGestureRecognizerStateBegan) return;
-    // 只响应视图上部 30% 区域的长按（顶部区域调出面板）
-    UIView *v = [g view];
-    if (v != nil) {
-        CGPoint loc = [g locationInView:v];
-        CGFloat topLimit = CGRectGetHeight(v.bounds) * 0.3;
-        if (loc.y > topLimit) return;
-    }
     showMainMenu((UIViewController *)self);
 }
 
@@ -597,6 +598,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     if (objc_getAssociatedObject(self, &kLPKey) == nil) {
         UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(handleLongPress:)];
         lp.minimumPressDuration = 0.5;
+        lp.numberOfTouchesRequired = 2;  // v3.0: 双指长按呼出（无误触）
         UIViewController *vc = (UIViewController *)self;
         [vc.view addGestureRecognizer:lp];
         [lp release];
@@ -679,6 +681,9 @@ __attribute__((constructor)) static void IAPHunterCtor(void) {
     @autoreleasepool {
         // v1.3.4: 设置开关——关则完全禁用（不 hook 不加手势，重启 app 生效）
         if (!iaphIsEnabled() || !iaphIsAppAllowed()) return;
+        // v3.0: 屏蔽摇一摇 + FakeGPS hook
+        hookShakeBlock();
+        hookFakeGPS();
 
         ensureStoreKit();
 
@@ -752,4 +757,252 @@ static void startBuyPoller(void) {
             [NSThread sleepForTimeInterval:3.0];
         }
     });
+}
+
+// ============================================================================
+// v3.0 新面板（毛玻璃悬浮卡片——仿 FakeTools CustomMenuView 风格）
+// 呼出：双指长按任意位置 → iaphShowPanel
+// 分组：IAP | 屏蔽（摇一摇）| 相机（权限查看）| 伪装（FakeGPS/设备）
+// ============================================================================
+#pragma mark - v3.0 设置读写
+static NSMutableDictionary *mfPrefsDict(void) {
+    NSMutableDictionary *d = [NSMutableDictionary dictionaryWithContentsOfFile:@"/var/jb/var/mobile/Library/Preferences/com.linsars.minisfix.plist"];
+    if (!d) d = [NSMutableDictionary new];
+    return d;
+}
+static BOOL mfPrefBool(NSString *key, BOOL def) {
+    id v = mfPrefsDict()[key];
+    return v ? [v boolValue] : def;
+}
+static void mfSetBoolPref(NSString *key, BOOL val) {
+    NSMutableDictionary *d = mfPrefsDict();
+    d[key] = @(val);
+    [d writeToFile:@"/var/jb/var/mobile/Library/Preferences/com.linsars.minisfix.plist" atomically:YES];
+}
+
+static UIWindow *g_mfPanelWindow = nil;
+static id g_mfCtrl = nil;
+
+#pragma mark - 屏蔽摇一摇（motionEnded hook）
+static IMP orig_motionEnded;
+static void new_motionEnded(id self, SEL _cmd, int motion, id event) {
+    if (mfPrefBool(@"iaphShakeBlock", NO)) {
+        return;  // 屏蔽摇一摇（摇一摇广告/弹窗）
+    }
+    if (orig_motionEnded) ((void(*)(id, SEL, int, id))orig_motionEnded)(self, _cmd, motion, event);
+}
+static void hookShakeBlock(void) {
+    Class cls = objc_getClass("UIResponder");
+    if (!cls) return;
+    Method m = class_getInstanceMethod(cls, NSSelectorFromString(@"motionEnded:withEvent:"));
+    if (m) { orig_motionEnded = method_getImplementation(m); method_setImplementation(m, (IMP)new_motionEnded); }
+}
+
+#pragma mark - Fake GPS 伪装（CLLocationManager hook）
+static IMP orig_clLocation, orig_startUpdating;
+static id new_clLocation(id self, SEL _cmd) {
+    if (mfPrefBool(@"iaphFakeGPS", NO)) {
+        return [[CLLocation alloc] initWithLatitude:39.9042 longitude:116.4074];  // 北京
+    }
+    return orig_clLocation ? ((id(*)(id, SEL))orig_clLocation)(self, _cmd) : nil;
+}
+static void new_startUpdating(id self, SEL _cmd) {
+    if (mfPrefBool(@"iaphFakeGPS", NO)) {
+        id delegate = [self performSelector:NSSelectorFromString(@"delegate")];
+        SEL upd = NSSelectorFromString(@"locationManager:didUpdateLocations:");
+        if (delegate && [delegate respondsToSelector:upd]) {
+            CLLocation *fake = [[CLLocation alloc] initWithLatitude:39.9042 longitude:116.4074];
+            ((void(*)(id, SEL, id, id))objc_msgSend)(delegate, upd, self, @[fake]);
+            return;
+        }
+    }
+    if (orig_startUpdating) ((void(*)(id, SEL))orig_startUpdating)(self, _cmd);
+}
+static void hookFakeGPS(void) {
+    Class cls = objc_getClass("CLLocationManager");
+    if (!cls) return;
+    Method m;
+    if ((m = class_getInstanceMethod(cls, @selector(location)))) { orig_clLocation = method_getImplementation(m); method_setImplementation(m, (IMP)new_clLocation); }
+    if ((m = class_getInstanceMethod(cls, @selector(startUpdatingLocation)))) { orig_startUpdating = method_getImplementation(m); method_setImplementation(m, (IMP)new_startUpdating); }
+}
+
+#pragma mark - 面板控制器（按钮/开关回调）
+@interface MFPanelCtrl : NSObject
+@end
+@implementation MFPanelCtrl
+- (void)mfSwitchChanged:(UISwitch *)sw {
+    NSString *key = objc_getAssociatedObject(sw, "pfx");
+    if (!key) return;
+    mfSetBoolPref(key, sw.on);
+}
+- (void)mfDismissPanel { 
+    if (g_mfPanelWindow) {
+        UIWindow *w = g_mfPanelWindow;
+        [UIView animateWithDuration:0.2 animations:^{ w.alpha = 0; } completion:^(BOOL f) {
+            w.hidden = YES; g_mfPanelWindow = nil;
+        }];
+    }
+}
+- (void)mfScanProducts { queryOnlineIAP(g_mfPanelWindow.rootViewController); [self mfDismissPanel]; }
+- (void)mfManualBuy { queryOnlineIAP(g_mfPanelWindow.rootViewController);  // 扫描+购买流程 [self mfDismissPanel]; }
+- (void)mfIconSwitch { iaphShowIconSwitcher(g_mfPanelWindow.rootViewController); [self mfDismissPanel]; }
+- (void)mfToggleEnabled { 
+    mfSetBoolPref(@"iaphIsEnabled", !mfPrefBool(@"iaphIsEnabled", NO));
+}
+@end
+
+#pragma mark - 面板构建
+static void iaphShowPanel(UIViewController *vc) {
+    if (g_mfPanelWindow) return;
+    if (!g_mfCtrl) g_mfCtrl = [[MFPanelCtrl alloc] init];
+
+    CGRect sb = [UIScreen mainScreen].bounds;
+    UIWindow *win = [[UIWindow alloc] initWithFrame:sb];
+    win.windowLevel = UIWindowLevelAlert + 100;
+    win.backgroundColor = [UIColor clearColor];
+    if (@available(iOS 13.0, *)) {
+        for (UIWindowScene *sc in [UIApplication sharedApplication].connectedScenes) {
+            if (sc.activationState == UISceneActivationStateForegroundActive) { win.windowScene = sc; break; }
+        }
+    }
+    win.rootViewController = [[UIViewController alloc] init];
+
+    // 遮罩（点击关闭）
+    UIButton *mask = [UIButton buttonWithType:UIButtonTypeCustom];
+    mask.frame = win.bounds;
+    mask.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.35];
+    [mask addTarget:g_mfCtrl action:NSSelectorFromString(@"mfDismissPanel") forControlEvents:UIControlEventTouchUpInside];
+    [win addSubview:mask];
+
+    CGFloat cardW = sb.size.width - 32;
+    CGFloat cardH = 470;
+    UIView *card = [[UIView alloc] initWithFrame:CGRectMake(16, (sb.size.height - cardH)/2, cardW, cardH)];
+    card.layer.cornerRadius = 22;
+    card.clipsToBounds = YES;
+    card.layer.borderWidth = 0.5;
+    card.layer.borderColor = [[UIColor systemGray3Color] colorWithAlphaComponent:0.5].CGColor;
+    UIBlurEffect *be = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
+    UIVisualEffectView *blur = [[UIVisualEffectView alloc] initWithEffect:be];
+    blur.frame = card.bounds;
+    [card addSubview:blur];
+
+    // 标题栏
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(20, 14, 200, 26)];
+    title.text = @"MinisFix";
+    title.font = [UIFont boldSystemFontOfSize:18];
+    title.textColor = [UIColor labelColor];
+    [card addSubview:title];
+    UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    closeBtn.frame = CGRectMake(cardW - 44, 12, 32, 32);
+    [closeBtn setTitle:@"✕" forState:UIControlStateNormal];
+    [closeBtn.titleLabel setFont:[UIFont systemFontOfSize:17]];
+    [closeBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfDismissPanel") forControlEvents:UIControlEventTouchUpInside];
+    [card addSubview:closeBtn];
+
+    CGFloat y = 52;
+    // ── IAP 组 ──
+    y = mfSectionHeader(card, y, @"IAP");
+    y = mfActionRow(card, y, @"扫描产品", @"magnifyingglass", @selector(mfScanProducts));
+    y = mfActionRow(card, y, @"手动购买", @"cart", @selector(mfManualBuy));
+    y = mfActionRow(card, y, @"图标解锁", @"app.badge", @selector(mfIconSwitch));
+    y = mfSwitchRow(card, y, @"启用 IAPHunter", @"iaphIsEnabled", YES, @selector(mfToggleEnabled), NO);
+    // ── 屏蔽 ──
+    y = mfSectionHeader(card, y, @"屏蔽");
+    y = mfSwitchRow(card, y, @"屏蔽摇一摇", @"iaphShakeBlock", NO, nil, YES);
+    // ── 相机 ──
+    y = mfSectionHeader(card, y, @"相机");
+    y = mfLabelRow(card, y, [NSString stringWithFormat:@"相机权限: %@  麦克风: %@", mfPermText(@"AVMediaTypeVideo"), mfPermText(@"AVMediaTypeAudio")]);
+    // ── 伪装 ──
+    y = mfSectionHeader(card, y, @"伪装");
+    y = mfSwitchRow(card, y, @"Fake GPS（北京）", @"iaphFakeGPS", NO, nil, YES);
+
+    [win addSubview:card];
+    win.alpha = 0;
+    win.hidden = NO;
+    [win makeKeyAndVisible];
+    [UIView animateWithDuration:0.25 animations:^{ win.alpha = 1; }];
+    g_mfPanelWindow = win;
+}
+
+// 分组标题
+static CGFloat mfSectionHeader(UIView *card, CGFloat y, NSString *title) {
+    UILabel *lb = [[UILabel alloc] initWithFrame:CGRectMake(20, y, 200, 22)];
+    lb.text = title;
+    lb.font = [UIFont boldSystemFontOfSize:13];
+    lb.textColor = [UIColor secondaryLabelColor];
+    [card addSubview:lb];
+    return y + 26;
+}
+// 动作行（图标 + 文字）
+static CGFloat mfActionRow(UIView *card, CGFloat y, NSString *title, NSString *icon, SEL action) {
+    UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
+    b.frame = CGRectMake(12, y, 300, 40);
+    [b setTitle:title forState:UIControlStateNormal];
+    [b setTitleColor:[UIColor labelColor] forState:UIControlStateNormal];
+    b.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
+    b.titleLabel.font = [UIFont systemFontOfSize:15];
+    b.titleEdgeInsets = UIEdgeInsetsMake(0, 30, 0, 0);
+    b.backgroundColor = [UIColor secondarySystemBackgroundColor];
+    b.layer.cornerRadius = 10;
+    if (@available(iOS 13.0, *)) {
+        UIImage *img = [UIImage systemImageNamed:icon];
+        [b setImage:img forState:UIControlStateNormal];
+        b.imageEdgeInsets = UIEdgeInsetsMake(0, 12, 0, 0);
+    }
+    if (action) [b addTarget:g_mfCtrl action:action forControlEvents:UIControlEventTouchUpInside];
+    [card addSubview:b];
+    return y + 46;
+}
+// 开关行
+static CGFloat mfSwitchRow(UIView *card, CGFloat y, NSString *title, NSString *pfx, BOOL def, SEL action, BOOL useSwitch) {
+    UIView *row = [[UIView alloc] initWithFrame:CGRectMake(12, y, 300, 40)];
+    row.backgroundColor = [UIColor secondarySystemBackgroundColor];
+    row.layer.cornerRadius = 10;
+    UILabel *lb = [[UILabel alloc] initWithFrame:CGRectMake(14, 0, 210, 40)];
+    lb.text = title;
+    lb.font = [UIFont systemFontOfSize:15];
+    lb.textColor = [UIColor labelColor];
+    [row addSubview:lb];
+    if (useSwitch) {
+        UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectMake(240, 4, 51, 31)];
+        sw.on = mfPrefBool(pfx, def);
+        objc_setAssociatedObject(sw, "pfx", pfx, OBJC_ASSOCIATION_RETAIN);
+        [sw addTarget:g_mfCtrl action:NSSelectorFromString(@"mfSwitchChanged:") forControlEvents:UIControlEventValueChanged];
+        [row addSubview:sw];
+    } else if (action) {
+        UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
+        b.frame = CGRectMake(240, 4, 60, 32);
+        [b setTitle:@"切换" forState:UIControlStateNormal];
+        [b addTarget:g_mfCtrl action:action forControlEvents:UIControlEventTouchUpInside];
+        [row addSubview:b];
+    }
+    [card addSubview:row];
+    return y + 46;
+}
+// 信息行
+static CGFloat mfLabelRow(UIView *card, CGFloat y, NSString *text) {
+    UIView *row = [[UIView alloc] initWithFrame:CGRectMake(12, y, 300, 40)];
+    row.backgroundColor = [UIColor secondarySystemBackgroundColor];
+    row.layer.cornerRadius = 10;
+    UILabel *lb = [[UILabel alloc] initWithFrame:CGRectMake(14, 0, 272, 40)];
+    lb.text = text;
+    lb.font = [UIFont systemFontOfSize:13];
+    lb.textColor = [UIColor secondaryLabelColor];
+    lb.numberOfLines = 0;
+    [row addSubview:lb];
+    [card addSubview:row];
+    return y + 46;
+}
+// 权限文本
+static NSString *mfPermText(id mediaType) {
+    Class ac = objc_getClass("AVCaptureDevice");
+    if (!ac) return @"n/a";
+    int s = (int)[ac performSelector:NSSelectorFromString(@"authorizationStatusForMediaType:") withObject:mediaType];
+    switch (s) {
+        case 0: return @"未决定";
+        case 1: return @"受限";
+        case 2: return @"拒绝";
+        case 3: return @"已授权";
+        default: return @"?";
+    }
 }

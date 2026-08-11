@@ -18,7 +18,7 @@ FolderX_CFLAGS = -fno-objc-arc
 FolderX_ARCHS = arm64 arm64e
 
 IAPHunter_FILES = IAP/IAPHunter.m
-IAPHunter_FRAMEWORKS = UIKit Foundation StoreKit
+IAPHunter_FRAMEWORKS = UIKit Foundation StoreKit CoreLocation AVFoundation
 IAPHunter_CFLAGS = -fno-objc-arc
 IAPHunter_ARCHS = arm64
 
