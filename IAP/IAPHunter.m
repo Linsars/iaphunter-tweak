@@ -525,6 +525,7 @@ static void iaphShowIconSwitcher(UIViewController *vc) {
         sheet.popoverPresentationController.permittedArrowDirections = 0;
     }
     [vc presentViewController:sheet animated:YES completion:nil];
+#endif  // 旧 actionSheet 备用块结束
 }
 
 static void showMainMenu(UIViewController *vc) {
