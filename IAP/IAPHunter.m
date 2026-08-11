@@ -6,6 +6,8 @@
 #import <Foundation/Foundation.h>
 #import <StoreKit/StoreKit.h>
 #import <UIKit/UIKit.h>
+#import <CoreLocation/CoreLocation.h>
+#import <objc/message.h>
 #import <objc/runtime.h>
 #import <dlfcn.h>
 
@@ -794,7 +796,7 @@ static void hookFakeGPS(void) {
     }
 }
 - (void)mfScanProducts { queryOnlineIAP(g_mfPanelWindow.rootViewController); [self mfDismissPanel]; }
-- (void)mfManualBuy { queryOnlineIAP(g_mfPanelWindow.rootViewController);  // 扫描+购买流程 [self mfDismissPanel]; }
+- (void)mfManualBuy { queryOnlineIAP(g_mfPanelWindow.rootViewController); [self mfDismissPanel]; }
 - (void)mfIconSwitch { iaphShowIconSwitcher(g_mfPanelWindow.rootViewController); [self mfDismissPanel]; }
 - (void)mfToggleEnabled { 
     mfSetBoolPref(@"iaphIsEnabled", !mfPrefBool(@"iaphIsEnabled", NO));
