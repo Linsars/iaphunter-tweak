@@ -29,8 +29,6 @@
 			<string>PSGroupCell</string>
 			<key>label</key>
 			<string>FolderX</string>
-			<key>footerText</key>
-			<string>IAPHunter 开关修改后需重启对应 app 生效</string>
 	</dict>
 	<dict>
 			<key>cell</key>
@@ -207,8 +205,6 @@
 			<string>Hide</string>
 			<key>footerAlignment</key>
                         <integer>1</integer>
-			<key>footerText</key>
-			<string>Rename Folder (Swipe Two Finger Up) when Hide Title in Folder is enabled.</string>
 	</dict>
 	<dict>
 			<key>cell</key>
@@ -366,15 +362,11 @@
 			<key>label</key>
 			<string>GitHub</string>
 	</dict>
-        <dict>
-                        <key>cell</key>
-			<string>PSLinkCell</string>
-			<key>action</key>
-			<string>twitter</string>
-			<key>icon</key>
-			<string>twitter.png</string>
-			<key>label</key>
-			<string>Developer Twitter</string>
+	<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>github.com/Linsars/iaphunter-tweak（基于 Lizynz 的 FolderX 2.0 开发）</string>
 	</dict>
 	</array>
 	<key>title</key>

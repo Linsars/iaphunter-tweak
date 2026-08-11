@@ -1,6 +1,6 @@
 "Author"="插件作者";
 "Auto Close Folder"="打开此应用程序后自动关闭";
-"Big Folder - iPhone"="加大资料夹(4x5)";
+"Big Folder - iPhone"="加大资料夹(5x5)";
 "Bold Title"="粗体文本";
 "Center"="中";
 "Color Settings"="修改颜色";
@@ -17,7 +17,6 @@
 "Hide Label"="隐藏文件夹内应用程序名称";
 "Hide Page Dots" = "隐藏页面小点";
 "Left"="左";
-"Rename Folder (Swipe Two Finger Up) when Hide Title in Folder is enabled." = "Rename Folder (Swipe Two Finger Up) when Hide Title in Folder is enabled.";
 "Other"="其他设置";
 "Radius:"="文件夹边角钝度：";
 "Right"="右";
