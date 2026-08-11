@@ -33,6 +33,7 @@ jobs:
           mkdir -p "$THEOS/vendor/lib" "$THEOS/vendor/include/AltList"
           cp -R $(find .theos -name "AltList.framework" -type d | head -1) "$THEOS/vendor/lib/"
           cp *.h "$THEOS/vendor/include/AltList/"
+          ls "$THEOS/vendor/lib/" | grep AltList
       - name: Build package
         run: make package
       - uses: actions/upload-artifact@v4
