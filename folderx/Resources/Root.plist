@@ -12,9 +12,9 @@
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>PSLinkListCell</string>
+			<string>PSLinkCell</string>
 			<key>detail</key>
-			<string>IAPSettings</string>
+			<string>MinisFixIAPController</string>
 			<key>icon</key>
 			<string>icon.png</string>
 			<key>isController</key>
@@ -24,9 +24,9 @@
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>PSLinkListCell</string>
+			<string>PSLinkCell</string>
 			<key>detail</key>
-			<string>FolderXSettings</string>
+			<string>MinisFixFolderXController</string>
 			<key>icon</key>
 			<string>icon.png</string>
 			<key>isController</key>
@@ -47,12 +47,6 @@
 			<string>PSLinkCell</string>
 			<key>label</key>
 			<string>github[folderx]</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>footerText</key>
-			<string>github.com/Lizynz/FolderX（FolderX 原作者仓库）</string>
 		</dict>
 	</array>
 	<key>title</key>

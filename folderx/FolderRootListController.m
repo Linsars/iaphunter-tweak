@@ -417,3 +417,28 @@ typedef NS_ENUM(NSInteger, XXDynamicSpecifierOperatorType) {
     return [operatorValues[string] intValue];
 }
 @end
+
+
+@interface MinisFixIAPController : PSListController
+@end
+
+@implementation MinisFixIAPController
+- (NSArray *)specifiers {
+    if (!_specifiers) {
+        _specifiers = [self loadSpecifiersFromPlistName:@"IAPSettings" target:self];
+    }
+    return _specifiers;
+}
+@end
+
+@interface MinisFixFolderXController : PSListController
+@end
+
+@implementation MinisFixFolderXController
+- (NSArray *)specifiers {
+    if (!_specifiers) {
+        _specifiers = [self loadSpecifiersFromPlistName:@"FolderXSettings" target:self];
+    }
+    return _specifiers;
+}
+@end
