@@ -808,13 +808,14 @@ static void iaphShowPanel(UIViewController *vc) {
     if (g_mfPanelWindow) return;
     if (!g_mfCtrl) g_mfCtrl = [[MFPanelCtrl alloc] init];
 
+    @try {
     CGRect sb = [UIScreen mainScreen].bounds;
     UIWindow *win = [[UIWindow alloc] initWithFrame:sb];
     win.windowLevel = UIWindowLevelAlert + 100;
     win.backgroundColor = [UIColor clearColor];
     if (@available(iOS 13.0, *)) {
-        for (UIWindowScene *sc in [UIApplication sharedApplication].connectedScenes) {
-            if (sc.activationState == UISceneActivationStateForegroundActive) { win.windowScene = sc; break; }
+        for (id sc in [UIApplication sharedApplication].connectedScenes) {
+            if ([[sc valueForKey:@"activationState"] intValue] == 0) { win.windowScene = sc; break; }
         }
     }
     win.rootViewController = [[UIViewController alloc] init];
@@ -833,10 +834,8 @@ static void iaphShowPanel(UIViewController *vc) {
     card.clipsToBounds = YES;
     card.layer.borderWidth = 0.5;
     card.layer.borderColor = [[UIColor systemGray3Color] colorWithAlphaComponent:0.5].CGColor;
-    UIBlurEffect *be = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
-    UIVisualEffectView *blur = [[UIVisualEffectView alloc] initWithEffect:be];
-    blur.frame = card.bounds;
-    [card addSubview:blur];
+    // v3.2: 纯色背景（去毛玻璃——注入窗口下毛玻璃可能触发问题）
+    card.backgroundColor = [UIColor systemBackgroundColor];
 
     // 标题栏
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(20, 14, 200, 26)];
@@ -874,6 +873,9 @@ static void iaphShowPanel(UIViewController *vc) {
     [win makeKeyAndVisible];
     [UIView animateWithDuration:0.25 animations:^{ win.alpha = 1; }];
     g_mfPanelWindow = win;
+    } @catch (NSException *e) {
+        NSLog(@"[MinisFix] panel exception: %@ %@", e.name, e.reason);
+    }
 }
 
 // 分组标题
@@ -896,11 +898,6 @@ static CGFloat mfActionRow(UIView *card, CGFloat y, NSString *title, NSString *i
     b.titleEdgeInsets = UIEdgeInsetsMake(0, 30, 0, 0);
     b.backgroundColor = [UIColor secondarySystemBackgroundColor];
     b.layer.cornerRadius = 10;
-    if (@available(iOS 13.0, *)) {
-        UIImage *img = [UIImage systemImageNamed:icon];
-        [b setImage:img forState:UIControlStateNormal];
-        b.imageEdgeInsets = UIEdgeInsetsMake(0, 12, 0, 0);
-    }
     if (action) [b addTarget:g_mfCtrl action:action forControlEvents:UIControlEventTouchUpInside];
     [card addSubview:b];
     return y + 46;
@@ -949,7 +946,9 @@ static CGFloat mfLabelRow(UIView *card, CGFloat y, NSString *text) {
 static NSString *mfPermText(id mediaType) {
     Class ac = objc_getClass("AVCaptureDevice");
     if (!ac) return @"n/a";
-    int s = (int)[ac performSelector:NSSelectorFromString(@"authorizationStatusForMediaType:") withObject:mediaType];
+    SEL ssel = NSSelectorFromString(@"authorizationStatusForMediaType:");
+    if (![ac respondsToSelector:ssel]) return @"n/a";
+    int s = (int)[ac performSelector:ssel withObject:mediaType];
     switch (s) {
         case 0: return @"未决定";
         case 1: return @"受限";
