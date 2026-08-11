@@ -6,10 +6,8 @@ BUNDLE_NAME = FolderX
 
 FolderX_FILES = $(wildcard *.m)
 FolderX_FRAMEWORKS = UIKit
-FolderX_PRIVATE_FRAMEWORKS = Preferences
-FolderX_EXTRA_FRAMEWORKS = AltList
+FolderX_PRIVATE_FRAMEWORKS = Preferences CoreServices
 FolderX_INSTALL_PATH = /Library/PreferenceBundles
 FolderX_CFLAGS = -fobjc-arc -Wdeprecated-declarations -Wno-deprecated-declarations
-FolderX_LDFLAGS += -F$(THEOS)/vendor/lib
 
 include $(THEOS_MAKE_PATH)/bundle.mk
