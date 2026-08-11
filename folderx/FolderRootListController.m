@@ -3,6 +3,24 @@
 #import <spawn.h>
 #import <AltList/AltList.h>
 
+// PSCellType 枚举（Preferences 私有头缺失时补定义）
+typedef NS_ENUM(NSInteger, PSCellType) {
+    PSCellTypeLink = 0,
+    PSCellTypeSwitch = 1,
+    PSCellTypeButton = 2,
+    PSCellTypeStaticText = 3,
+    PSCellTypeEditText = 4,
+    PSCellTypeSubSwitch = 5,
+    PSCellTypeSegment = 6,
+    PSCellTypeSlider = 7,
+    PSCellTypeGiantIcon = 8,
+    PSCellTypeGiantIconDetail = 9,
+    PSCellTypeTitle = 10,
+    PSCellTypeTextField = 11,
+    PSCellTypeCheck = 12,
+    PSCellTypeInfoCell = 13,
+};
+
 #define kMinisFixPrefsPath @"/var/jb/var/mobile/Library/Preferences/com.linsars.minisfix.plist"
 
 static NSString *saveSettings = @"/var/jb/var/mobile/Library/Preferences/com.linsars.minisfix.plist";
