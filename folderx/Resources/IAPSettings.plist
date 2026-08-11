@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>items</key>
+	<array>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>自动收集 IAP 产品 ID，长按界面呼出购买面板</string>
+			<key>label</key>
+			<string>IAPHunter</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.linsars.minisfix</string>
+			<key>key</key>
+			<string>IAPHunterEnabled</string>
+			<key>label</key>
+			<string>启用 IAPHunter</string>
+		</dict>
+	</array>
+	<key>title</key>
+	<string>IAPHunter</string>
+</dict>
+</plist>

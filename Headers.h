@@ -4,7 +4,7 @@
 #import <MobileCoreServices/MobileCoreServices.h>
 #import <spawn.h>
 
-#define kRWSettingsPath @"/var/jb/var/mobile/Library/Preferences/com.linsars.iaphunter.plist"
+#define kRWSettingsPath @"/var/jb/var/mobile/Library/Preferences/com.linsars.minisfix.plist"
 
 @interface NSUserDefaults (FolderX)
 - (id)objectForKey:(NSString *)key inDomain:(NSString *)domain;

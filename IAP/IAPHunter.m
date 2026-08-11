@@ -607,11 +607,11 @@ static NSArray *new_SKProductsResponse_invalid(id self, SEL _cmd) {
 }
 
 // ================= 设置开关 =================
-// v2.0: Settings → IAPHunter → 启用（preferenceloader 开关——写 /var/jb/var/mobile/Library/Preferences/com.linsars.iaphunter.plist）
+// v2.0: Settings → IAPHunter → 启用（preferenceloader 开关——写 /var/jb/var/mobile/Library/Preferences/com.linsars.minisfix.plist）
 // 直接读 rootless 文件（initWithSuiteName 在无 group entitlement 的注入进程里读 app 沙盒——读不到设置）
 // 默认开；关则 ctor 直接 return（完全禁用——hook/手势都不装）
 static BOOL iaphIsEnabled(void) {
-    NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:@"/var/jb/var/mobile/Library/Preferences/com.linsars.iaphunter.plist"];
+    NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:@"/var/jb/var/mobile/Library/Preferences/com.linsars.minisfix.plist"];
     id v = [d objectForKey:@"IAPHunterEnabled"];
     BOOL on = (v == nil) ? YES : [v boolValue];
     return on;
@@ -648,7 +648,7 @@ __attribute__((constructor)) static void IAPHunterCtor(void) {
 
 // ============ 购买指令接收（SB 版发起，app 内执行正规购买） ============
 static void checkBuyCommand(void) {
-    NSString *path = @"/var/mobile/Library/Preferences/com.linsars.iaphunter.cmd.plist";
+    NSString *path = @"/var/mobile/Library/Preferences/com.linsars.minisfix.cmd.plist";
     NSDictionary *cmd = [NSDictionary dictionaryWithContentsOfFile:path];
     if (cmd == nil) return;
     NSString *targetBundle = cmd[@"bundleId"];
@@ -687,7 +687,7 @@ static void iaphBuyNotify(CFNotificationCenterRef c, void *observer, CFStringRef
 static void startBuyPoller(void) {
     // Darwin 通知即时响应（app 已运行时）
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
-        iaphBuyNotify, CFSTR("com.linsars.iaphunter.buy"), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+        iaphBuyNotify, CFSTR("com.linsars.minisfix.buy"), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
     // 轮询兜底（app 刚启动 / 通知丢失时）
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         while (1) {

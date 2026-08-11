@@ -4,372 +4,58 @@
 <dict>
 	<key>items</key>
 	<array>
-	<dict>
+		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>功能</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSLinkCell</string>
+			<key>detail</key>
+			<string>IAPSettings</string>
+			<key>icon</key>
+			<string>icon.png</string>
+			<key>isController</key>
+			<true/>
 			<key>label</key>
 			<string>IAPHunter</string>
-	</dict>
-	<dict>
+		</dict>
+		<dict>
 			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>default</key>
+			<string>PSLinkCell</string>
+			<key>detail</key>
+			<string>FolderXSettings</string>
+			<key>icon</key>
+			<string>icon.png</string>
+			<key>isController</key>
 			<true/>
-			<key>defaults</key>
-			<string>com.linsars.iaphunter</string>
-			<key>key</key>
-			<string>IAPHunterEnabled</string>
-			<key>label</key>
-			<string>启用 IAPHunter</string>
-			<key>PostNotification</key>
-			<string>com.linsars.iaphunter/settingschanged</string>
-	</dict>
-	<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
 			<key>label</key>
 			<string>FolderX</string>
-	</dict>
-	<dict>
+		</dict>
+		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
-			<string>Title</string>
-	</dict>
-	<dict>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>default</key>
-			<false/>
-			<key>defaults</key>
-			<string>com.linsars.iaphunter</string>
-			<key>key</key>
-			<string>BoldTitle</string>
-			<key>label</key>
-			<string>Bold Title</string>
-	</dict>
-	<dict>
-			<key>cell</key>
-			<string>PSSegmentCell</string>
-			<key>default</key>
-			<integer>2</integer>
-			<key>defaults</key>
-			<string>com.linsars.iaphunter</string>
-			<key>PostNotification</key>
-			<string>com.linsars.iaphunter</string>
-			<key>detail</key>
-			<string>PSListItemsController</string>
-			<key>key</key>
-			<string>title</string>
-			<key>validTitles</key>
-			<array>
-				<string>Left</string>
-				<string>Center</string>
-				<string>Right</string>
-			</array>
-			<key>validValues</key>
-			<array>
-				<integer>1</integer>
-				<integer>2</integer>
-				<integer>3</integer>
-			</array>
-	</dict>
-	<dict>
-			<key>cellClass</key>
-			<string>TitleStepperCell</string>
-			<key>default</key>
-			<real>40</real>
-			<key>defaults</key>
-			<string>com.linsars.iaphunter</string>
-			<key>key</key>
-			<string>TitleSize</string>
-			<key>id</key>
-			<string>TitleSize</string>
-			<key>label</key>
-			<string>Size:</string>
-			<key>max</key>
-			<real>60</real>
-			<key>min</key>
-			<real>40</real>
-			<key>height</key>
-			<string>40</string>
-			<key>PostNotification</key>
-			<string>com.linsars.iaphunter</string>
-	</dict>
-	<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-                        <key>label</key>
-			<string>Settings</string>
-	</dict>
-	<dict>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>default</key>
-			<false/>
-			<key>defaults</key>
-			<string>com.linsars.iaphunter</string>
-			<key>key</key>
-			<string>fullfolder</string>
-			<key>label</key>
-			<string>Big Folder - iPhone</string>
-	</dict>
-	<dict>
-			<key>PostNotification</key>
-			<string>com.linsars.iaphunter</string>
-			<key>cell</key>
-			<string>PSSliderCell</string>
-			<key>min</key>
-			<string>500</string>
-			<key>max</key>
-			<string>550</string>
-			<key>default</key>
-			<string>525</string>
-			<key>defaults</key>
-			<string>com.linsars.iaphunter</string>
-			<key>key</key>
-			<string>FolderSize</string>
-			<key>showValue</key>
-			<true/>
-			<key>isSegmented</key>
-			<true/>
-			<key>segmentCount</key>
-			<integer>2</integer>
-	</dict>
-	<dict>
-			<key>cellClass</key>
-			<string>RadiusStepperCell</string>
-			<key>default</key>
-			<real>30</real>
-			<key>defaults</key>
-			<string>com.linsars.iaphunter</string>
-			<key>key</key>
-			<string>FolderRadius</string>
-			<key>id</key>
-			<string>FolderRadius</string>
-			<key>label</key>
-			<string>Radius:</string>
-			<key>max</key>
-			<real>30</real>
-			<key>min</key>
-			<real>5</real>
-			<key>height</key>
-			<string>40</string>
-			<key>PostNotification</key>
-			<string>com.linsars.iaphunter</string>
-	</dict>
-        <dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>Style</string>
-	</dict>
-	<dict>
-			<key>cell</key>
-			<string>PSSegmentCell</string>
-			<key>default</key>
-			<integer>1</integer>
-			<key>defaults</key>
-			<string>com.linsars.iaphunter</string>
-			<key>PostNotification</key>
-			<string>com.linsars.iaphunter</string>
-			<key>detail</key>
-			<string>PSListItemsController</string>
-			<key>key</key>
-			<string>old</string>
-			<key>validTitles</key>
-			<array>
-				<string>Default</string>
-				<string>iOS 9 - Blur</string>
-			</array>
-			<key>validValues</key>
-			<array>
-				<integer>1</integer>
-				<integer>2</integer>
-			</array>
-	</dict>
-	<dict>
-			<key>cell</key>
-			<string>PSLinkCell</string>
-			<key>label</key>
-			<string>Color Settings</string>
-			<key>detail</key>
-			<string>ColorListController</string>
-			<key>isController</key>
-			<true/>
-	</dict>
-        <dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-                        <key>label</key>
-			<string>Hide</string>
-			<key>footerAlignment</key>
-                        <integer>1</integer>
-	</dict>
-	<dict>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>default</key>
-			<false/>
-			<key>defaults</key>
-			<string>com.linsars.iaphunter</string>
-			<key>key</key>
-			<string>hideanimation</string>
-			<key>label</key>
-			<string>Hide Animation</string>
-	</dict>
-	<dict>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>default</key>
-			<false/>
-			<key>defaults</key>
-			<string>com.linsars.iaphunter</string>
-			<key>key</key>
-			<string>bfh</string>
-			<key>label</key>
-			<string>Hide Background</string>
-	</dict>
-        <dict>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>default</key>
-			<false/>
-			<key>defaults</key>
-			<string>com.linsars.iaphunter</string>
-			<key>key</key>
-			<string>hidefoldertitlehs</string>
-			<key>label</key>
-			<string>Hide Title on HS</string>
-	</dict>
-        <dict>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>default</key>
-			<false/>
-			<key>defaults</key>
-			<string>com.linsars.iaphunter</string>
-			<key>key</key>
-			<string>hidefoldername</string>
-			<key>label</key>
-			<string>Hide Title in Folder</string>
-	</dict>
-	<dict>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>default</key>
-			<false/>
-			<key>defaults</key>
-			<string>com.linsars.iaphunter</string>
-			<key>key</key>
-			<string>HideFolderLabel</string>
-			<key>label</key>
-			<string>Hide Label</string>
-	</dict>
-	<dict>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>default</key>
-			<false/>
-			<key>defaults</key>
-			<string>com.linsars.iaphunter</string>
-			<key>key</key>
-			<string>hidedots</string>
-			<key>label</key>
-			<string>Hide Page Dots</string>
-	</dict>
-        <dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>Other</string>
-			<key>footerAlignment</key>
-                        <integer>1</integer>
-			<key>footerText</key>
-			<string></string>
-	</dict>
-	<dict>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>default</key>
-			<false/>
-			<key>defaults</key>
-			<string>com.linsars.iaphunter</string>
-			<key>key</key>
-			<string>AutoClose</string>
-			<key>label</key>
-			<string>Auto Close Folder</string>
-	</dict>
-	<dict>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>default</key>
-			<false/>
-			<key>defaults</key>
-			<string>com.linsars.iaphunter</string>
-			<key>key</key>
-			<string>TapClose</string>
-			<key>label</key>
-			<string>Tap to Close Folder</string>
-	</dict>
-	<dict>
-			<key>cell</key>
-			<string>PSLinkCell</string>
-			<key>label</key>
-			<string>Launcher</string>
-			<key>detail</key>
-			<string>LauncherListController</string>
-			<key>isController</key>
-			<true/>
-	</dict>
-	<dict>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>default</key>
-			<false/>
-			<key>defaults</key>
-			<string>com.linsars.iaphunter</string>
-			<key>key</key>
-			<string>DragFolder</string>
-			<key>label</key>
-			<string>Drag Multi Folders</string>
-	</dict>
-	<dict>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>default</key>
-			<false/>
-			<key>defaults</key>
-			<string>com.linsars.iaphunter</string>
-			<key>key</key>
-			<string>DragWidget</string>
-			<key>label</key>
-			<string>Drag Multi Widgets</string>
-	</dict>
-	<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>Author</string>
-	</dict>
-	<dict>
-			<key>cell</key>
-			<string>PSLinkCell</string>
+			<string>关于</string>
+		</dict>
+		<dict>
 			<key>action</key>
 			<string>github</string>
-			<key>icon</key>
-			<string>github.png</string>
+			<key>cell</key>
+			<string>PSLinkCell</string>
 			<key>label</key>
 			<string>GitHub</string>
-	</dict>
-	<dict>
+		</dict>
+		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
 			<string>github.com/Linsars/iaphunter-tweak（基于 Lizynz 的 FolderX 2.0 开发）</string>
-	</dict>
+		</dict>
 	</array>
 	<key>title</key>
-	<string>Folder X</string>
+	<string>MinisFix</string>
 </dict>
 </plist>

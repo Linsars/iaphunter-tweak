@@ -10,7 +10,7 @@
 			<key>default</key>
 			<false/>
 			<key>defaults</key>
-			<string>com.linsars.iaphunter</string>
+			<string>com.linsars.minisfix</string>
 			<key>key</key>
 			<string>launcher</string>
 			<key>label</key>
@@ -26,13 +26,13 @@
 			<key>default</key>
 			<false/>
 			<key>defaults</key>
-			<string>com.linsars.iaphunter</string>
+			<string>com.linsars.minisfix</string>
 			<key>key</key>
 			<string>FolderName</string>
 			<key>label</key>
 			<string>Folder Name</string>
 			<key>PostNotification</key>
-			<string>com.linsars.iaphunter</string>
+			<string>com.linsars.minisfix</string>
 			<key>id</key>
 			<string>SWITCH_ID</string>
         </dict>
@@ -42,7 +42,7 @@
 			<key>default</key>
 			<false/>
 			<key>defaults</key>
-			<string>com.linsars.iaphunter</string>
+			<string>com.linsars.minisfix</string>
 			<key>key</key>
 			<string>countApp</string>
 			<key>label</key>
@@ -56,7 +56,7 @@
 			<key>default</key>
 			<false/>
 			<key>defaults</key>
-			<string>com.linsars.iaphunter</string>
+			<string>com.linsars.minisfix</string>
 			<key>key</key>
 			<string>alphabet</string>
 			<key>label</key>
@@ -68,7 +68,7 @@
 			<key>default</key>
 			<false/>
 			<key>defaults</key>
-			<string>com.linsars.iaphunter</string>
+			<string>com.linsars.minisfix</string>
 			<key>key</key>
 			<string>HideLauncherLabel</string>
 			<key>label</key>
