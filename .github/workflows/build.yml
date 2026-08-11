@@ -24,13 +24,9 @@ jobs:
           mv "$THEOS/sdks/iPhoneOS16.5.sdk" "$THEOS/sdks/iPhoneOS14.5.sdk"
       - name: Install ldid
         run: brew install ldid
-      - name: Build FolderX
+      - name: Build package
         run: make package
-      - name: Build IAPHunter
-        run: cd IAP && make package
       - uses: actions/upload-artifact@v4
         with:
           name: deb-packages
-          path: |
-            packages/*.deb
-            IAP/packages/*.deb
+          path: packages/*.deb
