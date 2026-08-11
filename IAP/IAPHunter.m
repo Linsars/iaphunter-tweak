@@ -575,9 +575,16 @@ static void showMainMenu(UIViewController *vc) {
     [vc presentViewController:sheet animated:YES completion:nil];
 }
 
-// 长按手势 action
+// 长按手势 action（顶部区域限制——防误触）
 static void longPressAction(id self, SEL _cmd, UILongPressGestureRecognizer *g) {
     if (g.state != UIGestureRecognizerStateBegan) return;
+    // 只响应视图上部 30% 区域的长按（顶部区域调出面板）
+    UIView *v = [g view];
+    if (v != nil) {
+        CGPoint loc = [g locationInView:v];
+        CGFloat topLimit = CGRectGetHeight(v.bounds) * 0.3;
+        if (loc.y > topLimit) return;
+    }
     showMainMenu((UIViewController *)self);
 }
 
