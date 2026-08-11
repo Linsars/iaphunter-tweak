@@ -1,7 +1,7 @@
 #import <Foundation/Foundation.h>
 #import "FolderRootListController.h"
 #import <spawn.h>
-#import <AltList/AltList.h>
+#import <CoreServices/CoreServices.h>
 
 #define kMinisFixPrefsPath @"/var/jb/var/mobile/Library/Preferences/com.linsars.minisfix.plist"
 
@@ -446,29 +446,36 @@ typedef NS_ENUM(NSInteger, XXDynamicSpecifierOperatorType) {
 }
 @end
 
-// ================= per-app 注入配置（AltList） =================
+// ================= per-app 注入配置（自写——不依赖 AltList） =================
 // IAPHunter 子页 → 应用程序：列出用户 app，开关默认开，关掉的 app 不注入
-@interface MinisFixAppListController : ATLApplicationListControllerBase
+@interface MinisFixAppListController : PSListController
 @end
 
 @implementation MinisFixAppListController
 
-- (instancetype)init {
-    NSDictionary *sectionDict = @{@"sectionType": @"User"};
-    self = [super initWithSections:@[[ATLApplicationSection applicationSectionWithDictionary:sectionDict]]];
-    return self;
-}
-
-- (PSCellType)cellTypeForApplicationCells {
-    return PSSwitchCell;
-}
-
-- (SEL)getterForSpecifierOfApplicationProxy:(LSApplicationProxy *)applicationProxy {
-    return @selector(minisFixIsIAPEnabledForApp:);
-}
-
-- (SEL)setterForSpecifierOfApplicationProxy:(LSApplicationProxy *)applicationProxy {
-    return @selector(minisFixSetIAPEnabled:forApp:);
+- (NSArray *)specifiers {
+    if (!_specifiers) {
+        NSMutableArray *specs = [NSMutableArray new];
+        LSApplicationWorkspace *workspace = [LSApplicationWorkspace defaultWorkspace];
+        NSArray *apps = [workspace allApplications];
+        for (LSApplicationProxy *app in apps) {
+            NSString *type = [app applicationType];
+            if (![type isEqualToString:@"User"]) continue;
+            NSString *bundleID = [app bundleIdentifier];
+            if (bundleID == nil || [bundleID hasPrefix:@"com.apple."]) continue;
+            PSSpecifier *spec = [PSSpecifier preferenceSpecifierNamed:[app localizedName]
+                                                               target:self
+                                                                  set:@selector(minisFixSetIAPEnabled:forApp:)
+                                                                  get:@selector(minisFixIsIAPEnabledForApp:)
+                                                               detail:nil
+                                                                 cell:PSSwitchCell
+                                                                 edit:nil];
+            [spec setProperty:bundleID forKey:@"applicationIdentifier"];
+            [specs addObject:spec];
+        }
+        _specifiers = [specs copy];
+    }
+    return _specifiers;
 }
 
 - (id)minisFixIsIAPEnabledForApp:(PSSpecifier *)specifier {
@@ -492,5 +499,9 @@ typedef NS_ENUM(NSInteger, XXDynamicSpecifierOperatorType) {
     }
     prefs[@"IAPDisabledApps"] = disabled;
     [prefs writeToFile:kMinisFixPrefsPath atomically:YES];
+}
+
+- (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath {
+    return 48.0f;
 }
 @end
