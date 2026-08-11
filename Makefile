@@ -15,7 +15,6 @@ TWEAK_NAME = FolderX IAPHunter
 FolderX_FILES = $(wildcard *.xm *.m)
 FolderX_FRAMEWORKS = UIKit Foundation SpringBoardServices
 FolderX_CFLAGS = -fno-objc-arc
-FolderX_EXTRA_FRAMEWORKS = AltList
 FolderX_ARCHS = arm64 arm64e
 
 IAPHunter_FILES = IAP/IAPHunter.m
