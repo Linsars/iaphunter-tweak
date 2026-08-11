@@ -525,64 +525,13 @@ static void iaphShowIconSwitcher(UIViewController *vc) {
         sheet.popoverPresentationController.permittedArrowDirections = 0;
     }
     [vc presentViewController:sheet animated:YES completion:nil];
-#endif  // 旧 actionSheet 备用块结束
 }
 
 static void showMainMenu(UIViewController *vc) {
     if (vc == nil) return;
-    iaphShowPanel(vc);  // v3.0: 新毛玻璃悬浮面板（替代 actionSheet）
-    return;
-#if 0  // 旧 actionSheet 保留（备用）
-    [sheet addAction:[UIAlertAction actionWithTitle:@"扫描并列出 IAP 产品" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-        NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
-        NSArray *saved = [d objectForKey:@"SavedIAPIDs"];
-        if (saved.count == 0) {
-            // 本地无收集到 ID → 在线兜底（App Store 网页 API）
-            queryOnlineIAP(vc);
-            return;
-        }
-        [[IAPManager sharedManager] fetchProductsWithIDs:[NSSet setWithArray:saved]];
-    }]];
-    [sheet addAction:[UIAlertAction actionWithTitle:@"手动输入 ProductID 购买" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-        UIAlertController *input = [UIAlertController alertControllerWithTitle:@"[IAPHunter] 手动购买"
-                                                                       message:@"输入 IAP 产品 ID"
-                                                                preferredStyle:UIAlertControllerStyleAlert];
-        [input addTextFieldWithConfigurationHandler:^(UITextField *tf) {
-            tf.placeholder = @"com.xxx.productid";
-            tf.keyboardType = UIKeyboardTypeASCIICapable;
-        }];
-        [input addAction:[UIAlertAction actionWithTitle:@"购买" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-            NSString *pid = [input.textFields.firstObject.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-            if (pid.length == 0) return;
-            IAPRecord(pid);
-            SKPayment *pay = [SKPayment paymentWithProductIdentifier:pid];
-            [[SKPaymentQueue defaultQueue] addPayment:pay];
-        }]];
-        [input addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-        [vc presentViewController:input animated:YES completion:nil];
-    }]];
-    [sheet addAction:[UIAlertAction actionWithTitle:@"查看已收集 ID" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-        NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
-        NSArray *saved = [d objectForKey:@"SavedIAPIDs"];
-        NSString *body = saved.count ? [saved componentsJoinedByString:@"\n"] : @"（空）";
-        UIAlertController *list = [UIAlertController alertControllerWithTitle:@"[IAPHunter] 已收集 ID"
-                                                                     message:body
-                                                              preferredStyle:UIAlertControllerStyleAlert];
-        [list addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleCancel handler:nil]];
-        [vc presentViewController:list animated:YES completion:nil];
-    }]];
-    [sheet addAction:[UIAlertAction actionWithTitle:@"图标解锁" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-        iaphShowIconSwitcher(vc);
-    }]];
-    [sheet addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    // iPad popover 需要 sourceView
-    if (sheet.popoverPresentationController != nil) {
-        sheet.popoverPresentationController.sourceView = vc.view;
-        sheet.popoverPresentationController.sourceRect = vc.view.bounds;
-        sheet.popoverPresentationController.permittedArrowDirections = 0;
-    }
-    [vc presentViewController:sheet animated:YES completion:nil];
+    iaphShowPanel(vc);  // v3.0: 毛玻璃悬浮面板（双指长按呼出）
 }
+
 
 // 长按手势 action（v3.0: 双指长按呼出——全屏区域，双指误触率极低）
 static void longPressAction(id self, SEL _cmd, UILongPressGestureRecognizer *g) {
