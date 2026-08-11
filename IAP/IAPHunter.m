@@ -607,13 +607,13 @@ static NSArray *new_SKProductsResponse_invalid(id self, SEL _cmd) {
 }
 
 // ================= 设置开关 =================
-// v1.3.4: Settings → IAPHunter → 启用（preferenceloader 开关——写 com.linsars.iaphunter suite）
+// v2.0: Settings → IAPHunter → 启用（preferenceloader 开关——写 /var/jb/var/mobile/Library/Preferences/com.linsars.iaphunter.plist）
+// 直接读 rootless 文件（initWithSuiteName 在无 group entitlement 的注入进程里读 app 沙盒——读不到设置）
 // 默认开；关则 ctor 直接 return（完全禁用——hook/手势都不装）
 static BOOL iaphIsEnabled(void) {
-    NSUserDefaults *d = [[NSUserDefaults alloc] initWithSuiteName:@"com.linsars.iaphunter"];
+    NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:@"/var/jb/var/mobile/Library/Preferences/com.linsars.iaphunter.plist"];
     id v = [d objectForKey:@"IAPHunterEnabled"];
     BOOL on = (v == nil) ? YES : [v boolValue];
-    [d release];
     return on;
 }
 
