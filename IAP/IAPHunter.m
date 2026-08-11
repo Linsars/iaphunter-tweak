@@ -483,6 +483,42 @@ static void queryOnlineIAP(UIViewController *vc) {
     [task resume];
 }
 
+// ================= 图标解锁（移植自 IconSwitcher） =================
+// 读 Info.plist CFBundleAlternateIcons 备用图标列表 → 弹窗选择 → setAlternateIconName 切换
+static void iaphShowIconSwitcher(UIViewController *vc) {
+    if (vc == nil) return;
+    UIApplication *app = [UIApplication sharedApplication];
+    if (![app respondsToSelector:@selector(supportsAlternateIcons)] || !app.supportsAlternateIcons) {
+        UIAlertController *err = [UIAlertController alertControllerWithTitle:@"[MinisFix]"
+                                                                     message:@"当前 app 不支持切换图标"
+                                                              preferredStyle:UIAlertControllerStyleAlert];
+        [err addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleCancel handler:nil]];
+        [vc presentViewController:err animated:YES completion:nil];
+        return;
+    }
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"[MinisFix] 图标解锁"
+                                                                  message:@"选择要切换的图标"
+                                                           preferredStyle:UIAlertControllerStyleActionSheet];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"默认图标" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        [app setAlternateIconName:nil completionHandler:nil];
+    }]];
+    NSDictionary *info = [[NSBundle mainBundle] infoDictionary];
+    NSDictionary *iconsDict = info[@"CFBundleIcons"];
+    NSDictionary *alt = iconsDict[@"CFBundleAlternateIcons"];
+    for (NSString *name in alt) {
+        [sheet addAction:[UIAlertAction actionWithTitle:name style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+            [app setAlternateIconName:name completionHandler:nil];
+        }]];
+    }
+    [sheet addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    if (sheet.popoverPresentationController != nil) {
+        sheet.popoverPresentationController.sourceView = vc.view;
+        sheet.popoverPresentationController.sourceRect = vc.view.bounds;
+        sheet.popoverPresentationController.permittedArrowDirections = 0;
+    }
+    [vc presentViewController:sheet animated:YES completion:nil];
+}
+
 static void showMainMenu(UIViewController *vc) {
     if (vc == nil) return;
     UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"[IAPHunter]"
@@ -525,6 +561,9 @@ static void showMainMenu(UIViewController *vc) {
                                                               preferredStyle:UIAlertControllerStyleAlert];
         [list addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleCancel handler:nil]];
         [vc presentViewController:list animated:YES completion:nil];
+    }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"图标解锁" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        iaphShowIconSwitcher(vc);
     }]];
     [sheet addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
     // iPad popover 需要 sourceView
