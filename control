@@ -1,6 +1,6 @@
 Package: com.linsars.minisfix
 Name: MinisFix
-Version: 2.0
+Version: 3.0
 Architecture: iphoneos-arm64
 Depends: ellekit (>= 1.0), preferenceloader, firmware(>=15.0), com.ichitaso.iconorder
 Description: MinisFix - 文件夹增强（FolderX）+ IAP 收集/购买（IAPHunter）一体工具
