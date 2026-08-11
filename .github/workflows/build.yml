@@ -23,6 +23,8 @@ jobs:
           tar xJf /tmp/sdk.tar.xz -C "$THEOS/sdks/"
           mv "$THEOS/sdks/iPhoneOS16.5.sdk" "$THEOS/sdks/iPhoneOS14.5.sdk"
           ls "$THEOS/sdks/"
+      - name: Install ldid
+        run: brew install ldid
       - name: Build package
         run: make package
       - uses: actions/upload-artifact@v4
