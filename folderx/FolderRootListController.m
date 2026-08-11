@@ -76,7 +76,7 @@ static NSBundle *tweakBundle = nil;
 }
 
 - (void)github {
-    [[UIApplication sharedApplication] openURL:[NSURL URLWithString:@"https://github.com/Linsars/iaphunter-tweak"] options:@{} completionHandler:nil];
+    [[UIApplication sharedApplication] openURL:[NSURL URLWithString:@"https://github.com/Lizynz/FolderX"] options:@{} completionHandler:nil];
 }
 @end
 

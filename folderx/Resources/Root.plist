@@ -12,7 +12,7 @@
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>PSLinkCell</string>
+			<string>PSLinkListCell</string>
 			<key>detail</key>
 			<string>IAPSettings</string>
 			<key>icon</key>
@@ -24,7 +24,7 @@
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>PSLinkCell</string>
+			<string>PSLinkListCell</string>
 			<key>detail</key>
 			<string>FolderXSettings</string>
 			<key>icon</key>
@@ -46,13 +46,13 @@
 			<key>cell</key>
 			<string>PSLinkCell</string>
 			<key>label</key>
-			<string>GitHub</string>
+			<string>github[folderx]</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>github.com/Linsars/iaphunter-tweak（基于 Lizynz 的 FolderX 2.0 开发）</string>
+			<string>github.com/Lizynz/FolderX（FolderX 原作者仓库）</string>
 		</dict>
 	</array>
 	<key>title</key>
