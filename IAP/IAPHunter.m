@@ -631,8 +631,8 @@ static BOOL iaphIsAppAllowed(void) {
 // ================= 入口 =================
 __attribute__((constructor)) static void IAPHunterCtor(void) {
     @autoreleasepool {
-        // v1.3.4: 设置开关——关则完全禁用（不 hook 不加手势，重启 app 生效）
-        if (!iaphIsEnabled() || !iaphIsAppAllowed()) return;
+        // v3.1: TrollFools 注入即生效（不依赖越狱版开关——开关只控制 SK 功能，面板可切换）
+        if (!iaphIsAppAllowed()) return;
         // v3.0: 屏蔽摇一摇 + FakeGPS hook
         hookShakeBlock();
         hookFakeGPS();
