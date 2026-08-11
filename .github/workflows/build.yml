@@ -1,0 +1,24 @@
+name: build
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: theos/setup-theos@v1
+        with:
+          sdk: iphoneos17.0
+      - name: Align SDK name
+        run: |
+          echo "SDKs: $(ls "$THEOS/sdks/")"
+          mv "$THEOS/sdks/iPhoneOS17.0.sdk" "$THEOS/sdks/iPhoneOS14.5.sdk"
+      - name: Build package
+        run: make package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: folderx-deb
+          path: packages/*.deb
