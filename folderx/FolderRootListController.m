@@ -447,6 +447,18 @@ typedef NS_ENUM(NSInteger, XXDynamicSpecifierOperatorType) {
 @end
 
 // ================= per-app 注入配置（自写——不依赖 AltList） =================
+// LSApplicationWorkspace 私有 API 声明（公开 SDK 无头文件）
+@interface LSApplicationProxy : NSObject
+@property (nonatomic, readonly) NSString *bundleIdentifier;
+@property (nonatomic, readonly) NSString *applicationType;
+@property (nonatomic, readonly) NSString *localizedName;
+@end
+
+@interface LSApplicationWorkspace : NSObject
++ (instancetype)defaultWorkspace;
+- (NSArray *)allApplications;
+@end
+
 // IAPHunter 子页 → 应用程序：列出用户 app，开关默认开，关掉的 app 不注入
 @interface MinisFixAppListController : PSListController
 @end
