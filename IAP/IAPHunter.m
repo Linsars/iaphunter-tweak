@@ -777,7 +777,8 @@ static void mfSetBoolPref(NSString *key, BOOL val) {
     [d writeToFile:@"/var/jb/var/mobile/Library/Preferences/com.linsars.minisfix.plist" atomically:YES];
 }
 
-static UIWindow *g_mfPanelWindow = nil;
+static UIView *g_mfPanelOverlay = nil;   // v3.9: 面板 overlay（mask+card）直接挂 keyWindow——不用独立 UIWindow（避免 window 层级/keyWindow 冲突卡死）
+static UIViewController *g_mfPanelRootVC = nil;  // 呼出面板时的 VC（购买/图标选择用）
 static id g_mfCtrl = nil;
 
 #pragma mark - 屏蔽摇一摇（motionEnded hook）
@@ -845,110 +846,107 @@ static void hookFakeGPS(void) {
 }
 - (void)mfDismissPanel { 
     iaphLog(@"panel: dismiss called");
-    if (g_mfPanelWindow) {
-        UIWindow *w = g_mfPanelWindow;
-        [UIView animateWithDuration:0.2 animations:^{ w.alpha = 0; } completion:^(BOOL f) {
-            w.hidden = YES; g_mfPanelWindow = nil;
+    if (g_mfPanelOverlay) {
+        UIView *ov = g_mfPanelOverlay;
+        [UIView animateWithDuration:0.2 animations:^{ ov.alpha = 0; } completion:^(BOOL f) {
+            [ov removeFromSuperview];
+            g_mfPanelOverlay = nil;
+            g_mfPanelRootVC = nil;
             iaphLog(@"panel: dismissed");
         }];
     }
 }
-- (void)mfScanProducts { queryOnlineIAP(g_mfPanelWindow.rootViewController); [self mfDismissPanel]; }
-- (void)mfManualBuy { queryOnlineIAP(g_mfPanelWindow.rootViewController); [self mfDismissPanel]; }
-- (void)mfIconSwitch { iaphShowIconSwitcher(g_mfPanelWindow.rootViewController); [self mfDismissPanel]; }
+- (void)mfScanProducts { queryOnlineIAP(g_mfPanelRootVC); [self mfDismissPanel]; }
+- (void)mfManualBuy { queryOnlineIAP(g_mfPanelRootVC); [self mfDismissPanel]; }
+- (void)mfIconSwitch { iaphShowIconSwitcher(g_mfPanelRootVC); [self mfDismissPanel]; }
 - (void)mfToggleEnabled { 
     mfSetBoolPref(@"iaphIsEnabled", !mfPrefBool(@"iaphIsEnabled", NO));
 }
 @end
 
-#pragma mark - 面板构建
+#pragma mark - 面板构建（v3.9: overlay 方案——挂 keyWindow，不用独立 UIWindow；毛玻璃 FakeTools 风格）
 static void iaphShowPanel(UIViewController *vc) {
-    if (g_mfPanelWindow) return;
+    if (g_mfPanelOverlay) return;
     if (!g_mfCtrl) g_mfCtrl = [[MFPanelCtrl alloc] init];
-
-    FILE *plog = fopen("/var/jb/var/mobile/Documents/iaph_panel.log", "a");
-    #define PLOG(...) do { if (plog) { flockfile(plog); fprintf(plog, __VA_ARGS__); fprintf(plog, "\n"); fflush(plog); funlockfile(plog); } } while(0)
     @try {
-    PLOG("[panel] show called pid=%d", getpid());
-    iaphLog(@"panel: show called vc=%@", NSStringFromClass([vc class]));
-    CGRect sb = [UIScreen mainScreen].bounds;
-    UIWindow *win = [[UIWindow alloc] initWithFrame:sb];
-    win.windowLevel = UIWindowLevelAlert + 100;
-    win.backgroundColor = [UIColor clearColor];
-    if (@available(iOS 13.0, *)) {
-        UIWindowScene *target = nil;
-        for (id sc in [UIApplication sharedApplication].connectedScenes) {
-            if ([sc isKindOfClass:[UIWindowScene class]] && ((UIWindowScene *)sc).activationState == UISceneActivationStateForegroundActive) {
-                target = (UIWindowScene *)sc; break;
+        iaphLog(@"panel: show called vc=%@", NSStringFromClass([vc class]));
+        // 找前台 keyWindow
+        UIWindow *keyWin = nil;
+        if (@available(iOS 13.0, *)) {
+            for (id sc in [UIApplication sharedApplication].connectedScenes) {
+                if ([sc isKindOfClass:[UIWindowScene class]] && ((UIWindowScene *)sc).activationState == UISceneActivationStateForegroundActive) {
+                    keyWin = [(UIWindowScene *)sc keyWindow]; break;
+                }
             }
         }
-        if (!target) target = [UIApplication sharedApplication].keyWindow.windowScene;
-        if (target) { win.windowScene = target; PLOG("[panel] scene set"); }
-        else PLOG("[panel] NO scene found");
-    }
-    win.rootViewController = [[UIViewController alloc] init];
+        if (!keyWin) keyWin = [UIApplication sharedApplication].keyWindow;
+        if (!keyWin) { iaphLog(@"panel: NO keyWindow found"); return; }
+        iaphLog(@"panel: keyWindow=%@", keyWin);
 
-    // 遮罩（点击关闭）
-    UIButton *mask = [UIButton buttonWithType:UIButtonTypeCustom];
-    mask.frame = win.bounds;
-    mask.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.35];
-    [mask addTarget:g_mfCtrl action:NSSelectorFromString(@"mfDismissPanel") forControlEvents:UIControlEventTouchUpInside];
-    [win addSubview:mask];
+        CGRect sb = keyWin.bounds;
+        UIView *overlay = [[UIView alloc] initWithFrame:sb];
+        overlay.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        overlay.backgroundColor = [UIColor clearColor];
 
-    CGFloat cardW = sb.size.width - 32;
-    CGFloat cardH = 470;
-    UIView *card = [[UIView alloc] initWithFrame:CGRectMake(16, (sb.size.height - cardH)/2, cardW, cardH)];
-    card.layer.cornerRadius = 22;
-    card.clipsToBounds = YES;
-    card.layer.borderWidth = 0.5;
-    card.layer.borderColor = [[UIColor systemGray3Color] colorWithAlphaComponent:0.5].CGColor;
-    // v3.2: 纯色背景（去毛玻璃——注入窗口下毛玻璃可能触发问题）
-    card.backgroundColor = [UIColor systemBackgroundColor];
+        // 遮罩（点击关闭）
+        UIButton *mask = [UIButton buttonWithType:UIButtonTypeCustom];
+        mask.frame = overlay.bounds;
+        mask.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        mask.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.35];
+        [mask addTarget:g_mfCtrl action:NSSelectorFromString(@"mfDismissPanel") forControlEvents:UIControlEventTouchUpInside];
+        [overlay addSubview:mask];
 
-    // 标题栏
-    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(20, 14, 200, 26)];
-    title.text = @"MinisFix";
-    title.font = [UIFont boldSystemFontOfSize:18];
-    title.textColor = [UIColor labelColor];
-    [card addSubview:title];
-    UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(cardW - 44, 12, 32, 32);
-    [closeBtn setTitle:@"✕" forState:UIControlStateNormal];
-    [closeBtn.titleLabel setFont:[UIFont systemFontOfSize:17]];
-    [closeBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfDismissPanel") forControlEvents:UIControlEventTouchUpInside];
-    [card addSubview:closeBtn];
+        CGFloat cardW = sb.size.width - 32;
+        CGFloat cardH = 470;
+        // v3.9: 毛玻璃卡片（FakeTools 风格——UIBlurEffect + 圆角）
+        UIVisualEffectView *card = [[UIVisualEffectView alloc] initWithFrame:CGRectMake(16, (sb.size.height - cardH)/2, cardW, cardH)];
+        card.effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
+        card.layer.cornerRadius = 22;
+        card.clipsToBounds = YES;
+        card.layer.borderWidth = 0.5;
+        card.layer.borderColor = [[UIColor systemGray3Color] colorWithAlphaComponent:0.5].CGColor;
+        UIView *content = card.contentView;
 
-    CGFloat y = 52;
-    // ── IAP 组 ──
-    y = mfSectionHeader(card, y, @"IAP");
-    y = mfActionRow(card, y, @"扫描产品", @"magnifyingglass", @selector(mfScanProducts));
-    y = mfActionRow(card, y, @"手动购买", @"cart", @selector(mfManualBuy));
-    y = mfActionRow(card, y, @"图标解锁", @"app.badge", @selector(mfIconSwitch));
-    y = mfSwitchRow(card, y, @"启用 IAPHunter", @"iaphIsEnabled", YES, @selector(mfToggleEnabled), NO);
-    // ── 屏蔽 ──
-    y = mfSectionHeader(card, y, @"屏蔽");
-    y = mfSwitchRow(card, y, @"屏蔽摇一摇", @"iaphShakeBlock", NO, nil, YES);
-    // ── 相机 ──
-    y = mfSectionHeader(card, y, @"相机");
-    y = mfLabelRow(card, y, [NSString stringWithFormat:@"相机权限: %@  麦克风: %@", mfPermText(@"vide"), mfPermText(@"soun")]);
-    // ── 伪装 ──
-    y = mfSectionHeader(card, y, @"伪装");
-    y = mfSwitchRow(card, y, @"Fake GPS（北京）", @"iaphFakeGPS", NO, nil, YES);
+        // 标题栏
+        UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(20, 14, 200, 26)];
+        title.text = @"MinisFix";
+        title.font = [UIFont boldSystemFontOfSize:18];
+        title.textColor = [UIColor labelColor];
+        [content addSubview:title];
+        UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+        closeBtn.frame = CGRectMake(cardW - 44, 12, 32, 32);
+        [closeBtn setTitle:@"✕" forState:UIControlStateNormal];
+        [closeBtn.titleLabel setFont:[UIFont systemFontOfSize:17]];
+        [closeBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfDismissPanel") forControlEvents:UIControlEventTouchUpInside];
+        [content addSubview:closeBtn];
 
-    [win addSubview:card];
-    win.alpha = 0;
-    win.hidden = NO;
-    // v3.8: 不再 makeKeyAndVisible——抢 keyWindow 会让宿主 app（Ibiza 框架等）触发 first responder/键盘连锁反应导致卡死。只显示不抢 key。
-    [UIView animateWithDuration:0.25 animations:^{ win.alpha = 1; }];
-    g_mfPanelWindow = win;
-    PLOG("[panel] shown ok, windowScene=%@", win.windowScene ? @"set" : @"nil");
-    iaphLog(@"panel: SHOWN ok (window=%@ root=%@)", win, win.rootViewController);
+        CGFloat y = 52;
+        // ── IAP 组 ──
+        y = mfSectionHeader(content, y, @"IAP");
+        y = mfActionRow(content, y, @"扫描产品", @"magnifyingglass", @selector(mfScanProducts));
+        y = mfActionRow(content, y, @"手动购买", @"cart", @selector(mfManualBuy));
+        y = mfActionRow(content, y, @"图标解锁", @"app.badge", @selector(mfIconSwitch));
+        y = mfSwitchRow(content, y, @"启用 IAPHunter", @"iaphIsEnabled", YES, @selector(mfToggleEnabled), NO);
+        // ── 屏蔽 ──
+        y = mfSectionHeader(content, y, @"屏蔽");
+        y = mfSwitchRow(content, y, @"屏蔽摇一摇", @"iaphShakeBlock", NO, nil, YES);
+        // ── 相机 ──
+        y = mfSectionHeader(content, y, @"相机");
+        y = mfLabelRow(content, y, [NSString stringWithFormat:@"相机权限: %@  麦克风: %@", mfPermText(@"vide"), mfPermText(@"soun")]);
+        // ── 伪装 ──
+        y = mfSectionHeader(content, y, @"伪装");
+        y = mfSwitchRow(content, y, @"Fake GPS（北京）", @"iaphFakeGPS", NO, nil, YES);
+
+        [overlay addSubview:card];
+        [keyWin addSubview:overlay];
+        g_mfPanelOverlay = overlay;
+        g_mfPanelRootVC = vc;
+        overlay.alpha = 0;
+        [UIView animateWithDuration:0.25 animations:^{ overlay.alpha = 1; }];
+        iaphLog(@"panel: SHOWN ok (overlay on keyWindow, cardH=%d)", (int)cardH);
     } @catch (NSException *e) {
-        PLOG("[panel] EXCEPTION: %@ %@", e.name, e.reason);
         iaphLog(@"panel EXCEPTION: %@ %@", e.name, e.reason);
-        NSLog(@"[MinisFix] panel exception: %@ %@", e.name, e.reason);
     }
-    if (plog) fclose(plog);
 }
 
 // 分组标题
