@@ -808,9 +808,9 @@ static void iaphShowPanel(UIViewController *vc) {
     if (g_mfPanelWindow) return;
     if (!g_mfCtrl) g_mfCtrl = [[MFPanelCtrl alloc] init];
 
-    @try {
     FILE *plog = fopen("/var/jb/var/mobile/Documents/iaph_panel.log", "a");
     #define PLOG(...) do { if (plog) { flockfile(plog); fprintf(plog, __VA_ARGS__); fprintf(plog, "\n"); fflush(plog); funlockfile(plog); } } while(0)
+    @try {
     PLOG("[panel] show called pid=%d", getpid());
     CGRect sb = [UIScreen mainScreen].bounds;
     UIWindow *win = [[UIWindow alloc] initWithFrame:sb];
