@@ -238,6 +238,7 @@ static UIViewController *topVC(void) {
 
 static void showMainMenu(UIViewController *vc);
 static void iaphShowPanel(UIViewController *vc);
+static CGFloat mfGridButton(UIView *card, CGFloat x, CGFloat y, CGFloat w, NSString *title, NSString *emoji, SEL action, BOOL switchMode, NSString *pfx);
 static void hookShakeBlock(void);
 static void hookFakeGPS(void);
 static CGFloat mfSectionHeader(UIView *card, CGFloat y, NSString *title);
@@ -862,6 +863,25 @@ static void hookFakeGPS(void) {
 - (void)mfToggleEnabled { 
     mfSetBoolPref(@"iaphIsEnabled", !mfPrefBool(@"iaphIsEnabled", NO));
 }
+// v4.0: 网格开关按钮点击切换（状态色同步）
+- (void)mfGridSwitchChanged:(UIButton *)b {
+    NSString *key = objc_getAssociatedObject(b, "pfx");
+    if (!key) return;
+    BOOL on = !mfPrefBool(key, NO);
+    mfSetBoolPref(key, on);
+    b.backgroundColor = on ? [UIColor systemGreenColor] : [UIColor secondarySystemBackgroundColor];
+    iaphLog(@"grid switch %@ -> %d", key, on);
+}
+// v4.0: 权限状态弹窗
+- (void)mfShowPermAlert:(id)sender {
+    NSString *msg = [NSString stringWithFormat:@"相机: %@\n麦克风: %@", mfPermText(@"vide"), mfPermText(@"soun")];
+    UIAlertController *ac = [UIAlertController alertControllerWithTitle:@"权限状态" message:msg preferredStyle:UIAlertControllerStyleAlert];
+    [ac addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
+    UIWindow *kw = [UIApplication sharedApplication].keyWindow;
+    UIViewController *top = kw.rootViewController;
+    while (top.presentedViewController) top = top.presentedViewController;
+    if (top) [top presentViewController:ac animated:YES completion:nil];
+}
 @end
 
 #pragma mark - 面板构建（v3.9: overlay 方案——挂 keyWindow，不用独立 UIWindow；毛玻璃 FakeTools 风格）
@@ -897,8 +917,8 @@ static void iaphShowPanel(UIViewController *vc) {
         [overlay addSubview:mask];
 
         CGFloat cardW = sb.size.width - 32;
-        CGFloat cardH = 470;
-        // v3.9: 毛玻璃卡片（FakeTools 风格——UIBlurEffect + 圆角）
+        CGFloat cardH = 436;
+        // v3.9+: 毛玻璃卡片（FakeTools 风格——UIBlurEffect + 圆角）
         UIVisualEffectView *card = [[UIVisualEffectView alloc] initWithFrame:CGRectMake(16, (sb.size.height - cardH)/2, cardW, cardH)];
         card.effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
         card.layer.cornerRadius = 22;
@@ -908,34 +928,33 @@ static void iaphShowPanel(UIViewController *vc) {
         UIView *content = card.contentView;
 
         // 标题栏
-        UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(20, 14, 200, 26)];
+        UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(20, 12, 200, 26)];
         title.text = @"MinisFix";
         title.font = [UIFont boldSystemFontOfSize:18];
         title.textColor = [UIColor labelColor];
         [content addSubview:title];
         UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        closeBtn.frame = CGRectMake(cardW - 44, 12, 32, 32);
+        closeBtn.frame = CGRectMake(cardW - 44, 10, 32, 32);
         [closeBtn setTitle:@"✕" forState:UIControlStateNormal];
         [closeBtn.titleLabel setFont:[UIFont systemFontOfSize:17]];
         [closeBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfDismissPanel") forControlEvents:UIControlEventTouchUpInside];
         [content addSubview:closeBtn];
 
-        CGFloat y = 52;
-        // ── IAP 组 ──
-        y = mfSectionHeader(content, y, @"IAP");
-        y = mfActionRow(content, y, @"扫描产品", @"magnifyingglass", @selector(mfScanProducts));
-        y = mfActionRow(content, y, @"手动购买", @"cart", @selector(mfManualBuy));
-        y = mfActionRow(content, y, @"图标解锁", @"app.badge", @selector(mfIconSwitch));
-        y = mfSwitchRow(content, y, @"启用 IAPHunter", @"iaphIsEnabled", YES, @selector(mfToggleEnabled), NO);
-        // ── 屏蔽 ──
-        y = mfSectionHeader(content, y, @"屏蔽");
-        y = mfSwitchRow(content, y, @"屏蔽摇一摇", @"iaphShakeBlock", NO, nil, YES);
-        // ── 相机 ──
-        y = mfSectionHeader(content, y, @"相机");
-        y = mfLabelRow(content, y, [NSString stringWithFormat:@"相机权限: %@  麦克风: %@", mfPermText(@"vide"), mfPermText(@"soun")]);
-        // ── 伪装 ──
-        y = mfSectionHeader(content, y, @"伪装");
-        y = mfSwitchRow(content, y, @"Fake GPS（北京）", @"iaphFakeGPS", NO, nil, YES);
+        // v4.0: FakeTools 风格图标网格（2 列 × 4 行）
+        CGFloat gw = (cardW - 32 - 12) / 2;   // 左右 16 + 中间 12
+        CGFloat gy = 48;
+        // 行 1：IAP
+        gy = mfGridButton(content, 16, gy, gw, @"扫描产品", @"🔍", @selector(mfScanProducts), NO, nil);
+        gy = mfGridButton(content, 16 + gw + 12, gy - 92, gw, @"手动购买", @"🛒", @selector(mfManualBuy), NO, nil);
+        // 行 2：图标解锁 + 启用
+        gy = mfGridButton(content, 16, gy, gw, @"图标解锁", @"🎨", @selector(mfIconSwitch), NO, nil);
+        gy = mfGridButton(content, 16 + gw + 12, gy - 92, gw, @"启用", @"⚙️", @selector(mfGridSwitchChanged:), YES, @"iaphIsEnabled");
+        // 行 3：屏蔽 + FakeGPS
+        gy = mfGridButton(content, 16, gy, gw, @"屏蔽摇一摇", @"📳", @selector(mfGridSwitchChanged:), YES, @"iaphShakeBlock");
+        gy = mfGridButton(content, 16 + gw + 12, gy - 92, gw, @"Fake GPS", @"📍", @selector(mfGridSwitchChanged:), YES, @"iaphFakeGPS");
+        // 行 4：相机 + 麦克风（权限详情）
+        gy = mfGridButton(content, 16, gy, gw, @"相机权限", @"📷", @selector(mfShowPermAlert:), NO, nil);
+        gy = mfGridButton(content, 16 + gw + 12, gy - 92, gw, @"麦克风", @"🎤", @selector(mfShowPermAlert:), NO, nil);
 
         [overlay addSubview:card];
         [keyWin addSubview:overlay];
@@ -943,7 +962,7 @@ static void iaphShowPanel(UIViewController *vc) {
         g_mfPanelRootVC = vc;
         overlay.alpha = 0;
         [UIView animateWithDuration:0.25 animations:^{ overlay.alpha = 1; }];
-        iaphLog(@"panel: SHOWN ok (overlay on keyWindow, cardH=%d)", (int)cardH);
+        iaphLog(@"panel: SHOWN ok (grid panel, cardH=%d)", (int)cardH);
     } @catch (NSException *e) {
         iaphLog(@"panel EXCEPTION: %@ %@", e.name, e.reason);
     }
@@ -1013,6 +1032,43 @@ static CGFloat mfLabelRow(UIView *card, CGFloat y, NSString *text) {
     [card addSubview:row];
     return y + 46;
 }
+// v4.0: FakeTools 风格图标网格按钮（圆形图标 + 文字；switchMode 点击切换 + 背景色状态）
+static CGFloat mfGridButton(UIView *card, CGFloat x, CGFloat y, CGFloat w, NSString *title, NSString *emoji, SEL action, BOOL switchMode, NSString *pfx) {
+    UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
+    b.frame = CGRectMake(x, y, w, 84);
+    b.backgroundColor = [UIColor secondarySystemBackgroundColor];
+    b.layer.cornerRadius = 16;
+    [b addTarget:g_mfCtrl action:action forControlEvents:UIControlEventTouchUpInside];
+    [card addSubview:b];
+    // emoji 图标（圆形浅底）
+    UIView *badge = [[UIView alloc] initWithFrame:CGRectMake(w/2 - 22, 10, 44, 44)];
+    badge.backgroundColor = [UIColor tertiarySystemBackgroundColor];
+    badge.layer.cornerRadius = 22;
+    badge.userInteractionEnabled = NO;
+    [b addSubview:badge];
+    UILabel *ic = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, 44, 44)];
+    ic.text = emoji;
+    ic.font = [UIFont systemFontOfSize:24];
+    ic.textAlignment = NSTextAlignmentCenter;
+    [badge addSubview:ic];
+    // 文字
+    UILabel *lb = [[UILabel alloc] initWithFrame:CGRectMake(0, 58, w, 18)];
+    lb.text = title;
+    lb.font = [UIFont systemFontOfSize:12];
+    lb.textAlignment = NSTextAlignmentCenter;
+    lb.textColor = [UIColor labelColor];
+    lb.adjustsFontSizeToFitWidth = YES;
+    lb.minimumScaleFactor = 0.7;
+    [b addSubview:lb];
+    // 开关模式：点击切换 + 状态色
+    if (switchMode && pfx) {
+        BOOL on = mfPrefBool(pfx, NO);
+        b.backgroundColor = on ? [UIColor systemGreenColor] : [UIColor secondarySystemBackgroundColor];
+        objc_setAssociatedObject(b, "pfx", pfx, OBJC_ASSOCIATION_RETAIN);
+    }
+    return y + 92;
+}
+
 // 权限文本（v3.7: 全 try-catch 防御——权限查询任何异常都显示 n/a，面板永不崩）
 static NSString *mfPermText(id mediaType) {
     @try {
