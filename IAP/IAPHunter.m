@@ -954,8 +954,8 @@ static void mfShowGpsPage(void) {
         return;
     }
     id map = [[MKCls alloc] initWithFrame:CGRectMake(12, 86, g_mfCardW - 24, 200)];
-    map.layer.cornerRadius = 14;
-    map.clipsToBounds = YES;
+    ((UIView *)map).layer.cornerRadius = 14;
+    ((UIView *)map).clipsToBounds = YES;
     MKCoordinateRegion reg;
     reg.center.latitude = iaphFakeLat();
     reg.center.longitude = iaphFakeLon();
