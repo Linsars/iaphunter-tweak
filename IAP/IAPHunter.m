@@ -44,6 +44,9 @@ static void IAPRecord(NSString *pid) {
     }
 }
 
+// ================= 全链路调试日志（v3.6） =================
+// 双通道：NSLog（系统日志——远程 log show 可查）+ app 沙盒 Documents/iaph_debug.log（一定能写）
+static void iaphLog(NSString *fmt, ...);
 // ================= swizzle 工具 =================
 static void swizzle(Class cls, SEL sel, IMP newImp, IMP *origOut) {
     if (cls == Nil || sel == NULL || newImp == NULL) return;
