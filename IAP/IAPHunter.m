@@ -538,6 +538,8 @@ static void showMainMenu(UIViewController *vc) {
 // 长按手势 action（v3.0: 双指长按呼出——全屏区域，双指误触率极低）
 static void longPressAction(id self, SEL _cmd, UILongPressGestureRecognizer *g) {
     if (g.state != UIGestureRecognizerStateBegan) return;
+    FILE *llog = fopen("/var/jb/var/mobile/Documents/iaph_gesture.log", "a");
+    if (llog) { fprintf(llog, "[lp] BEGAN touches=%lu\n", (unsigned long)g.numberOfTouches); fclose(llog); }
     showMainMenu((UIViewController *)self);
 }
 
@@ -545,6 +547,8 @@ static void longPressAction(id self, SEL _cmd, UILongPressGestureRecognizer *g) 
 static IMP orig_viewDidAppear;
 static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     ((void(*)(id, SEL, BOOL))orig_viewDidAppear)(self, _cmd, animated);
+    FILE *glog = fopen("/var/jb/var/mobile/Documents/iaph_gesture.log", "a");
+    if (glog) { fprintf(glog, "[vda] %s\n", NSStringFromClass([self class]).UTF8String); fclose(glog); }
     // 给 view 加长按手势（防重复）
     static const char kLPKey = 0;
     if (objc_getAssociatedObject(self, &kLPKey) == nil) {
@@ -632,6 +636,8 @@ static BOOL iaphIsAppAllowed(void) {
 __attribute__((constructor)) static void IAPHunterCtor(void) {
     @autoreleasepool {
         // v3.1: TrollFools 注入即生效（不依赖越狱版开关——开关只控制 SK 功能，面板可切换）
+        FILE *clog = fopen("/var/jb/var/mobile/Documents/iaph_ctor.log", "a");
+        if (clog) { fprintf(clog, "[ctor] pid=%d app=%@\n", getpid(), [[NSBundle mainBundle] bundleIdentifier]); fclose(clog); }
         if (!iaphIsAppAllowed()) return;
         // v3.0: 屏蔽摇一摇 + FakeGPS hook
         hookShakeBlock();
