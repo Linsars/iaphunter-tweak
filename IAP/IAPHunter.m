@@ -6,7 +6,7 @@
 #import <Foundation/Foundation.h>
 #import <StoreKit/StoreKit.h>
 #import <UIKit/UIKit.h>
-#import <CoreLocation/CoreLocation.h>
+// v3.5: 不再链接 CoreLocation/AVFoundation（v3.0 加的链接导致 ElleKit 注入失败——回归 v2.1.1 链接方式，伪装/权限改动态调用）
 #import <objc/message.h>
 #import <objc/runtime.h>
 #import <dlfcn.h>
@@ -756,11 +756,20 @@ static void hookShakeBlock(void) {
     if (m) { orig_motionEnded = method_getImplementation(m); method_setImplementation(m, (IMP)new_motionEnded); }
 }
 
-#pragma mark - Fake GPS 伪装（CLLocationManager hook）
+#pragma mark - Fake GPS 伪装（CLLocationManager hook，v3.5 动态调用——不链接 CoreLocation）
+// 动态创建 CLLocation（避免链接 CoreLocation.framework——v2.1.1 注入成功版无此链接）
+static id makeFakeLocation(void) {
+    Class locCls = objc_getClass("CLLocation");
+    if (!locCls) return nil;
+    id loc = [locCls alloc];
+    SEL initSel = NSSelectorFromString(@"initWithLatitude:longitude:");
+    if (!initSel) return nil;
+    return ((id(*)(id, SEL, double, double))objc_msgSend)(loc, initSel, 39.9042, 116.4074);  // 北京
+}
 static IMP orig_clLocation, orig_startUpdating;
 static id new_clLocation(id self, SEL _cmd) {
     if (mfPrefBool(@"iaphFakeGPS", NO)) {
-        return [[CLLocation alloc] initWithLatitude:39.9042 longitude:116.4074];  // 北京
+        return makeFakeLocation();
     }
     return orig_clLocation ? ((id(*)(id, SEL))orig_clLocation)(self, _cmd) : nil;
 }
@@ -769,7 +778,7 @@ static void new_startUpdating(id self, SEL _cmd) {
         id delegate = [self performSelector:NSSelectorFromString(@"delegate")];
         SEL upd = NSSelectorFromString(@"locationManager:didUpdateLocations:");
         if (delegate && [delegate respondsToSelector:upd]) {
-            CLLocation *fake = [[CLLocation alloc] initWithLatitude:39.9042 longitude:116.4074];
+            id fake = makeFakeLocation();
             ((void(*)(id, SEL, id, id))objc_msgSend)(delegate, upd, self, @[fake]);
             return;
         }

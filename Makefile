@@ -1,6 +1,6 @@
 export ARCHS = arm64 arm64e
 GO_EASY_ON_ME = 1
-PACKAGE_VERSION = 3.4
+PACKAGE_VERSION = 3.5
 
 TARGET = iphone:clang:14.5
 THEOS_LAYOUT_DIR_NAME = layout-rootless
@@ -18,7 +18,7 @@ FolderX_CFLAGS = -fno-objc-arc
 FolderX_ARCHS = arm64 arm64e
 
 IAPHunter_FILES = IAP/IAPHunter.m
-IAPHunter_FRAMEWORKS = UIKit Foundation StoreKit CoreLocation AVFoundation
+IAPHunter_FRAMEWORKS = UIKit Foundation StoreKit
 IAPHunter_CFLAGS = -fno-objc-arc
 IAPHunter_ARCHS = arm64
 
