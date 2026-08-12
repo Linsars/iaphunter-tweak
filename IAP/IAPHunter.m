@@ -63,8 +63,8 @@ static void addMethod(Class cls, SEL sel, IMP imp, const char *types) {
 
 static void ensureStoreKit(void) {
     if (NSClassFromString(@"SKProduct") != nil) { iaphLog(@"ensureStoreKit: already loaded"); return; }
-    int r = dlopen("/System/Library/Frameworks/StoreKit.framework/StoreKit", RTLD_LAZY | RTLD_GLOBAL);
-    iaphLog(@"ensureStoreKit: dlopen=%d SKProduct=%@", r, NSClassFromString(@"SKProduct") ? @"loaded" : @"nil");
+    void *h = dlopen("/System/Library/Frameworks/StoreKit.framework/StoreKit", RTLD_LAZY | RTLD_GLOBAL);
+    iaphLog(@"ensureStoreKit: dlopen=%p SKProduct=%@", h, NSClassFromString(@"SKProduct") ? @"loaded" : @"nil");
 }
 
 // ================= IAPManager =================
