@@ -844,10 +844,12 @@ static void hookFakeGPS(void) {
     mfSetBoolPref(key, sw.on);
 }
 - (void)mfDismissPanel { 
+    iaphLog(@"panel: dismiss called");
     if (g_mfPanelWindow) {
         UIWindow *w = g_mfPanelWindow;
         [UIView animateWithDuration:0.2 animations:^{ w.alpha = 0; } completion:^(BOOL f) {
             w.hidden = YES; g_mfPanelWindow = nil;
+            iaphLog(@"panel: dismissed");
         }];
     }
 }
@@ -936,7 +938,7 @@ static void iaphShowPanel(UIViewController *vc) {
     [win addSubview:card];
     win.alpha = 0;
     win.hidden = NO;
-    [win makeKeyAndVisible];
+    // v3.8: 不再 makeKeyAndVisible——抢 keyWindow 会让宿主 app（Ibiza 框架等）触发 first responder/键盘连锁反应导致卡死。只显示不抢 key。
     [UIView animateWithDuration:0.25 animations:^{ win.alpha = 1; }];
     g_mfPanelWindow = win;
     PLOG("[panel] shown ok, windowScene=%@", win.windowScene ? @"set" : @"nil");
