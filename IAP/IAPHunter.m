@@ -12,7 +12,7 @@
 #import <dlfcn.h>
 
 // 在线查询（App Store 网页 API 转发）— 兜底用
-static void queryOnlineIAP(UIViewController *vc);
+// v4.1: 不再用 queryOnlineIAP（远程查询由面板「扫描购买」页 mfFetchIAPList 负责）
 // 购买指令接收轮询（SB 版发起，app 内执行）
 static void startBuyPoller(void);
 // 购买指令接收轮询（SB 版发起，app 内执行）
@@ -149,10 +149,7 @@ static IAPManager *g_shared = nil;
             }]];
         }
         if (products.count == 0) {
-            [alert addAction:[UIAlertAction actionWithTitle:@"本地 ID 全部无效" style:UIAlertActionStyleDefault handler:nil]];
-            [alert addAction:[UIAlertAction actionWithTitle:@"在线查询（App Store 兜底）" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-                queryOnlineIAP(vc);
-            }]];
+            [alert addAction:[UIAlertAction actionWithTitle:@"本地 ID 全部无效（用面板「扫描购买」远程查询）" style:UIAlertActionStyleDefault handler:nil]];
         }
         [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
         [vc presentViewController:alert animated:YES completion:nil];
@@ -236,302 +233,191 @@ static UIViewController *topVC(void) {
     return vc;
 }
 
+// ================= v4.1 面板系统声明 =================
 static void showMainMenu(UIViewController *vc);
 static void iaphShowPanel(UIViewController *vc);
-static CGFloat mfGridButton(UIView *card, CGFloat x, CGFloat y, CGFloat w, NSString *title, NSString *emoji, SEL action, BOOL switchMode, NSString *pfx);
 static void hookShakeBlock(void);
 static void hookFakeGPS(void);
-static CGFloat mfSectionHeader(UIView *card, CGFloat y, NSString *title);
-static CGFloat mfActionRow(UIView *card, CGFloat y, NSString *title, NSString *icon, SEL action);
-static CGFloat mfSwitchRow(UIView *card, CGFloat y, NSString *title, NSString *pfx, BOOL def, SEL action, BOOL useSwitch);
-static CGFloat mfLabelRow(UIView *card, CGFloat y, NSString *text);
-static NSString *mfPermText(id mediaType);
+// 面板全局（v4.1——定义在此，供各页面/控制器使用）
+static UIView *g_mfPanelOverlay = nil;
+static UIViewController *g_mfPanelRootVC = nil;
+static id g_mfCtrl = nil;
+static NSMutableArray *g_mfPages = nil;
+static CGFloat g_mfCardW = 0, g_mfCardH = 0;
+static double g_mfSelLat = 0, g_mfSelLon = 0;
+// 导航/页面工具（段 B 定义）
+static UIView *mfMakePage(NSString *title, BOOL showBack);
+static void mfPushPage(UIView *page);
+static void mfPopPage(void);
+static void mfClosePanel(void);
+// 页面函数（段 A/B 定义，控制器方法调用）
+static void mfShowProductPage(void);
+static void mfShowScanPage(void);
+static void mfShowManualBuyPage(void);
+static void mfShowIconPage(void);
+static void mfShowGpsPage(void);
+static CGFloat mfGridButton(UIView *card, CGFloat x, CGFloat y, CGFloat w, NSString *title, NSString *emoji, SEL action, BOOL switchMode, NSString *pfx);
+// FakeGPS 坐标（段 B 定义——hook 用）
+static double iaphFakeLat(void);
+static double iaphFakeLon(void);
+// 地图结构体（v4.1——动态 MapKit 需要，避免依赖 CoreLocation 头）
+typedef struct { double latitude; double longitude; } CLLocationCoordinate2D;
+typedef struct { CLLocationCoordinate2D center; struct { double latitudeDelta, longitudeDelta; } span; } MKCoordinateRegion;
 
-#pragma mark - IAP 列表页（Product ID 列表风格）
-@interface IAPHunterVC : UIViewController <UITableViewDataSource, UITableViewDelegate>
-@property (nonatomic, retain) NSMutableArray *items;   // {pid, price, title}
-@property (nonatomic, copy) void (^onBuy)(NSString *pid);
-@property (nonatomic, copy) void (^onRefresh)(void);
-- (void)updateWithProducts:(NSArray *)products;
-- (void)setCountLabel;
-@end
 
-@implementation IAPHunterVC {
-    UITableView *_tv;
-    UILabel *_countLabel;
-    int _detailFetched;
-}
+// ================= v4.1 IAP 页面函数（子页形式——不用弹窗） =================
 
-- (void)viewDidLoad {
-    [super viewDidLoad];
-    self.title = @"Product ID 列表";
-    self.view.backgroundColor = [UIColor systemBackgroundColor];
-
-    // 顶栏：数量状态 + 刷新
-    UIView *topBar = [[UIView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 36)];
-    topBar.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    _countLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 8, self.view.bounds.size.width - 120, 20)];
-    _countLabel.font = [UIFont systemFontOfSize:13];
-    _countLabel.textColor = [UIColor secondaryLabelColor];
-    [topBar addSubview:_countLabel];
-    [_countLabel release];
-    UIButton *refreshBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    refreshBtn.frame = CGRectMake(self.view.bounds.size.width - 84, 4, 68, 28);
-    refreshBtn.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-    [refreshBtn setTitle:@"刷新" forState:UIControlStateNormal];
-    [refreshBtn addTarget:self action:@selector(refreshTapped) forControlEvents:UIControlEventTouchUpInside];
-    [topBar addSubview:refreshBtn];
-    [self.view addSubview:topBar];
-    [topBar release];
-
-    _tv = [[UITableView alloc] initWithFrame:CGRectMake(0, 36, self.view.bounds.size.width, self.view.bounds.size.height - 36)
-                                      style:UITableViewStylePlain];
-    _tv.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    _tv.dataSource = self;
-    _tv.delegate = self;
-    [self.view addSubview:_tv];
-    [_tv release];
-
-    [self setCountLabel];
-}
-
-- (void)setCountLabel {
-    if (_countLabel == nil) return;
-    int n = (int)self.items.count;
-    if (_detailFetched > 0)
-        _countLabel.text = [NSString stringWithFormat:@"查询 %d 个 · 已获取详情", n];
-    else
-        _countLabel.text = [NSString stringWithFormat:@"查询 %d 个⋯", n];
-}
-
-- (void)updateWithProducts:(NSArray *)products {
-    if (products.count == 0) return;
-    for (SKProduct *p in products) {
-        NSString *pid = p.productIdentifier;
-        for (NSMutableDictionary *item in self.items) {
-            if ([[item objectForKey:@"pid"] isEqualToString:pid]) {
-                if (p.localizedTitle.length > 0)
-                    [item setObject:p.localizedTitle forKey:@"title"];
-                NSNumberFormatter *fmt = [[NSNumberFormatter alloc] init];
-                fmt.numberStyle = NSNumberFormatterCurrencyStyle;
-                fmt.locale = p.priceLocale;
-                NSString *ps = [fmt stringFromNumber:p.price];
-                [fmt release];
-                if (ps.length > 0) [item setObject:ps forKey:@"price"];
-                break;
-            }
-        }
-    }
-    _detailFetched = (int)products.count;
-    [_tv reloadData];
-    [self setCountLabel];
-}
-
-- (void)refreshTapped {
-    if (self.onRefresh) self.onRefresh();
-}
-
-#pragma mark - UITableView
-- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)section {
-    return self.items.count;
-}
-
-- (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
-    static NSString *cid = @"iap";
-    UITableViewCell *cell = [tv dequeueReusableCellWithIdentifier:cid];
-    if (cell == nil) {
-        cell = [[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:cid] autorelease];
-        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-    }
-    NSDictionary *item = [self.items objectAtIndex:ip.row];
-    cell.textLabel.text = [item objectForKey:@"pid"];
-    cell.textLabel.font = [UIFont systemFontOfSize:14];
-    cell.textLabel.adjustsFontSizeToFitWidth = YES;
-    cell.textLabel.minimumScaleFactor = 0.7;
-    NSString *title = [item objectForKey:@"title"];
-    cell.detailTextLabel.text = (title.length > 0 ? title : @"点击购买");
-    cell.detailTextLabel.textColor = [UIColor secondaryLabelColor];
-    NSString *price = [item objectForKey:@"price"];
-    UILabel *pl = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, 100, 22)];
-    pl.text = (price.length > 0 ? price : @"?");
-    pl.textAlignment = NSTextAlignmentRight;
-    pl.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
-    pl.textColor = [UIColor labelColor];
-    cell.accessoryView = pl;
-    [pl release];
-    return cell;
-}
-
-- (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
-    [tv deselectRowAtIndexPath:ip animated:YES];
-    NSDictionary *item = [self.items objectAtIndex:ip.row];
-    NSString *pid = [item objectForKey:@"pid"];
-    if (self.onBuy != nil && pid.length > 0) self.onBuy(pid);
-}
-
-- (void)dealloc {
-    [_tv release];
-    [_countLabel release];
-    self.items = nil;
-    self.onBuy = nil;
-    self.onRefresh = nil;
-    [super dealloc];
-}
-@end
-
-// ===== 在线查 IAP（App Store 网页数据 API 转发） =====
-static void queryOnlineIAP(UIViewController *vc) {
-    NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier];
-    if (bundleID.length == 0) bundleID = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleIdentifier"];
-    if (bundleID.length == 0) {
-        // 兜底：从 bundlePath 反推（xxx.app → xxx）
-        NSString *bp = [[NSBundle mainBundle] bundlePath];
-        bundleID = [[bp lastPathComponent] stringByDeletingPathExtension];
-    }
-    if (bundleID.length == 0) {
-        UIAlertController *err = [UIAlertController alertControllerWithTitle:@"[IAPHunter]"
-                                                                    message:@"无法获取 Bundle ID"
-                                                             preferredStyle:UIAlertControllerStyleAlert];
-        [err addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleCancel handler:nil]];
-        [vc presentViewController:err animated:YES completion:nil];
-        return;
-    }
-    UIAlertController *waiting = [UIAlertController alertControllerWithTitle:@"[IAPHunter] 在线查询"
-                                                                    message:[NSString stringWithFormat:@"正在查询 %@ ...", bundleID]
-                                                             preferredStyle:UIAlertControllerStyleAlert];
-    [vc presentViewController:waiting animated:YES completion:nil];
-
-    NSString *enc = [bundleID stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLQueryAllowedCharacterSet]];
-    NSString *urlStr = [NSString stringWithFormat:@"https://xn--ug8h.eu.org/api/iap?bundleId=%@&country=us", enc];
-    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:urlStr]
-                                                       cachePolicy:NSURLRequestReloadIgnoringCacheData
-                                                   timeoutInterval:25];
-    [req setValue:@"https://xn--ug8h.eu.org" forHTTPHeaderField:@"Origin"];
-    [req setValue:@"https://xn--ug8h.eu.org/iap" forHTTPHeaderField:@"Referer"];
+// 远程查 IAP 列表（回调 items: [{pid,price}] 或 err）
+static void mfFetchIAPList(void (^cb)(NSArray *items, NSString *err)) {
+    NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
+    if (!bid) { cb(nil, @"无 bundle id"); return; }
+    NSString *url = [NSString stringWithFormat:@"https://xn--ug8h.eu.org/api/iap?bundleId=%@&country=us", bid];
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:url] cachePolicy:NSURLRequestReloadIgnoringCacheData timeoutInterval:12];
     [req setValue:@"IAPHunter/1.1" forHTTPHeaderField:@"User-Agent"];
-
-    NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:
-        ^(NSData *data, NSURLResponse *response, NSError *error) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                void (^finish)(UIAlertController *) = ^(UIAlertController *alert) {
-                    [waiting dismissViewControllerAnimated:NO completion:^{
-                        [vc presentViewController:alert animated:YES completion:nil];
-                    }];
-                };
-                if (error != nil) {
-                    UIAlertController *err = [UIAlertController alertControllerWithTitle:@"[IAPHunter] 查询失败"
-                                                                                message:error.localizedDescription
-                                                                         preferredStyle:UIAlertControllerStyleAlert];
-                    [err addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleCancel handler:nil]];
-                    finish(err);
-                    return;
-                }
-                NSDictionary *json = nil;
-                if (data.length > 0) json = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
-                NSArray *iaps = json[@"iaps"];
-                if (![iaps isKindOfClass:[NSArray class]] || iaps.count == 0) {
-                    NSString *msg = json[@"error"] ?: @"该 app 没有内购";
-                    UIAlertController *err = [UIAlertController alertControllerWithTitle:@"[IAPHunter] 无结果"
-                                                                                message:[NSString stringWithFormat:@"%@", msg]
-                                                                         preferredStyle:UIAlertControllerStyleAlert];
-                    [err addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleCancel handler:nil]];
-                    finish(err);
-                    return;
-                }
-                NSMutableArray *ids = [NSMutableArray array];
-                for (NSDictionary *iap in iaps) {
-                    if (![iap isKindOfClass:[NSDictionary class]]) continue;
-                    NSString *pid = iap[@"productId"];
-                    if (pid.length == 0) continue;
-                    [ids addObject:pid];
-                }
-                if (ids.count > 0) {
-                    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
-                    NSMutableArray *saved = [[d objectForKey:@"SavedIAPIDs"] mutableCopy];
-                    if (saved == nil) saved = [NSMutableArray array];
-                    for (NSString *pid in ids) if (![saved containsObject:pid]) [saved addObject:pid];
-                    [d setObject:saved forKey:@"SavedIAPIDs"];
-                }
-                // Product ID 列表：在线拿 ID → 列表展示 → 点击即购
-                NSString *appName = json[@"app"][@"name"];
-                NSMutableArray *items = [NSMutableArray array];
-                for (NSDictionary *iap in iaps) {
-                    if (![iap isKindOfClass:[NSDictionary class]]) continue;
-                    NSString *pid = iap[@"productId"];
-                    if (pid.length == 0) continue;
-                    NSString *price = iap[@"priceFormatted"];
-                    NSMutableDictionary *item = [NSMutableDictionary dictionaryWithObjectsAndKeys:
-                        pid, @"pid",
-                        (price.length ? price : @"?"), @"price",
-                        @"", @"title",
-                        nil];
-                    [items addObject:item];
-                }
-                IAPHunterVC *listVC = [[IAPHunterVC alloc] init];
-                listVC.items = items;
-                __block IAPHunterVC *blkList = listVC; // MRC: __block 不 retain，防循环引用
-                listVC.onBuy = ^(NSString *pid) {
-                    IAPRecord(pid);
-                    SKPayment *pay = [SKPayment paymentWithProductIdentifier:pid];
-                    [[SKPaymentQueue defaultQueue] addPayment:pay];
-                };
-                listVC.onRefresh = ^{
-                    [blkList dismissViewControllerAnimated:YES completion:^{
-                        queryOnlineIAP(topVC());
-                    }];
-                };
-                UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:listVC];
-                nav.modalPresentationStyle = UIModalPresentationPageSheet;
-                // 异步查详情（本地化名称 + 精确价格）
-                NSArray *idsCopy = [[ids copy] autorelease];
-                [vc presentViewController:nav animated:YES completion:^{
-                    [[IAPManager sharedManager] fetchProductsWithIDs:[NSSet setWithArray:idsCopy]
-                                                          completion:^(NSArray *products, NSArray *invalid) {
-                        [listVC updateWithProducts:products];
-                    }];
-                }];
-                [nav release];
-                [listVC release];
-                [waiting dismissViewControllerAnimated:NO completion:nil];
-            });
-        }];
+    [req setValue:@"https://xn--ug8h.eu.org" forHTTPHeaderField:@"Origin"];
+    [req setValue:@"https://xn--ug8h.eu.org" forHTTPHeaderField:@"Referer"];
+    NSURLSession *ses = [NSURLSession sharedSession];
+    NSURLSessionDataTask *task = [ses dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+        if (err) { cb(nil, err.localizedDescription); return; }
+        NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+        if (![json isKindOfClass:[NSDictionary class]]) { cb(nil, @"响应格式错误"); return; }
+        NSArray *iaps = json[@"iaps"];
+        if (![iaps isKindOfClass:[NSArray class]]) { cb(nil, @"无 IAP 数据"); return; }
+        NSMutableArray *items = [NSMutableArray array];
+        for (NSDictionary *iap in iaps) {
+            if (![iap isKindOfClass:[NSDictionary class]]) continue;
+            NSString *pid = iap[@"productId"];
+            if (pid.length == 0) continue;
+            NSString *price = iap[@"priceFormatted"];
+            IAPRecord(pid);  // 收集记录
+            [items addObject:[NSDictionary dictionaryWithObjectsAndKeys:
+                pid, @"pid",
+                (price.length ? price : @"?"), @"price",
+                nil]];
+        }
+        cb(items, nil);
+    }];
     [task resume];
 }
 
-// ================= 图标解锁（移植自 IconSwitcher） =================
-// 读 Info.plist CFBundleAlternateIcons 备用图标列表 → 弹窗选择 → setAlternateIconName 切换
-static void iaphShowIconSwitcher(UIViewController *vc) {
-    if (vc == nil) return;
-    UIApplication *app = [UIApplication sharedApplication];
-    if (![app respondsToSelector:@selector(supportsAlternateIcons)] || !app.supportsAlternateIcons) {
-        UIAlertController *err = [UIAlertController alertControllerWithTitle:@"[MinisFix]"
-                                                                     message:@"当前 app 不支持切换图标"
-                                                              preferredStyle:UIAlertControllerStyleAlert];
-        [err addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleCancel handler:nil]];
-        [vc presentViewController:err animated:YES completion:nil];
-        return;
-    }
-    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"[MinisFix] 图标解锁"
-                                                                  message:@"选择要切换的图标"
-                                                           preferredStyle:UIAlertControllerStyleActionSheet];
-    [sheet addAction:[UIAlertAction actionWithTitle:@"默认图标" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-        [app setAlternateIconName:nil completionHandler:nil];
-    }]];
+// 扫描购买页：查询 → 列表渲染（子页内）
+static void mfShowScanPage(void) {
+    UIView *page = mfMakePage(@"扫描购买", YES);
+    UILabel *st = [[UILabel alloc] initWithFrame:CGRectMake(16, g_mfCardH/2 - 20, g_mfCardW - 32, 40)];
+    st.text = @"正在查询 IAP 列表…";
+    st.textAlignment = NSTextAlignmentCenter;
+    st.font = [UIFont systemFontOfSize:14];
+    st.textColor = [UIColor secondaryLabelColor];
+    [page addSubview:st];
+    mfPushPage(page);
+    mfFetchIAPList(^(NSArray *items, NSString *err) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [st removeFromSuperview];
+            if (err) {
+                UILabel *e = [[UILabel alloc] initWithFrame:CGRectMake(16, 100, g_mfCardW - 32, 60)];
+                e.text = [NSString stringWithFormat:@"查询失败:\n%@", err];
+                e.numberOfLines = 0;
+                e.textAlignment = NSTextAlignmentCenter;
+                e.font = [UIFont systemFontOfSize:13];
+                e.textColor = [UIColor systemRedColor];
+                [page addSubview:e];
+                return;
+            }
+            if (items.count == 0) {
+                UILabel *e = [[UILabel alloc] initWithFrame:CGRectMake(16, 100, g_mfCardW - 32, 40)];
+                e.text = @"未找到 IAP 产品";
+                e.textAlignment = NSTextAlignmentCenter;
+                e.textColor = [UIColor secondaryLabelColor];
+                [page addSubview:e];
+                return;
+            }
+            UIScrollView *sv = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 42, g_mfCardW, g_mfCardH - 42)];
+            CGFloat y = 8;
+            for (NSDictionary *item in items) {
+                UIButton *row = [UIButton buttonWithType:UIButtonTypeSystem];
+                row.frame = CGRectMake(12, y, g_mfCardW - 24, 46);
+                row.backgroundColor = [UIColor secondarySystemBackgroundColor];
+                row.layer.cornerRadius = 12;
+                [row setTitle:[NSString stringWithFormat:@"%@    %@", item[@"pid"], item[@"price"]] forState:UIControlStateNormal];
+                row.titleLabel.font = [UIFont systemFontOfSize:13];
+                row.titleLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
+                [row setContentHorizontalAlignment:UIControlContentHorizontalAlignmentLeft];
+                [row setTitleEdgeInsets:UIEdgeInsetsMake(0, 14, 0, 14)];
+                objc_setAssociatedObject(row, "pid", item[@"pid"], OBJC_ASSOCIATION_RETAIN);
+                [row addTarget:g_mfCtrl action:NSSelectorFromString(@"mfBuyProduct:") forControlEvents:UIControlEventTouchUpInside];
+                [sv addSubview:row];
+                y += 52;
+            }
+            sv.contentSize = CGSizeMake(g_mfCardW, y + 16);
+            [page addSubview:sv];
+            iaphLog(@"scan: %d items rendered", (int)items.count);
+        });
+    });
+}
+
+// 手动购买页：输入 PID 直购
+static void mfShowManualBuyPage(void) {
+    UIView *page = mfMakePage(@"手动购买", YES);
+    UITextField *tf = [[UITextField alloc] initWithFrame:CGRectMake(16, 56, g_mfCardW - 32, 42)];
+    tf.borderStyle = UITextBorderStyleRoundedRect;
+    tf.placeholder = @"输入产品 ID（如 app.lebaby.unlimited_entries）";
+    tf.autocorrectionType = UITextAutocorrectionTypeNo;
+    tf.autocapitalizationType = UITextAutocapitalizationTypeNone;
+    tf.font = [UIFont systemFontOfSize:13];
+    tf.clearButtonMode = UITextFieldViewModeWhileEditing;
+    [page addSubview:tf];
+    objc_setAssociatedObject(page, "tf", tf, OBJC_ASSOCIATION_RETAIN);
+    UIButton *buy = [UIButton buttonWithType:UIButtonTypeSystem];
+    buy.frame = CGRectMake(16, 110, g_mfCardW - 32, 44);
+    buy.backgroundColor = [UIColor systemBlueColor];
+    buy.layer.cornerRadius = 12;
+    [buy setTitle:@"购买" forState:UIControlStateNormal];
+    [buy setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    [buy.titleLabel setFont:[UIFont boldSystemFontOfSize:15]];
+    [buy addTarget:g_mfCtrl action:NSSelectorFromString(@"mfDoManualBuy") forControlEvents:UIControlEventTouchUpInside];
+    [page addSubview:buy];
+    UILabel *res = [[UILabel alloc] initWithFrame:CGRectMake(16, 164, g_mfCardW - 32, 60)];
+    res.numberOfLines = 0;
+    res.font = [UIFont systemFontOfSize:13];
+    res.textColor = [UIColor labelColor];
+    res.textAlignment = NSTextAlignmentCenter;
+    [page addSubview:res];
+    objc_setAssociatedObject(page, "res", res, OBJC_ASSOCIATION_RETAIN);
+    mfPushPage(page);
+}
+
+// 图标解锁页：读 CFBundleAlternateIcons → 网格 → 点击切换
+static void mfShowIconPage(void) {
+    UIView *page = mfMakePage(@"图标解锁", YES);
     NSDictionary *info = [[NSBundle mainBundle] infoDictionary];
-    NSDictionary *iconsDict = info[@"CFBundleIcons"];
-    NSDictionary *alt = iconsDict[@"CFBundleAlternateIcons"];
-    for (NSString *name in alt) {
-        [sheet addAction:[UIAlertAction actionWithTitle:name style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-            [app setAlternateIconName:name completionHandler:nil];
-        }]];
+    NSDictionary *alt = info[@"CFBundleIcons"][@"CFBundleAlternateIcons"];
+    NSArray *names = [alt allKeys];
+    UIScrollView *sv = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 42, g_mfCardW, g_mfCardH - 42)];
+    if (names.count == 0) {
+        UILabel *e = [[UILabel alloc] initWithFrame:CGRectMake(16, 60, g_mfCardW - 32, 40)];
+        e.text = @"此 app 没有备用图标";
+        e.textAlignment = NSTextAlignmentCenter;
+        e.textColor = [UIColor secondaryLabelColor];
+        [page addSubview:e];
+    } else {
+        CGFloat gw = (g_mfCardW - 32 - 12) / 2;
+        CGFloat y = 8;
+        for (NSString *nm in names) {
+            UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
+            b.frame = CGRectMake(16, y, gw, 56);
+            b.backgroundColor = [UIColor secondarySystemBackgroundColor];
+            b.layer.cornerRadius = 12;
+            [b setTitle:nm forState:UIControlStateNormal];
+            [b.titleLabel setFont:[UIFont systemFontOfSize:13]];
+            objc_setAssociatedObject(b, "icon", nm, OBJC_ASSOCIATION_RETAIN);
+            [b addTarget:g_mfCtrl action:NSSelectorFromString(@"mfIconTap:") forControlEvents:UIControlEventTouchUpInside];
+            [sv addSubview:b];
+            y += 62;
+        }
+        sv.contentSize = CGSizeMake(g_mfCardW, y + 16);
+        [page addSubview:sv];
     }
-    [sheet addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    if (sheet.popoverPresentationController != nil) {
-        sheet.popoverPresentationController.sourceView = vc.view;
-        sheet.popoverPresentationController.sourceRect = vc.view.bounds;
-        sheet.popoverPresentationController.permittedArrowDirections = 0;
-    }
-    [vc presentViewController:sheet animated:YES completion:nil];
+    mfPushPage(page);
 }
 
 static void showMainMenu(UIViewController *vc) {
@@ -778,9 +664,17 @@ static void mfSetBoolPref(NSString *key, BOOL val) {
     [d writeToFile:@"/var/jb/var/mobile/Library/Preferences/com.linsars.minisfix.plist" atomically:YES];
 }
 
-static UIView *g_mfPanelOverlay = nil;   // v3.9: 面板 overlay（mask+card）直接挂 keyWindow——不用独立 UIWindow（避免 window 层级/keyWindow 冲突卡死）
-static UIViewController *g_mfPanelRootVC = nil;  // 呼出面板时的 VC（购买/图标选择用）
-static id g_mfCtrl = nil;
+
+// ================= v4.1 MFPanelCtrl + 面板系统（导航容器 + 子页 + FakeGPS 地图） =================
+
+// ---- FakeGPS 坐标（prefs——默认北京） ----
+static double iaphFakeLat(void) { id v = mfPrefsDict()[@"iaphFakeLat"]; return v ? [v doubleValue] : 39.9042; }
+static double iaphFakeLon(void) { id v = mfPrefsDict()[@"iaphFakeLon"]; return v ? [v doubleValue] : 116.4074; }
+static void mfSetPrefDouble(NSString *key, double val) {
+    NSMutableDictionary *d = mfPrefsDict();
+    d[key] = @(val);
+    [d writeToFile:@"/var/jb/var/mobile/Library/Preferences/com.linsars.minisfix.plist" atomically:YES];
+}
 
 #pragma mark - 屏蔽摇一摇（motionEnded hook）
 static IMP orig_motionEnded;
@@ -799,14 +693,14 @@ static void hookShakeBlock(void) {
 }
 
 #pragma mark - Fake GPS 伪装（CLLocationManager hook，v3.5 动态调用——不链接 CoreLocation）
-// 动态创建 CLLocation（避免链接 CoreLocation.framework——v2.1.1 注入成功版无此链接）
+// v4.1: 动态创建 CLLocation——坐标用面板地图选点（iaphFakeLat/iaphFakeLon，默认北京）
 static id makeFakeLocation(void) {
     Class locCls = objc_getClass("CLLocation");
     if (!locCls) return nil;
     id loc = [locCls alloc];
     SEL initSel = NSSelectorFromString(@"initWithLatitude:longitude:");
     if (!initSel) return nil;
-    return ((id(*)(id, SEL, double, double))objc_msgSend)(loc, initSel, 39.9042, 116.4074);  // 北京
+    return ((id(*)(id, SEL, double, double))objc_msgSend)(loc, initSel, iaphFakeLat(), iaphFakeLon());
 }
 static IMP orig_clLocation, orig_startUpdating;
 static id new_clLocation(id self, SEL _cmd) {
@@ -836,203 +730,63 @@ static void hookFakeGPS(void) {
     iaphLog(@"hookFakeGPS: hooks installed");
 }
 
-#pragma mark - 面板控制器（按钮/开关回调）
-@interface MFPanelCtrl : NSObject
-@end
-@implementation MFPanelCtrl
-- (void)mfSwitchChanged:(UISwitch *)sw {
-    NSString *key = objc_getAssociatedObject(sw, "pfx");
-    if (!key) return;
-    mfSetBoolPref(key, sw.on);
+// ---- 面板导航（全局在声明区定义） ----
+
+// 页面工具：带导航条的页面容器（返回 + 标题 + ✕）
+static UIView *mfMakePage(NSString *title, BOOL showBack) {
+    UIView *page = [[UIView alloc] initWithFrame:CGRectMake(0, 0, g_mfCardW, g_mfCardH)];
+    page.backgroundColor = [UIColor clearColor];
+    UIView *nav = [[UIView alloc] initWithFrame:CGRectMake(0, 0, g_mfCardW, 40)];
+    nav.backgroundColor = [UIColor clearColor];
+    [page addSubview:nav];
+    if (showBack) {
+        UIButton *back = [UIButton buttonWithType:UIButtonTypeSystem];
+        back.frame = CGRectMake(6, 4, 64, 32);
+        [back setTitle:@"‹ 返回" forState:UIControlStateNormal];
+        [back.titleLabel setFont:[UIFont systemFontOfSize:15]];
+        [back addTarget:g_mfCtrl action:NSSelectorFromString(@"mfPopPage") forControlEvents:UIControlEventTouchUpInside];
+        [nav addSubview:back];
+    }
+    UILabel *t = [[UILabel alloc] initWithFrame:CGRectMake(60, 6, g_mfCardW - 120, 28)];
+    t.text = title;
+    t.font = [UIFont boldSystemFontOfSize:16];
+    t.textAlignment = NSTextAlignmentCenter;
+    t.textColor = [UIColor labelColor];
+    [nav addSubview:t];
+    UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
+    close.frame = CGRectMake(g_mfCardW - 40, 4, 32, 32);
+    [close setTitle:@"✕" forState:UIControlStateNormal];
+    [close addTarget:g_mfCtrl action:NSSelectorFromString(@"mfClosePanel") forControlEvents:UIControlEventTouchUpInside];
+    [nav addSubview:close];
+    return page;
 }
-- (void)mfDismissPanel { 
-    iaphLog(@"panel: dismiss called");
+static void mfPushPage(UIView *page) {
+    if (!g_mfPages) g_mfPages = [[NSMutableArray alloc] init];
+    for (UIView *p in g_mfPages) p.hidden = YES;
+    [g_mfPanelOverlay addSubview:page];
+    [g_mfPages addObject:page];
+}
+static void mfPopPage(void) {
+    if (g_mfPages.count == 0) return;
+    UIView *top = [g_mfPages lastObject];
+    [top removeFromSuperview];
+    [g_mfPages removeLastObject];
+    if (g_mfPages.count > 0) [[g_mfPages lastObject] setHidden:NO];
+}
+static void mfClosePanel(void) {
     if (g_mfPanelOverlay) {
         UIView *ov = g_mfPanelOverlay;
         [UIView animateWithDuration:0.2 animations:^{ ov.alpha = 0; } completion:^(BOOL f) {
             [ov removeFromSuperview];
             g_mfPanelOverlay = nil;
             g_mfPanelRootVC = nil;
-            iaphLog(@"panel: dismissed");
+            [g_mfPages removeAllObjects];
+            iaphLog(@"panel: closed");
         }];
     }
 }
-- (void)mfScanProducts { queryOnlineIAP(g_mfPanelRootVC); [self mfDismissPanel]; }
-- (void)mfManualBuy { queryOnlineIAP(g_mfPanelRootVC); [self mfDismissPanel]; }
-- (void)mfIconSwitch { iaphShowIconSwitcher(g_mfPanelRootVC); [self mfDismissPanel]; }
-- (void)mfToggleEnabled { 
-    mfSetBoolPref(@"iaphIsEnabled", !mfPrefBool(@"iaphIsEnabled", NO));
-}
-// v4.0: 网格开关按钮点击切换（状态色同步）
-- (void)mfGridSwitchChanged:(UIButton *)b {
-    NSString *key = objc_getAssociatedObject(b, "pfx");
-    if (!key) return;
-    BOOL on = !mfPrefBool(key, NO);
-    mfSetBoolPref(key, on);
-    b.backgroundColor = on ? [UIColor systemGreenColor] : [UIColor secondarySystemBackgroundColor];
-    iaphLog(@"grid switch %@ -> %d", key, on);
-}
-// v4.0: 权限状态弹窗
-- (void)mfShowPermAlert:(id)sender {
-    NSString *msg = [NSString stringWithFormat:@"相机: %@\n麦克风: %@", mfPermText(@"vide"), mfPermText(@"soun")];
-    UIAlertController *ac = [UIAlertController alertControllerWithTitle:@"权限状态" message:msg preferredStyle:UIAlertControllerStyleAlert];
-    [ac addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
-    UIWindow *kw = [UIApplication sharedApplication].keyWindow;
-    UIViewController *top = kw.rootViewController;
-    while (top.presentedViewController) top = top.presentedViewController;
-    if (top) [top presentViewController:ac animated:YES completion:nil];
-}
-@end
 
-#pragma mark - 面板构建（v3.9: overlay 方案——挂 keyWindow，不用独立 UIWindow；毛玻璃 FakeTools 风格）
-static void iaphShowPanel(UIViewController *vc) {
-    if (g_mfPanelOverlay) return;
-    if (!g_mfCtrl) g_mfCtrl = [[MFPanelCtrl alloc] init];
-    @try {
-        iaphLog(@"panel: show called vc=%@", NSStringFromClass([vc class]));
-        // 找前台 keyWindow
-        UIWindow *keyWin = nil;
-        if (@available(iOS 13.0, *)) {
-            for (id sc in [UIApplication sharedApplication].connectedScenes) {
-                if ([sc isKindOfClass:[UIWindowScene class]] && ((UIWindowScene *)sc).activationState == UISceneActivationStateForegroundActive) {
-                    keyWin = [(UIWindowScene *)sc keyWindow]; break;
-                }
-            }
-        }
-        if (!keyWin) keyWin = [UIApplication sharedApplication].keyWindow;
-        if (!keyWin) { iaphLog(@"panel: NO keyWindow found"); return; }
-        iaphLog(@"panel: keyWindow=%@", keyWin);
-
-        CGRect sb = keyWin.bounds;
-        UIView *overlay = [[UIView alloc] initWithFrame:sb];
-        overlay.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        overlay.backgroundColor = [UIColor clearColor];
-
-        // 遮罩（点击关闭）
-        UIButton *mask = [UIButton buttonWithType:UIButtonTypeCustom];
-        mask.frame = overlay.bounds;
-        mask.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        mask.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.35];
-        [mask addTarget:g_mfCtrl action:NSSelectorFromString(@"mfDismissPanel") forControlEvents:UIControlEventTouchUpInside];
-        [overlay addSubview:mask];
-
-        CGFloat cardW = sb.size.width - 32;
-        CGFloat cardH = 436;
-        // v3.9+: 毛玻璃卡片（FakeTools 风格——UIBlurEffect + 圆角）
-        UIVisualEffectView *card = [[UIVisualEffectView alloc] initWithFrame:CGRectMake(16, (sb.size.height - cardH)/2, cardW, cardH)];
-        card.effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
-        card.layer.cornerRadius = 22;
-        card.clipsToBounds = YES;
-        card.layer.borderWidth = 0.5;
-        card.layer.borderColor = [[UIColor systemGray3Color] colorWithAlphaComponent:0.5].CGColor;
-        UIView *content = card.contentView;
-
-        // 标题栏
-        UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(20, 12, 200, 26)];
-        title.text = @"MinisFix";
-        title.font = [UIFont boldSystemFontOfSize:18];
-        title.textColor = [UIColor labelColor];
-        [content addSubview:title];
-        UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        closeBtn.frame = CGRectMake(cardW - 44, 10, 32, 32);
-        [closeBtn setTitle:@"✕" forState:UIControlStateNormal];
-        [closeBtn.titleLabel setFont:[UIFont systemFontOfSize:17]];
-        [closeBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfDismissPanel") forControlEvents:UIControlEventTouchUpInside];
-        [content addSubview:closeBtn];
-
-        // v4.0: FakeTools 风格图标网格（2 列 × 4 行）
-        CGFloat gw = (cardW - 32 - 12) / 2;   // 左右 16 + 中间 12
-        CGFloat gy = 48;
-        // 行 1：IAP
-        gy = mfGridButton(content, 16, gy, gw, @"扫描产品", @"🔍", @selector(mfScanProducts), NO, nil);
-        gy = mfGridButton(content, 16 + gw + 12, gy - 92, gw, @"手动购买", @"🛒", @selector(mfManualBuy), NO, nil);
-        // 行 2：图标解锁 + 启用
-        gy = mfGridButton(content, 16, gy, gw, @"图标解锁", @"🎨", @selector(mfIconSwitch), NO, nil);
-        gy = mfGridButton(content, 16 + gw + 12, gy - 92, gw, @"启用", @"⚙️", @selector(mfGridSwitchChanged:), YES, @"iaphIsEnabled");
-        // 行 3：屏蔽 + FakeGPS
-        gy = mfGridButton(content, 16, gy, gw, @"屏蔽摇一摇", @"📳", @selector(mfGridSwitchChanged:), YES, @"iaphShakeBlock");
-        gy = mfGridButton(content, 16 + gw + 12, gy - 92, gw, @"Fake GPS", @"📍", @selector(mfGridSwitchChanged:), YES, @"iaphFakeGPS");
-        // 行 4：相机 + 麦克风（权限详情）
-        gy = mfGridButton(content, 16, gy, gw, @"相机权限", @"📷", @selector(mfShowPermAlert:), NO, nil);
-        gy = mfGridButton(content, 16 + gw + 12, gy - 92, gw, @"麦克风", @"🎤", @selector(mfShowPermAlert:), NO, nil);
-
-        [overlay addSubview:card];
-        [keyWin addSubview:overlay];
-        g_mfPanelOverlay = overlay;
-        g_mfPanelRootVC = vc;
-        overlay.alpha = 0;
-        [UIView animateWithDuration:0.25 animations:^{ overlay.alpha = 1; }];
-        iaphLog(@"panel: SHOWN ok (grid panel, cardH=%d)", (int)cardH);
-    } @catch (NSException *e) {
-        iaphLog(@"panel EXCEPTION: %@ %@", e.name, e.reason);
-    }
-}
-
-// 分组标题
-static CGFloat mfSectionHeader(UIView *card, CGFloat y, NSString *title) {
-    UILabel *lb = [[UILabel alloc] initWithFrame:CGRectMake(20, y, 200, 22)];
-    lb.text = title;
-    lb.font = [UIFont boldSystemFontOfSize:13];
-    lb.textColor = [UIColor secondaryLabelColor];
-    [card addSubview:lb];
-    return y + 26;
-}
-// 动作行（图标 + 文字）
-static CGFloat mfActionRow(UIView *card, CGFloat y, NSString *title, NSString *icon, SEL action) {
-    UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
-    b.frame = CGRectMake(12, y, 300, 40);
-    [b setTitle:title forState:UIControlStateNormal];
-    [b setTitleColor:[UIColor labelColor] forState:UIControlStateNormal];
-    b.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
-    b.titleLabel.font = [UIFont systemFontOfSize:15];
-    b.titleEdgeInsets = UIEdgeInsetsMake(0, 30, 0, 0);
-    b.backgroundColor = [UIColor secondarySystemBackgroundColor];
-    b.layer.cornerRadius = 10;
-    if (action) [b addTarget:g_mfCtrl action:action forControlEvents:UIControlEventTouchUpInside];
-    [card addSubview:b];
-    return y + 46;
-}
-// 开关行
-static CGFloat mfSwitchRow(UIView *card, CGFloat y, NSString *title, NSString *pfx, BOOL def, SEL action, BOOL useSwitch) {
-    UIView *row = [[UIView alloc] initWithFrame:CGRectMake(12, y, 300, 40)];
-    row.backgroundColor = [UIColor secondarySystemBackgroundColor];
-    row.layer.cornerRadius = 10;
-    UILabel *lb = [[UILabel alloc] initWithFrame:CGRectMake(14, 0, 210, 40)];
-    lb.text = title;
-    lb.font = [UIFont systemFontOfSize:15];
-    lb.textColor = [UIColor labelColor];
-    [row addSubview:lb];
-    if (useSwitch) {
-        UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectMake(240, 4, 51, 31)];
-        sw.on = mfPrefBool(pfx, def);
-        objc_setAssociatedObject(sw, "pfx", pfx, OBJC_ASSOCIATION_RETAIN);
-        [sw addTarget:g_mfCtrl action:NSSelectorFromString(@"mfSwitchChanged:") forControlEvents:UIControlEventValueChanged];
-        [row addSubview:sw];
-    } else if (action) {
-        UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
-        b.frame = CGRectMake(240, 4, 60, 32);
-        [b setTitle:@"切换" forState:UIControlStateNormal];
-        [b addTarget:g_mfCtrl action:action forControlEvents:UIControlEventTouchUpInside];
-        [row addSubview:b];
-    }
-    [card addSubview:row];
-    return y + 46;
-}
-// 信息行
-static CGFloat mfLabelRow(UIView *card, CGFloat y, NSString *text) {
-    UIView *row = [[UIView alloc] initWithFrame:CGRectMake(12, y, 300, 40)];
-    row.backgroundColor = [UIColor secondarySystemBackgroundColor];
-    row.layer.cornerRadius = 10;
-    UILabel *lb = [[UILabel alloc] initWithFrame:CGRectMake(14, 0, 272, 40)];
-    lb.text = text;
-    lb.font = [UIFont systemFontOfSize:13];
-    lb.textColor = [UIColor secondaryLabelColor];
-    lb.numberOfLines = 0;
-    [row addSubview:lb];
-    [card addSubview:row];
-    return y + 46;
-}
-// v4.0: FakeTools 风格图标网格按钮（圆形图标 + 文字；switchMode 点击切换 + 背景色状态）
+// ---- FakeTools 风格网格按钮（圆形图标 + 文字；switchMode 点击切换 + 状态色） ----
 static CGFloat mfGridButton(UIView *card, CGFloat x, CGFloat y, CGFloat w, NSString *title, NSString *emoji, SEL action, BOOL switchMode, NSString *pfx) {
     UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
     b.frame = CGRectMake(x, y, w, 84);
@@ -1040,7 +794,6 @@ static CGFloat mfGridButton(UIView *card, CGFloat x, CGFloat y, CGFloat w, NSStr
     b.layer.cornerRadius = 16;
     [b addTarget:g_mfCtrl action:action forControlEvents:UIControlEventTouchUpInside];
     [card addSubview:b];
-    // emoji 图标（圆形浅底）
     UIView *badge = [[UIView alloc] initWithFrame:CGRectMake(w/2 - 22, 10, 44, 44)];
     badge.backgroundColor = [UIColor tertiarySystemBackgroundColor];
     badge.layer.cornerRadius = 22;
@@ -1051,7 +804,6 @@ static CGFloat mfGridButton(UIView *card, CGFloat x, CGFloat y, CGFloat w, NSStr
     ic.font = [UIFont systemFontOfSize:24];
     ic.textAlignment = NSTextAlignmentCenter;
     [badge addSubview:ic];
-    // 文字
     UILabel *lb = [[UILabel alloc] initWithFrame:CGRectMake(0, 58, w, 18)];
     lb.text = title;
     lb.font = [UIFont systemFontOfSize:12];
@@ -1060,7 +812,6 @@ static CGFloat mfGridButton(UIView *card, CGFloat x, CGFloat y, CGFloat w, NSStr
     lb.adjustsFontSizeToFitWidth = YES;
     lb.minimumScaleFactor = 0.7;
     [b addSubview:lb];
-    // 开关模式：点击切换 + 状态色
     if (switchMode && pfx) {
         BOOL on = mfPrefBool(pfx, NO);
         b.backgroundColor = on ? [UIColor systemGreenColor] : [UIColor secondarySystemBackgroundColor];
@@ -1069,23 +820,243 @@ static CGFloat mfGridButton(UIView *card, CGFloat x, CGFloat y, CGFloat w, NSStr
     return y + 92;
 }
 
-// 权限文本（v3.7: 全 try-catch 防御——权限查询任何异常都显示 n/a，面板永不崩）
-static NSString *mfPermText(id mediaType) {
-    @try {
-        Class ac = objc_getClass("AVCaptureDevice");
-        if (!ac) return @"n/a";
-        SEL ssel = NSSelectorFromString(@"authorizationStatusForMediaType:");
-        if (![ac respondsToSelector:ssel]) return @"n/a";
-        NSInteger s = (NSInteger)[ac performSelector:ssel withObject:mediaType];
-        switch (s) {
-            case 0: return @"未决定";
-            case 1: return @"受限";
-            case 2: return @"拒绝";
-            case 3: return @"已授权";
-            default: return @"?";
-        }
-    } @catch (NSException *e) {
-        iaphLog(@"mfPermText exception: %@ %@", e.name, e.reason);
-        return @"n/a";
+@interface MFPanelCtrl : NSObject
+@end
+@implementation MFPanelCtrl
+- (void)mfPopPage { mfPopPage(); }
+- (void)mfClosePanel { mfClosePanel(); }
+// 网格开关（屏蔽摇一摇）
+- (void)mfGridSwitchChanged:(UIButton *)b {
+    NSString *key = objc_getAssociatedObject(b, "pfx");
+    if (!key) return;
+    BOOL on = !mfPrefBool(key, NO);
+    mfSetBoolPref(key, on);
+    b.backgroundColor = on ? [UIColor systemGreenColor] : [UIColor secondarySystemBackgroundColor];
+    iaphLog(@"grid switch %@ -> %d", key, on);
+}
+// 扫描结果行点击购买
+- (void)mfBuyProduct:(UIButton *)b {
+    NSString *pid = objc_getAssociatedObject(b, "pid");
+    if (!pid) return;
+    IAPRecord(pid);
+    SKPayment *pay = [SKPayment paymentWithProductIdentifier:pid];
+    [[SKPaymentQueue defaultQueue] addPayment:pay];
+    b.backgroundColor = [UIColor systemGreenColor];
+    iaphLog(@"buy: %@", pid);
+}
+// 手动购买
+- (void)mfDoManualBuy {
+    UIView *top = [g_mfPages lastObject];
+    UITextField *tf = objc_getAssociatedObject(top, "tf");
+    UILabel *res = objc_getAssociatedObject(top, "res");
+    NSString *pid = [[tf text] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    if (pid.length == 0) { res.text = @"请输入产品 ID"; return; }
+    IAPRecord(pid);
+    SKPayment *pay = [SKPayment paymentWithProductIdentifier:pid];
+    [[SKPaymentQueue defaultQueue] addPayment:pay];
+    res.text = [NSString stringWithFormat:@"已发起购买:\n%@", pid];
+    res.textColor = [UIColor systemGreenColor];
+    iaphLog(@"manual buy: %@", pid);
+}
+// 图标点击切换
+- (void)mfIconTap:(UIButton *)b {
+    NSString *nm = objc_getAssociatedObject(b, "icon");
+    if (!nm) return;
+    UIApplication *app = [UIApplication sharedApplication];
+    NSError *err = nil;
+    if ([app respondsToSelector:@selector(setAlternateIconName:completionHandler:)]) {
+        [app setAlternateIconName:nm completionHandler:^(NSError *e) {
+            iaphLog(@"icon switch %@ -> %@", nm, e ? [e localizedDescription] : @"ok");
+        }];
+        b.backgroundColor = [UIColor systemGreenColor];
     }
 }
+// FakeGPS 地图长按选点
+- (void)mfMapLongPress:(UILongPressGestureRecognizer *)g {
+    if (g.state != UIGestureRecognizerStateBegan) return;
+    UIView *map = g.view;
+    CGPoint p = [g locationInView:map];
+    CLLocationCoordinate2D c = ((CLLocationCoordinate2D(*)(id, SEL, CGPoint, id))objc_msgSend)(map, NSSelectorFromString(@"convertPoint:toCoordinateFromView:"), p, map);
+    g_mfSelLat = c.latitude; g_mfSelLon = c.longitude;
+    Class annCls = objc_getClass("MKPointAnnotation");
+    if (annCls) {
+        id ann = [[annCls alloc] init];
+        ((void(*)(id, SEL, CLLocationCoordinate2D))objc_msgSend)(ann, NSSelectorFromString(@"setCoordinate:"), c);
+        [map performSelector:NSSelectorFromString(@"removeAnnotations:") withObject:[map performSelector:NSSelectorFromString(@"annotations")]];
+        [map performSelector:NSSelectorFromString(@"addAnnotation:") withObject:ann];
+    }
+    UIView *top = [g_mfPages lastObject];
+    UILabel *cl = objc_getAssociatedObject(top, "coord");
+    if (cl) cl.text = [NSString stringWithFormat:@"选中: %.4f, %.4f", c.latitude, c.longitude];
+    iaphLog(@"map select: %.4f, %.4f", c.latitude, c.longitude);
+}
+// FakeGPS 确认坐标
+- (void)mfConfirmCoord {
+    UIView *top = [g_mfPages lastObject];
+    UILabel *cl = objc_getAssociatedObject(top, "coord");
+    if (g_mfSelLat == 0 && g_mfSelLon == 0) {
+        if (cl) { cl.text = @"请先长按地图选择坐标"; cl.textColor = [UIColor systemOrangeColor]; }
+        return;
+    }
+    mfSetPrefDouble(@"iaphFakeLat", g_mfSelLat);
+    mfSetPrefDouble(@"iaphFakeLon", g_mfSelLon);
+    mfSetBoolPref(@"iaphFakeGPS", YES);
+    if (cl) { cl.text = [NSString stringWithFormat:@"✅ 已启用 Fake GPS:\n%.4f, %.4f", g_mfSelLat, g_mfSelLon]; cl.textColor = [UIColor systemGreenColor]; }
+    iaphLog(@"FakeGPS set: %.4f, %.4f", g_mfSelLat, g_mfSelLon);
+}
+// FakeGPS 开关
+- (void)mfGpsSwitch:(UISwitch *)sw {
+    mfSetBoolPref(@"iaphFakeGPS", sw.on);
+    iaphLog(@"FakeGPS switch -> %d", sw.on);
+}
+// 页面入口
+- (void)mfShowProductPage { mfShowProductPage(); }
+- (void)mfShowScanPage { mfShowScanPage(); }
+- (void)mfShowManualBuyPage { mfShowManualBuyPage(); }
+- (void)mfShowIconPage { mfShowIconPage(); }
+- (void)mfShowGpsPage { mfShowGpsPage(); }
+@end
+
+// ---- Product 子页 ----
+static void mfShowProductPage(void) {
+    UIView *page = mfMakePage(@"Product", YES);
+    CGFloat gw = (g_mfCardW - 32 - 12) / 2;
+    CGFloat gy = 48;
+    gy = mfGridButton(page, 16, gy, gw, @"扫描购买", @"🔍", @selector(mfShowScanPage), NO, nil);
+    gy = mfGridButton(page, 16 + gw + 12, gy - 92, gw, @"手动购买", @"⌨️", @selector(mfShowManualBuyPage), NO, nil);
+    gy = mfGridButton(page, 16, gy, gw, @"图标解锁", @"🎨", @selector(mfShowIconPage), NO, nil);
+    mfPushPage(page);
+}
+
+// ---- FakeGPS 地图页（动态 MapKit——不链接防注入失败） ----
+static void mfShowGpsPage(void) {
+    dlopen("/System/Library/Frameworks/MapKit.framework/MapKit", RTLD_LAZY | RTLD_GLOBAL);
+    dlopen("/System/Library/Frameworks/CoreLocation.framework/CoreLocation", RTLD_LAZY | RTLD_GLOBAL);
+    UIView *page = mfMakePage(@"Fake GPS", YES);
+    // 启用开关
+    UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectMake(16, 48, 60, 31)];
+    sw.on = mfPrefBool(@"iaphFakeGPS", NO);
+    [sw addTarget:g_mfCtrl action:NSSelectorFromString(@"mfGpsSwitch:") forControlEvents:UIControlEventValueChanged];
+    [page addSubview:sw];
+    UILabel *swLb = [[UILabel alloc] initWithFrame:CGRectMake(84, 52, 160, 24)];
+    swLb.text = @"启用模拟定位";
+    swLb.font = [UIFont systemFontOfSize:14];
+    swLb.textColor = [UIColor labelColor];
+    [page addSubview:swLb];
+    // 地图
+    Class MKCls = objc_getClass("MKMapView");
+    if (!MKCls) {
+        UILabel *e = [[UILabel alloc] initWithFrame:CGRectMake(16, 100, g_mfCardW - 32, 40)];
+        e.text = @"MapKit 不可用";
+        e.textColor = [UIColor secondaryLabelColor];
+        [page addSubview:e];
+        mfPushPage(page);
+        return;
+    }
+    id map = [[MKCls alloc] initWithFrame:CGRectMake(12, 86, g_mfCardW - 24, 200)];
+    map.layer.cornerRadius = 14;
+    map.clipsToBounds = YES;
+    MKCoordinateRegion reg;
+    reg.center.latitude = iaphFakeLat();
+    reg.center.longitude = iaphFakeLon();
+    reg.span.latitudeDelta = 0.05;
+    reg.span.longitudeDelta = 0.05;
+    ((void(*)(id, SEL, MKCoordinateRegion, BOOL))objc_msgSend)(map, NSSelectorFromString(@"setRegion:animated:"), reg, NO);
+    UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:g_mfCtrl action:NSSelectorFromString(@"mfMapLongPress:")];
+    lp.minimumPressDuration = 0.5;
+    [map addGestureRecognizer:lp];
+    [page addSubview:map];
+    objc_setAssociatedObject(page, "map", map, OBJC_ASSOCIATION_RETAIN);
+    // 坐标 label
+    UILabel *coord = [[UILabel alloc] initWithFrame:CGRectMake(16, 296, g_mfCardW - 32, 36)];
+    coord.text = [NSString stringWithFormat:@"当前: %.4f, %.4f（长按地图选点）", iaphFakeLat(), iaphFakeLon()];
+    coord.font = [UIFont systemFontOfSize:12];
+    coord.textColor = [UIColor secondaryLabelColor];
+    coord.numberOfLines = 0;
+    coord.textAlignment = NSTextAlignmentCenter;
+    [page addSubview:coord];
+    objc_setAssociatedObject(page, "coord", coord, OBJC_ASSOCIATION_RETAIN);
+    // 确认按钮
+    UIButton *ok = [UIButton buttonWithType:UIButtonTypeSystem];
+    ok.frame = CGRectMake(16, 338, g_mfCardW - 32, 44);
+    ok.backgroundColor = [UIColor systemBlueColor];
+    ok.layer.cornerRadius = 12;
+    [ok setTitle:@"确认模拟此坐标" forState:UIControlStateNormal];
+    [ok setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    [ok.titleLabel setFont:[UIFont boldSystemFontOfSize:15]];
+    [ok addTarget:g_mfCtrl action:NSSelectorFromString(@"mfConfirmCoord") forControlEvents:UIControlEventTouchUpInside];
+    [page addSubview:ok];
+    mfPushPage(page);
+    iaphLog(@"GPS page shown (MKMapView=%@)", MKCls ? @"loaded" : @"nil");
+}
+
+// ---- 主页面板（v4.1：Product / 屏蔽摇一摇 / Fake GPS） ----
+static void iaphShowPanel(UIViewController *vc) {
+    if (g_mfPanelOverlay) return;
+    if (!g_mfCtrl) g_mfCtrl = [[MFPanelCtrl alloc] init];
+    @try {
+        iaphLog(@"panel: show called vc=%@", NSStringFromClass([vc class]));
+        UIWindow *keyWin = nil;
+        if (@available(iOS 13.0, *)) {
+            for (id sc in [UIApplication sharedApplication].connectedScenes) {
+                if ([sc isKindOfClass:[UIWindowScene class]] && ((UIWindowScene *)sc).activationState == UISceneActivationStateForegroundActive) {
+                    keyWin = [(UIWindowScene *)sc keyWindow]; break;
+                }
+            }
+        }
+        if (!keyWin) keyWin = [UIApplication sharedApplication].keyWindow;
+        if (!keyWin) { iaphLog(@"panel: NO keyWindow"); return; }
+
+        CGRect sb = keyWin.bounds;
+        UIView *overlay = [[UIView alloc] initWithFrame:sb];
+        overlay.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        overlay.backgroundColor = [UIColor clearColor];
+        UIButton *mask = [UIButton buttonWithType:UIButtonTypeCustom];
+        mask.frame = overlay.bounds;
+        mask.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        mask.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.35];
+        [mask addTarget:g_mfCtrl action:NSSelectorFromString(@"mfClosePanel") forControlEvents:UIControlEventTouchUpInside];
+        [overlay addSubview:mask];
+
+        CGFloat cardW = sb.size.width - 32;
+        CGFloat cardH = 240;
+        g_mfCardW = cardW; g_mfCardH = cardH;
+        UIVisualEffectView *card = [[UIVisualEffectView alloc] initWithFrame:CGRectMake(16, (sb.size.height - cardH)/2, cardW, cardH)];
+        card.effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
+        card.layer.cornerRadius = 22;
+        card.clipsToBounds = YES;
+        card.layer.borderWidth = 0.5;
+        card.layer.borderColor = [[UIColor systemGray3Color] colorWithAlphaComponent:0.5].CGColor;
+        UIView *content = card.contentView;
+
+        UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(20, 12, 200, 26)];
+        title.text = @"MinisFix";
+        title.font = [UIFont boldSystemFontOfSize:18];
+        title.textColor = [UIColor labelColor];
+        [content addSubview:title];
+        UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+        closeBtn.frame = CGRectMake(cardW - 44, 10, 32, 32);
+        [closeBtn setTitle:@"✕" forState:UIControlStateNormal];
+        [closeBtn.titleLabel setFont:[UIFont systemFontOfSize:17]];
+        [closeBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfClosePanel") forControlEvents:UIControlEventTouchUpInside];
+        [content addSubview:closeBtn];
+
+        // 主页网格：Product / 屏蔽摇一摇 / Fake GPS
+        CGFloat gw = (cardW - 32 - 12) / 2;
+        CGFloat gy = 48;
+        gy = mfGridButton(content, 16, gy, gw, @"Product", @"🛍️", @selector(mfShowProductPage), NO, nil);
+        gy = mfGridButton(content, 16 + gw + 12, gy - 92, gw, @"屏蔽摇一摇", @"📳", @selector(mfGridSwitchChanged:), YES, @"iaphShakeBlock");
+        gy = mfGridButton(content, 16, gy, gw, @"Fake GPS", @"📍", @selector(mfShowGpsPage), NO, nil);
+
+        [overlay addSubview:card];
+        [keyWin addSubview:overlay];
+        g_mfPanelOverlay = overlay;
+        g_mfPanelRootVC = vc;
+        overlay.alpha = 0;
+        [UIView animateWithDuration:0.25 animations:^{ overlay.alpha = 1; }];
+        iaphLog(@"panel: SHOWN (home)");
+    } @catch (NSException *e) {
+        iaphLog(@"panel EXCEPTION: %@ %@", e.name, e.reason);
+    }
+}
+
