@@ -809,14 +809,23 @@ static void iaphShowPanel(UIViewController *vc) {
     if (!g_mfCtrl) g_mfCtrl = [[MFPanelCtrl alloc] init];
 
     @try {
+    FILE *plog = fopen("/var/jb/var/mobile/Documents/iaph_panel.log", "a");
+    #define PLOG(...) do { if (plog) { flockfile(plog); fprintf(plog, __VA_ARGS__); fprintf(plog, "\n"); fflush(plog); funlockfile(plog); } } while(0)
+    PLOG("[panel] show called pid=%d", getpid());
     CGRect sb = [UIScreen mainScreen].bounds;
     UIWindow *win = [[UIWindow alloc] initWithFrame:sb];
     win.windowLevel = UIWindowLevelAlert + 100;
     win.backgroundColor = [UIColor clearColor];
     if (@available(iOS 13.0, *)) {
+        UIWindowScene *target = nil;
         for (id sc in [UIApplication sharedApplication].connectedScenes) {
-            if ([[sc valueForKey:@"activationState"] intValue] == 0) { win.windowScene = sc; break; }
+            if ([sc isKindOfClass:[UIWindowScene class]] && ((UIWindowScene *)sc).activationState == UISceneActivationStateForegroundActive) {
+                target = (UIWindowScene *)sc; break;
+            }
         }
+        if (!target) target = [UIApplication sharedApplication].keyWindow.windowScene;
+        if (target) { win.windowScene = target; PLOG("[panel] scene set"); }
+        else PLOG("[panel] NO scene found");
     }
     win.rootViewController = [[UIViewController alloc] init];
 
@@ -873,9 +882,12 @@ static void iaphShowPanel(UIViewController *vc) {
     [win makeKeyAndVisible];
     [UIView animateWithDuration:0.25 animations:^{ win.alpha = 1; }];
     g_mfPanelWindow = win;
+    PLOG("[panel] shown ok, windowScene=%@", win.windowScene ? @"set" : @"nil");
     } @catch (NSException *e) {
+        PLOG("[panel] EXCEPTION: %@ %@", e.name, e.reason);
         NSLog(@"[MinisFix] panel exception: %@ %@", e.name, e.reason);
     }
+    if (plog) fclose(plog);
 }
 
 // 分组标题
