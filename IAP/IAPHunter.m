@@ -59,8 +59,9 @@ static void addMethod(Class cls, SEL sel, IMP imp, const char *types) {
 }
 
 static void ensureStoreKit(void) {
-    if (NSClassFromString(@"SKProduct") != nil) return;
-    dlopen("/System/Library/Frameworks/StoreKit.framework/StoreKit", RTLD_LAZY | RTLD_GLOBAL);
+    if (NSClassFromString(@"SKProduct") != nil) { iaphLog(@"ensureStoreKit: already loaded"); return; }
+    int r = dlopen("/System/Library/Frameworks/StoreKit.framework/StoreKit", RTLD_LAZY | RTLD_GLOBAL);
+    iaphLog(@"ensureStoreKit: dlopen=%d SKProduct=%@", r, NSClassFromString(@"SKProduct") ? @"loaded" : @"nil");
 }
 
 // ================= IAPManager =================
@@ -530,25 +531,26 @@ static void iaphShowIconSwitcher(UIViewController *vc) {
 }
 
 static void showMainMenu(UIViewController *vc) {
-    if (vc == nil) return;
+    if (vc == nil) { iaphLog(@"showMainMenu: vc == nil"); return; }
+    iaphLog(@"showMainMenu vc=%@", NSStringFromClass([vc class]));
     iaphShowPanel(vc);  // v3.0: 毛玻璃悬浮面板（双指长按呼出）
+    iaphLog(@"showMainMenu iaphShowPanel returned");
 }
 
 
 // 长按手势 action（v3.0: 双指长按呼出——全屏区域，双指误触率极低）
 static void longPressAction(id self, SEL _cmd, UILongPressGestureRecognizer *g) {
     if (g.state != UIGestureRecognizerStateBegan) return;
-    FILE *llog = fopen("/var/jb/var/mobile/Documents/iaph_gesture.log", "a");
-    if (llog) { fprintf(llog, "[lp] BEGAN touches=%lu\n", (unsigned long)g.numberOfTouches); fclose(llog); }
+    iaphLog(@"LONGPRESS BEGAN touches=%lu", (unsigned long)g.numberOfTouches);
     showMainMenu((UIViewController *)self);
+    iaphLog(@"LONGPRESS showMainMenu returned");
 }
 
 // ================= Hook 实现 =================
 static IMP orig_viewDidAppear;
 static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     ((void(*)(id, SEL, BOOL))orig_viewDidAppear)(self, _cmd, animated);
-    FILE *glog = fopen("/var/jb/var/mobile/Documents/iaph_gesture.log", "a");
-    if (glog) { fprintf(glog, "[vda] %s\n", NSStringFromClass([self class]).UTF8String); fclose(glog); }
+    iaphLog(@"viewDidAppear %@", NSStringFromClass([self class]));
     // 给 view 加长按手势（防重复）
     static const char kLPKey = 0;
     if (objc_getAssociatedObject(self, &kLPKey) == nil) {
@@ -559,6 +561,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
         [vc.view addGestureRecognizer:lp];
         [lp release];
         objc_setAssociatedObject(self, &kLPKey, @"1", OBJC_ASSOCIATION_RETAIN);
+        iaphLog(@"gesture added to %@", NSStringFromClass([self class]));
     }
 }
 
@@ -632,22 +635,53 @@ static BOOL iaphIsAppAllowed(void) {
     return YES;
 }
 
+// ================= 全链路调试日志（v3.6） =================
+// 双通道：NSLog（系统日志——远程 log show 可查）+ app 沙盒 Documents/iaph_debug.log（一定能写）
+// 目标：注入没注入 / 跑没跑 / 卡在哪一步，一次日志全说清
+static void iaphLog(NSString *fmt, ...) {
+    va_list args; va_start(args, fmt);
+    NSString *msg = [[NSString alloc] initWithFormat:fmt arguments:args];
+    va_end(args);
+    NSLog(@"[IAPHunter] %@", msg);
+    @try {
+        static NSString *logPath = nil;
+        if (logPath == nil) {
+            NSArray *dirs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+            if (dirs.count > 0) logPath = [[dirs.firstObject stringByAppendingPathComponent:@"iaph_debug.log"] retain];
+        }
+        if (logPath) {
+            NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:logPath];
+            if (fh == nil) {
+                [[NSFileManager defaultManager] createFileAtPath:logPath contents:nil attributes:nil];
+                fh = [NSFileHandle fileHandleForWritingAtPath:logPath];
+            }
+            if (fh) {
+                [fh seekToEndOfFile];
+                NSString *line = [NSString stringWithFormat:@"[%ld] %@\n", (long)getpid(), msg];
+                [fh writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
+                [fh closeFile];
+            }
+        }
+    } @catch (NSException *e) {}
+    [msg release];
+}
+
 // ================= 入口 =================
 __attribute__((constructor)) static void IAPHunterCtor(void) {
     @autoreleasepool {
-        // v3.1: TrollFools 注入即生效（不依赖越狱版开关——开关只控制 SK 功能，面板可切换）
-        FILE *clog = fopen("/var/jb/var/mobile/Documents/iaph_ctor.log", "a");
-        if (clog) { fprintf(clog, "[ctor] pid=%d app=%@\n", getpid(), [[NSBundle mainBundle] bundleIdentifier]); fclose(clog); }
-        if (!iaphIsAppAllowed()) return;
+        NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
+        iaphLog(@"=== ctor ENTER pid=%d app=%@ ===", getpid(), bid);
+        if (!iaphIsAppAllowed()) { iaphLog(@"ctor EXIT: app not allowed"); return; }
         // v3.0: 屏蔽摇一摇 + FakeGPS hook
-        hookShakeBlock();
-        hookFakeGPS();
+        hookShakeBlock(); iaphLog(@"ctor hookShakeBlock done");
+        hookFakeGPS(); iaphLog(@"ctor hookFakeGPS done");
 
-        ensureStoreKit();
+        ensureStoreKit(); iaphLog(@"ctor ensureStoreKit done");
 
         Class UIViewControllerCls = NSClassFromString(@"UIViewController");
         swizzle(UIViewControllerCls, @selector(viewDidAppear:), (IMP)new_viewDidAppear, &orig_viewDidAppear);
         addMethod(UIViewControllerCls, @selector(handleLongPress:), (IMP)longPressAction, "v@:@");
+        iaphLog(@"ctor UIViewController swizzle+addMethod done (cls=%@)", UIViewControllerCls ? NSStringFromClass(UIViewControllerCls) : @"nil");
 
         Class SKProductCls = NSClassFromString(@"SKProduct");
         swizzle(SKProductCls, @selector(productIdentifier), (IMP)new_SKProduct_productIdentifier, &orig_SKProduct_productIdentifier);
@@ -657,11 +691,13 @@ __attribute__((constructor)) static void IAPHunterCtor(void) {
         swizzle(NSClassFromString(@"SKPaymentQueue"), @selector(addPayment:), (IMP)new_SKPaymentQueue_addPayment, &orig_SKPaymentQueue_addPayment);
         swizzle(NSClassFromString(@"SKProductsResponse"), @selector(products), (IMP)new_SKProductsResponse_products, &orig_SKProductsResponse_products);
         swizzle(NSClassFromString(@"SKProductsResponse"), @selector(invalidProductIdentifiers), (IMP)new_SKProductsResponse_invalid, &orig_SKProductsResponse_invalid);
+        iaphLog(@"ctor SK hooks done (SKProduct=%@)", SKProductCls ? NSStringFromClass(SKProductCls) : @"nil");
 
         // 预热单例，注册交易 observer
         [IAPManager sharedManager];
         // 购买指令接收（SB 版发起：写指令文件 + Darwin 通知，app 内执行购买）
         startBuyPoller();
+        iaphLog(@"=== ctor DONE ===");
     }
 }
 
@@ -751,9 +787,10 @@ static void new_motionEnded(id self, SEL _cmd, int motion, id event) {
 }
 static void hookShakeBlock(void) {
     Class cls = objc_getClass("UIResponder");
-    if (!cls) return;
+    if (!cls) { iaphLog(@"hookShakeBlock: UIResponder nil"); return; }
     Method m = class_getInstanceMethod(cls, NSSelectorFromString(@"motionEnded:withEvent:"));
-    if (m) { orig_motionEnded = method_getImplementation(m); method_setImplementation(m, (IMP)new_motionEnded); }
+    if (m) { orig_motionEnded = method_getImplementation(m); method_setImplementation(m, (IMP)new_motionEnded); iaphLog(@"hookShakeBlock: motionEnded hooked"); }
+    else { iaphLog(@"hookShakeBlock: motionEnded method not found"); }
 }
 
 #pragma mark - Fake GPS 伪装（CLLocationManager hook，v3.5 动态调用——不链接 CoreLocation）
@@ -787,10 +824,11 @@ static void new_startUpdating(id self, SEL _cmd) {
 }
 static void hookFakeGPS(void) {
     Class cls = objc_getClass("CLLocationManager");
-    if (!cls) return;
+    if (!cls) { iaphLog(@"hookFakeGPS: CLLocationManager class nil"); return; }
     Method m;
     if ((m = class_getInstanceMethod(cls, @selector(location)))) { orig_clLocation = method_getImplementation(m); method_setImplementation(m, (IMP)new_clLocation); }
     if ((m = class_getInstanceMethod(cls, @selector(startUpdatingLocation)))) { orig_startUpdating = method_getImplementation(m); method_setImplementation(m, (IMP)new_startUpdating); }
+    iaphLog(@"hookFakeGPS: hooks installed");
 }
 
 #pragma mark - 面板控制器（按钮/开关回调）
@@ -827,6 +865,7 @@ static void iaphShowPanel(UIViewController *vc) {
     #define PLOG(...) do { if (plog) { flockfile(plog); fprintf(plog, __VA_ARGS__); fprintf(plog, "\n"); fflush(plog); funlockfile(plog); } } while(0)
     @try {
     PLOG("[panel] show called pid=%d", getpid());
+    iaphLog(@"panel: show called vc=%@", NSStringFromClass([vc class]));
     CGRect sb = [UIScreen mainScreen].bounds;
     UIWindow *win = [[UIWindow alloc] initWithFrame:sb];
     win.windowLevel = UIWindowLevelAlert + 100;
@@ -898,8 +937,10 @@ static void iaphShowPanel(UIViewController *vc) {
     [UIView animateWithDuration:0.25 animations:^{ win.alpha = 1; }];
     g_mfPanelWindow = win;
     PLOG("[panel] shown ok, windowScene=%@", win.windowScene ? @"set" : @"nil");
+    iaphLog(@"panel: SHOWN ok (window=%@ root=%@)", win, win.rootViewController);
     } @catch (NSException *e) {
         PLOG("[panel] EXCEPTION: %@ %@", e.name, e.reason);
+        iaphLog(@"panel EXCEPTION: %@ %@", e.name, e.reason);
         NSLog(@"[MinisFix] panel exception: %@ %@", e.name, e.reason);
     }
     if (plog) fclose(plog);
