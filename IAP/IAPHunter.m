@@ -928,7 +928,7 @@ static void iaphShowPanel(UIViewController *vc) {
     y = mfSwitchRow(card, y, @"屏蔽摇一摇", @"iaphShakeBlock", NO, nil, YES);
     // ── 相机 ──
     y = mfSectionHeader(card, y, @"相机");
-    y = mfLabelRow(card, y, [NSString stringWithFormat:@"相机权限: %@  麦克风: %@", mfPermText(@"AVMediaTypeVideo"), mfPermText(@"AVMediaTypeAudio")]);
+    y = mfLabelRow(card, y, [NSString stringWithFormat:@"相机权限: %@  麦克风: %@", mfPermText(@"vide"), mfPermText(@"soun")]);
     // ── 伪装 ──
     y = mfSectionHeader(card, y, @"伪装");
     y = mfSwitchRow(card, y, @"Fake GPS（北京）", @"iaphFakeGPS", NO, nil, YES);
@@ -1013,18 +1013,23 @@ static CGFloat mfLabelRow(UIView *card, CGFloat y, NSString *text) {
     [card addSubview:row];
     return y + 46;
 }
-// 权限文本
+// 权限文本（v3.7: 全 try-catch 防御——权限查询任何异常都显示 n/a，面板永不崩）
 static NSString *mfPermText(id mediaType) {
-    Class ac = objc_getClass("AVCaptureDevice");
-    if (!ac) return @"n/a";
-    SEL ssel = NSSelectorFromString(@"authorizationStatusForMediaType:");
-    if (![ac respondsToSelector:ssel]) return @"n/a";
-    int s = (int)[ac performSelector:ssel withObject:mediaType];
-    switch (s) {
-        case 0: return @"未决定";
-        case 1: return @"受限";
-        case 2: return @"拒绝";
-        case 3: return @"已授权";
-        default: return @"?";
+    @try {
+        Class ac = objc_getClass("AVCaptureDevice");
+        if (!ac) return @"n/a";
+        SEL ssel = NSSelectorFromString(@"authorizationStatusForMediaType:");
+        if (![ac respondsToSelector:ssel]) return @"n/a";
+        NSInteger s = (NSInteger)[ac performSelector:ssel withObject:mediaType];
+        switch (s) {
+            case 0: return @"未决定";
+            case 1: return @"受限";
+            case 2: return @"拒绝";
+            case 3: return @"已授权";
+            default: return @"?";
+        }
+    } @catch (NSException *e) {
+        iaphLog(@"mfPermText exception: %@ %@", e.name, e.reason);
+        return @"n/a";
     }
 }
