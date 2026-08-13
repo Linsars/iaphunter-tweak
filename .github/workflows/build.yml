@@ -36,6 +36,8 @@ jobs:
           rm -f FLEX/Classes/ObjectExplorers/Sections/Shortcuts/FLEXShortcutsFactory+Defaults.h
           # 移除 Firestore.h（Firebase C++ 头文件）
           rm -f FLEX/Classes/Network/Firestore.h
+          # 创建 Firestore.h 空 stub（FLEXNetworkTransaction.h 引用它）
+          echo '// Firebase stub — not linked' > FLEX/Classes/Network/Firestore.h
           # Patch：去掉剩余文件中对 Firebase 的引用
           # FLEXNetworkRecorder.m 引用 FLEXFirebaseTransaction——stub 掉
           sed -i '' 's/FLEXFirebaseTransaction/NSObject/g' FLEX/Classes/Network/FLEXNetworkRecorder.m
