@@ -16,15 +16,15 @@ extern NSMutableArray *g_mfPages;
 extern CGFloat g_mfCardW, g_mfCardH;
 
 // ====== 日志 ======
-static void mfLog(NSString *fmt, ...);
+void mfLog(NSString *fmt, ...);
 #define MFLOG(fmt, ...) mfLog(fmt, ##__VA_ARGS__)
 
 // ====== Prefs ======
-static NSDictionary *mfPrefsDict(void);
-static BOOL mfPrefBool(NSString *key, BOOL def);
-static void mfSetBoolPref(NSString *key, BOOL val);
-static void mfSetPrefDouble(NSString *key, double val);
-static double mfPrefDouble(NSString *key, double def);
+NSDictionary *mfPrefsDict(void);
+BOOL mfPrefBool(NSString *key, BOOL def);
+void mfSetBoolPref(NSString *key, BOOL val);
+void mfSetPrefDouble(NSString *key, double val);
+double mfPrefDouble(NSString *key, double def);
 
 // ====== 面板导航（定义在 MFPanel.m） ======
 UIView *mfMakePage(NSString *title, BOOL showBack);
@@ -56,15 +56,5 @@ void mfShowGpsPage(void);
 
 // ====== FLEX 呼出 ======
 // FLEX 源码直接编译进 dylib，调用 [FLEXManager.sharedManager showExplorer]
-static void mfShowFLEX(void) {
-    Class flexMgr = objc_getClass("FLEXManager");
-    if (flexMgr) {
-        id mgr = [(id)flexMgr performSelector:@selector(sharedManager)];
-        if (mgr && [mgr respondsToSelector:@selector(showExplorer)]) {
-            [mgr performSelector:@selector(showExplorer)];
-            mfLog(@"FLEX: showExplorer called");
-        }
-    } else {
-        mfLog(@"FLEX: FLEXManager class not found");
-    }
-}
+// 定义在 MFPanel.m
+void mfShowFLEX(void);

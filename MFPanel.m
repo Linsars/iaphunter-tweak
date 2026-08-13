@@ -13,7 +13,7 @@ NSMutableArray *g_mfPages = nil;
 CGFloat g_mfCardW = 0, g_mfCardH = 0;
 
 // ====== 日志 ======
-static void mfLog(NSString *fmt, ...) {
+void mfLog(NSString *fmt, ...) {
     va_list args;
     va_start(args, fmt);
     NSString *msg = [[NSString alloc] initWithFormat:fmt arguments:args];
@@ -38,30 +38,30 @@ static void mfLog(NSString *fmt, ...) {
 }
 
 // ====== Prefs ======
-static NSDictionary *mfPrefsDict(void) {
+NSDictionary *mfPrefsDict(void) {
     static NSString *path = nil;
     if (!path) path = @"/var/jb/var/mobile/Library/Preferences/com.linsars.minisfix.plist";
     NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:path];
     return d ?: @{};
 }
-static void mfSetPrefs(NSDictionary *d) {
+void mfSetPrefs(NSDictionary *d) {
     [d writeToFile:@"/var/jb/var/mobile/Library/Preferences/com.linsars.minisfix.plist" atomically:YES];
 }
-static BOOL mfPrefBool(NSString *key, BOOL def) {
+BOOL mfPrefBool(NSString *key, BOOL def) {
     id v = mfPrefsDict()[key];
     return v ? [v boolValue] : def;
 }
-static void mfSetBoolPref(NSString *key, BOOL val) {
+void mfSetBoolPref(NSString *key, BOOL val) {
     NSMutableDictionary *d = [mfPrefsDict() mutableCopy];
     d[key] = @(val);
     mfSetPrefs(d);
 }
-static void mfSetPrefDouble(NSString *key, double val) {
+void mfSetPrefDouble(NSString *key, double val) {
     NSMutableDictionary *d = [mfPrefsDict() mutableCopy];
     d[key] = @(val);
     mfSetPrefs(d);
 }
-static double mfPrefDouble(NSString *key, double def) {
+double mfPrefDouble(NSString *key, double def) {
     id v = mfPrefsDict()[key];
     return v ? [v doubleValue] : def;
 }
