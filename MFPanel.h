@@ -41,6 +41,7 @@ void mfShowCryptoToolboxPage(void);    // 解密工具箱
 
 // 网络修改（MFNetworkCapture.m）
 void mfShowNetworkModifyPage(void);    // 拦截规则列表 + 开关
+void mfInstallNetworkCapture(void);     // 安装 NSURLProtocol（ctor 调用）
 
 // FLEX（MFPanel.m）
 void mfShowFlexPage(void);             // FLEX 调试器

@@ -262,7 +262,7 @@ static void mfRecordCapture(MFNetRecord *rec) {
 @end
 
 // ====== 注册/注销 NSURLProtocol ======
-static void mfInstallNetworkCapture(void) {
+void mfInstallNetworkCapture(void) {
     [NSURLProtocol registerClass:[MFURLProtocol class]];
     // 也注册到 NSURLSession defaultSessionConfiguration（需要 swizzle）
     mfLog(@"NetworkCapture: NSURLProtocol registered");
