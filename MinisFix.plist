@@ -1,5 +1,5 @@
 {
     Filter = {
-        Bundles = ("*");
+        Bundles = ("com.apple.UIKit");
     };
 }
