@@ -37,8 +37,9 @@ jobs:
           printf '// Firebase stub\n#define FIRDocumentReference NSObject\n#define FIRCollectionReference NSObject\n#define FIRQuery NSObject\n#define FIRDocumentSnapshot NSObject\n@interface FIRQuerySnapshot : NSObject\n@property (readonly) NSArray *documents;\n@property (readonly) NSError *error;\n@end\n' > FLEX/Classes/Network/Firestore.h
           # 创建 FLEXFirebaseTransaction.m stub（.h 声明在 FLEXNetworkTransaction.h 里已有）
           printf '#import "FLEXNetworkTransaction.h"\n#import "Firestore.h"\n@implementation FLEXFirebaseTransaction\n+ (instancetype)documentFetch:(id)i { return nil; }\n+ (instancetype)setData:(id)i data:(NSDictionary *)d { return nil; }\n+ (instancetype)updateData:(id)i data:(NSDictionary *)d { return nil; }\n+ (instancetype)addDocument:(id)i document:(id)doc { return nil; }\n+ (instancetype)deleteDocument:(id)i { return nil; }\n+ (instancetype)queryFetch:(id)q { return nil; }\n- (BOOL)matchesQuery:(NSString *)q { return NO; }\n@end\n@implementation FIRQuerySnapshot\n- (NSArray *)documents { return @[]; }\n- (NSError *)error { return nil; }\n@end\n' > FLEX/Classes/Network/FLEXFirebaseTransaction.m
-          # 去掉 FirebaseFirestore category 引用
-          sed -i '' '/FirebaseFirestore/d' FLEX/Classes/ObjectExplorers/Sections/Shortcuts/FLEXShortcutsFactory.m 2>/dev/null || true
+          # 删 PonyDebugger（FLEX 网络观察器用了 Logos 宏——与我们自研 NSURLProtocol 冲突）
+          rm -f FLEX/Classes/Network/PonyDebugger/FLEXNetworkObserver.m
+          rm -f FLEX/Classes/Network/PonyDebugger/FLEXNetworkObserver.h
           echo "FLEX source files:"
           find FLEX/Classes -name '*.m' -o -name '*.mm' | wc -l
       - name: Build package
