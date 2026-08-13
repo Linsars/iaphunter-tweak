@@ -31,6 +31,7 @@ jobs:
           cp -R /tmp/flex/Classes FLEX/Classes
           # 删 Firebase 源文件（用 stub 替代）
           rm -f FLEX/Classes/Network/FLEXFirebaseTransaction.mm
+          rm -f FLEX/Classes/Network/FLEXFirebaseTransaction.h
           rm -f FLEX/Classes/ObjectExplorers/Sections/Shortcuts/FLEXShortcutsFactory+Defaults.m
           rm -f FLEX/Classes/ObjectExplorers/Sections/Shortcuts/FLEXShortcutsFactory+Defaults.h
           # 创建 stub 头文件
