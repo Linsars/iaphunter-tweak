@@ -75,7 +75,7 @@ extern void mfSaveRules(void);
 extern void mfAddRule(NSString *pattern, NSString *matchType, NSString *action);
 
 // ====== 页面导航 ======
-static UIView *mfMakePage(NSString *title, BOOL showBack) {
+UIView *mfMakePage(NSString *title, BOOL showBack) {
     UIView *page = [[UIView alloc] initWithFrame:CGRectMake(0, 0, g_mfCardW, g_mfCardH)];
     page.backgroundColor = [UIColor clearColor];
     UIView *nav = [[UIView alloc] initWithFrame:CGRectMake(0, 0, g_mfCardW, 40)];
@@ -102,14 +102,14 @@ static UIView *mfMakePage(NSString *title, BOOL showBack) {
     return page;
 }
 
-static void mfPushPage(UIView *page) {
+void mfPushPage(UIView *page) {
     if (!g_mfPages) g_mfPages = [[NSMutableArray alloc] init];
     for (UIView *p in g_mfPages) p.hidden = YES;
     [g_mfPanelOverlay addSubview:page];
     [g_mfPages addObject:page];
 }
 
-static void mfPopPage(void) {
+void mfPopPage(void) {
     if (g_mfPages.count == 0) return;
     UIView *top = [g_mfPages lastObject];
     [top removeFromSuperview];
@@ -117,7 +117,7 @@ static void mfPopPage(void) {
     if (g_mfPages.count > 0) [[g_mfPages lastObject] setHidden:NO];
 }
 
-static void mfClosePanel(void) {
+void mfClosePanel(void) {
     if (g_mfPanelOverlay) {
         UIView *ov = g_mfPanelOverlay;
         [UIView animateWithDuration:0.2 animations:^{ ov.alpha = 0; } completion:^(BOOL f) {
@@ -131,7 +131,7 @@ static void mfClosePanel(void) {
 }
 
 // ====== 网格按钮工具 ======
-static CGFloat mfGridButton(UIView *card, CGFloat x, CGFloat y, CGFloat w, NSString *title, NSString *emoji, SEL action, BOOL switchMode, NSString *pfx) {
+CGFloat mfGridButton(UIView *card, CGFloat x, CGFloat y, CGFloat w, NSString *title, NSString *emoji, SEL action, BOOL switchMode, NSString *pfx) {
     UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
     b.frame = CGRectMake(x, y, w, 84);
     b.backgroundColor = [UIColor secondarySystemBackgroundColor];
