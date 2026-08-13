@@ -29,17 +29,14 @@ jobs:
           git clone --depth 1 https://github.com/FLEXTool/FLEX.git /tmp/flex
           mkdir -p FLEX
           cp -R /tmp/flex/Classes FLEX/Classes
-          # 删 Firebase 源文件（用 stub 替代）
+          # 删 Firebase 源文件（FLEXNetworkTransaction.h 里已有 FLEXFirebaseTransaction 声明）
           rm -f FLEX/Classes/Network/FLEXFirebaseTransaction.mm
-          rm -f FLEX/Classes/Network/FLEXFirebaseTransaction.h
           rm -f FLEX/Classes/ObjectExplorers/Sections/Shortcuts/FLEXShortcutsFactory+Defaults.m
           rm -f FLEX/Classes/ObjectExplorers/Sections/Shortcuts/FLEXShortcutsFactory+Defaults.h
           # 创建 stub 头文件
           printf '// Firebase stub\n#define FIRDocumentReference NSObject\n#define FIRCollectionReference NSObject\n#define FIRQuery NSObject\n#define FIRDocumentSnapshot NSObject\n@interface FIRQuerySnapshot : NSObject\n@property (readonly) NSArray *documents;\n@property (readonly) NSError *error;\n@end\n' > FLEX/Classes/Network/Firestore.h
-          # 创建 FLEXFirebaseTransaction.h stub（保持类名不变，不替换 NSObject）
-          printf '// Stub - Firebase not linked\n#import "FLEXNetworkTransaction.h"\n@interface FLEXFirebaseTransaction : FLEXNetworkTransaction\n+ (instancetype)documentFetch:(id)i;\n+ (instancetype)setData:(id)i data:(NSDictionary *)d;\n+ (instancetype)updateData:(id)i data:(NSDictionary *)d;\n+ (instancetype)addDocument:(id)i document:(id)doc;\n+ (instancetype)deleteDocument:(id)i;\n+ (instancetype)queryFetch:(id)q;\n- (BOOL)matchesQuery:(NSString *)q;\n@end\n' > FLEX/Classes/Network/FLEXFirebaseTransaction.h
-          # 创建 FLEXFirebaseTransaction.m stub（空实现）
-          printf '#import "FLEXFirebaseTransaction.h"\n#import "Firestore.h"\n@implementation FLEXFirebaseTransaction\n+ (instancetype)documentFetch:(id)i { return nil; }\n+ (instancetype)setData:(id)i data:(NSDictionary *)d { return nil; }\n+ (instancetype)updateData:(id)i data:(NSDictionary *)d { return nil; }\n+ (instancetype)addDocument:(id)i document:(id)doc { return nil; }\n+ (instancetype)deleteDocument:(id)i { return nil; }\n+ (instancetype)queryFetch:(id)q { return nil; }\n- (BOOL)matchesQuery:(NSString *)q { return NO; }\n@end\n@implementation FIRQuerySnapshot\n- (NSArray *)documents { return @[]; }\n- (NSError *)error { return nil; }\n@end\n' > FLEX/Classes/Network/FLEXFirebaseTransaction.m
+          # 创建 FLEXFirebaseTransaction.m stub（.h 声明在 FLEXNetworkTransaction.h 里已有）
+          printf '#import "FLEXNetworkTransaction.h"\n#import "Firestore.h"\n@implementation FLEXFirebaseTransaction\n+ (instancetype)documentFetch:(id)i { return nil; }\n+ (instancetype)setData:(id)i data:(NSDictionary *)d { return nil; }\n+ (instancetype)updateData:(id)i data:(NSDictionary *)d { return nil; }\n+ (instancetype)addDocument:(id)i document:(id)doc { return nil; }\n+ (instancetype)deleteDocument:(id)i { return nil; }\n+ (instancetype)queryFetch:(id)q { return nil; }\n- (BOOL)matchesQuery:(NSString *)q { return NO; }\n@end\n@implementation FIRQuerySnapshot\n- (NSArray *)documents { return @[]; }\n- (NSError *)error { return nil; }\n@end\n' > FLEX/Classes/Network/FLEXFirebaseTransaction.m
           # 去掉 FirebaseFirestore category 引用
           sed -i '' '/FirebaseFirestore/d' FLEX/Classes/ObjectExplorers/Sections/Shortcuts/FLEXShortcutsFactory.m 2>/dev/null || true
           echo "FLEX source files:"
