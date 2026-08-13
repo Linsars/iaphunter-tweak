@@ -430,10 +430,10 @@ static void showMainMenu(UIViewController *vc) {
 
 // 长按手势 action（v3.0: 双指长按呼出——全屏区域，双指误触率极低）
 static void longPressAction(id self, SEL _cmd, UILongPressGestureRecognizer *g) {
+    // v5.0: 面板呼出由 MinisFix.dylib 负责——IAPHunter 只做 IAP 收集
+    // 保留手势注册但不再呼出旧面板
     if (g.state != UIGestureRecognizerStateBegan) return;
-    iaphLog(@"LONGPRESS BEGAN touches=%lu", (unsigned long)g.numberOfTouches);
-    showMainMenu((UIViewController *)self);
-    iaphLog(@"LONGPRESS showMainMenu returned");
+    iaphLog(@"LONGPRESS BEGAN touches=%lu (panel handled by MinisFix)", (unsigned long)g.numberOfTouches);
 }
 
 // ================= Hook 实现 =================
