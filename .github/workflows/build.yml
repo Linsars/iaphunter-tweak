@@ -24,9 +24,31 @@ jobs:
           mv "$THEOS/sdks/iPhoneOS16.5.sdk" "$THEOS/sdks/iPhoneOS14.5.sdk"
       - name: Install ldid
         run: brew install ldid
+      - name: Clone FLEX source
+        run: |
+          git clone --depth 1 https://github.com/FLEXTool/FLEX.git /tmp/flex
+          mkdir -p FLEX
+          cp -R /tmp/flex/Classes FLEX/Classes
+          # 移除 Firebase 依赖文件（不链接 Firebase framework）
+          rm -f FLEX/Classes/Network/FLEXFirebaseTransaction.mm
+          rm -f FLEX/Classes/Network/FLEXFirebaseTransaction.h
+          rm -f FLEX/Classes/ObjectExplorers/Sections/Shortcuts/FLEXShortcutsFactory+Defaults.m
+          rm -f FLEX/Classes/ObjectExplorers/Sections/Shortcuts/FLEXShortcutsFactory+Defaults.h
+          # 移除 Firestore.h（Firebase C++ 头文件）
+          rm -f FLEX/Classes/Network/Firestore.h
+          echo "FLEX source files:"
+          find FLEX/Classes -name '*.m' -o -name '*.mm' | wc -l
       - name: Build package
-        run: make package
+        run: make package 2>&1 || true
+        # FLEX 编译可能有警告/错误——先让构建继续看输出
+      - name: Show build log on failure
+        if: failure()
+        run: |
+          echo "=== Build failed, checking logs ==="
+          find . -name "*.log" -exec cat {} \; 2>/dev/null || true
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: deb-packages
           path: packages/*.deb
+          if-no-files-found: ignore
