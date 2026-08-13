@@ -29,6 +29,8 @@ IAPHunter_ARCHS = arm64
 FLEX_FILES := $(shell find FLEX/Classes -name '*.m' -o -name '*.mm' -o -name '*.c' 2>/dev/null)
 MinisFix_FILES = MFPanel.m MFNetworkCapture.m $(FLEX_FILES)
 MinisFix_FRAMEWORKS = UIKit Foundation StoreKit Security CoreLocation
+# FLEX 拖入大量框架依赖——全部 weak link 防止 dyld 拒绝注入
+MinisFix_LDFLAGS = -weak_framework SceneKit -weak_framework WebKit -weak_framework ImageIO -weak_framework QuartzCore -weak_framework CoreGraphics -weak_framework UserNotifications -weak_lsqlite3 -weak_lz
 MinisFix_CFLAGS = -fobjc-arc -Wno-everything $(shell find FLEX/Classes -type d -exec echo -I{} \; 2>/dev/null)
 MinisFix_ARCHS = arm64 arm64e
 
