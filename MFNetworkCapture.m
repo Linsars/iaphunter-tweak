@@ -96,6 +96,16 @@ static void mfSaveRules(void) {
     [d writeToFile:@"/var/jb/var/mobile/Library/Preferences/com.linsars.minisfix.plist" atomically:YES];
 }
 
+// MFPanel.m 调用的接口——添加规则
+void mfAddRule(NSString *pattern, NSString *matchType, NSString *action) {
+    mfLoadRules();
+    MFRewriteRule *r = [MFRewriteRule new];
+    r.pattern = pattern; r.matchType = matchType; r.action = action; r.enabled = YES;
+    [g_rewriteRules addObject:r];
+    mfSaveRules();
+    mfLog(@"rule added: %@ %@ %@", pattern, matchType, action);
+}
+
 // ====== 记录捕获 ======
 static void mfRecordCapture(MFNetRecord *rec) {
     if (!g_captureEnabled) return;
@@ -260,7 +270,7 @@ static void mfInstallNetworkCapture(void) {
 }
 
 // ====== 捕获列表页面（子页展示） ======
-static void mfShowNetworkCapturePage(void) {
+void mfShowNetworkCapturePage(void) {
     UIView *page = mfMakePage(@"网络捕获", YES);
     UIScrollView *sv = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 42, g_mfCardW, g_mfCardH - 42)];
     
@@ -306,7 +316,7 @@ static void mfShowNetworkCapturePage(void) {
 }
 
 // ====== 数据分析页（捕获开关 + 解密工具箱入口） ======
-static void mfShowDataAnalysisPage(void) {
+void mfShowDataAnalysisPage(void) {
     UIView *page = mfMakePage(@"数据分析", YES);
     CGFloat gw = (g_mfCardW - 32 - 12) / 2;
     CGFloat gy = 48;
@@ -327,7 +337,7 @@ static void mfShowDataAnalysisPage(void) {
 }
 
 // ====== CryptoToolbox 页面 ======
-static void mfShowCryptoToolboxPage(void) {
+void mfShowCryptoToolboxPage(void) {
     UIView *page = mfMakePage(@"解密工具", YES);
     // 输入框
     UITextView *input = [[UITextView alloc] initWithFrame:CGRectMake(12, 48, g_mfCardW - 24, 80)];
@@ -389,7 +399,7 @@ static void mfShowCryptoToolboxPage(void) {
 }
 
 // ====== 网络修改页（规则列表 + 开关） ======
-static void mfShowNetworkModifyPage(void) {
+void mfShowNetworkModifyPage(void) {
     UIView *page = mfMakePage(@"网络修改", YES);
     mfLoadRules();
     // 开关

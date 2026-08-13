@@ -5,6 +5,13 @@
 #import <CommonCrypto/CommonCrypto.h>
 #import <StoreKit/StoreKit.h>
 
+// ====== 全局状态（定义在此，extern 在 MFPanel.h） ======
+UIView *g_mfPanelOverlay = nil;
+UIViewController *g_mfPanelRootVC = nil;
+id g_mfCtrl = nil;
+NSMutableArray *g_mfPages = nil;
+CGFloat g_mfCardW = 0, g_mfCardH = 0;
+
 // ====== 日志 ======
 static void mfLog(NSString *fmt, ...) {
     va_list args;
@@ -65,6 +72,7 @@ extern BOOL g_rewriteEnabled;
 extern NSMutableArray *g_rewriteRules;
 extern void mfLoadRules(void);
 extern void mfSaveRules(void);
+extern void mfAddRule(NSString *pattern, NSString *matchType, NSString *action);
 
 // ====== 页面导航 ======
 static UIView *mfMakePage(NSString *title, BOOL showBack) {
@@ -154,11 +162,12 @@ static CGFloat mfGridButton(UIView *card, CGFloat x, CGFloat y, CGFloat w, NSStr
 }
 
 // ====== 功能页面入口（转发到各模块） ======
-static void mfShowDataAnalysisPage(void);  // 在 MFNetworkCapture.m 定义
-static void mfShowNetworkCapturePage(void);
-static void mfShowCryptoToolboxPage(void);
-static void mfShowNetworkModifyPage(void);
-static void mfShowFlexPage(void) {
+// 页面函数（各模块 .m 定义——extern 到 MFPanel.h）
+void mfShowDataAnalysisPage(void);  // MFNetworkCapture.m
+void mfShowNetworkCapturePage(void); // MFNetworkCapture.m
+void mfShowCryptoToolboxPage(void);  // MFNetworkCapture.m
+void mfShowNetworkModifyPage(void);  // MFNetworkCapture.m
+void mfShowFlexPage(void) {
     mfClosePanel();
     Class flexMgr = objc_getClass("FLEXManager");
     if (flexMgr) {
@@ -213,7 +222,7 @@ static void IAPRecord(NSString *pid) {
 }
 
 // 扫描购买页
-static void mfShowScanPage(void) {
+void mfShowScanPage(void) {
     UIView *page = mfMakePage(@"扫描购买", YES);
     UILabel *st = [[UILabel alloc] initWithFrame:CGRectMake(16, g_mfCardH/2 - 20, g_mfCardW - 32, 40)];
     st.text = @"正在查询 IAP 列表…";
@@ -262,7 +271,7 @@ static void mfShowScanPage(void) {
 }
 
 // 手动购买页
-static void mfShowManualBuyPage(void) {
+void mfShowManualBuyPage(void) {
     UIView *page = mfMakePage(@"手动购买", YES);
     UITextField *tf = [[UITextField alloc] initWithFrame:CGRectMake(16, 56, g_mfCardW - 32, 42)];
     tf.borderStyle = UITextBorderStyleRoundedRect;
@@ -288,7 +297,7 @@ static void mfShowManualBuyPage(void) {
 }
 
 // 图标解锁页
-static void mfShowIconPage(void) {
+void mfShowIconPage(void) {
     UIView *page = mfMakePage(@"图标解锁", YES);
     NSDictionary *info = [[NSBundle mainBundle] infoDictionary];
     NSDictionary *alt = info[@"CFBundleIcons"][@"CFBundleAlternateIcons"];
@@ -321,7 +330,7 @@ static void mfShowIconPage(void) {
 }
 
 // Product 子页
-static void mfShowProductPage(void) {
+void mfShowProductPage(void) {
     UIView *page = mfMakePage(@"Product", YES);
     CGFloat gw = (g_mfCardW - 32 - 12) / 2;
     CGFloat gy = 48;
@@ -336,7 +345,7 @@ static double iaphFakeLat(void) { id v = mfPrefsDict()[@"iaphFakeLat"]; return v
 static double iaphFakeLon(void) { id v = mfPrefsDict()[@"iaphFakeLon"]; return v ? [v doubleValue] : 116.4074; }
 static double g_mfSelLat = 0, g_mfSelLon = 0;
 
-static void mfShowGpsPage(void) {
+void mfShowGpsPage(void) {
     dlopen("/System/Library/Frameworks/MapKit.framework/MapKit", RTLD_LAZY | RTLD_GLOBAL);
     dlopen("/System/Library/Frameworks/CoreLocation.framework/CoreLocation", RTLD_LAZY | RTLD_GLOBAL);
     UIView *page = mfMakePage(@"Fake GPS", YES);
@@ -477,26 +486,16 @@ static void hookShakeBlock(void) {
     [alert addAction:[UIAlertAction actionWithTitle:@"拦截(Block)" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
         NSString *pat = alert.textFields.firstObject.text;
         if (pat.length == 0) return;
-        mfLoadRules();
-        MFRewriteRule *r = [MFRewriteRule new];
-        r.pattern = pat; r.matchType = @"contain"; r.action = @"block"; r.enabled = YES;
-        [g_rewriteRules addObject:r];
-        mfSaveRules();
-        mfPopPage();  // 刷新列表
-        mfShowNetworkModifyPage();
+        mfAddRule(pat, @"contain", @"block");
+        mfPopPage(); mfShowNetworkModifyPage();
     }]];
     [alert addAction:[UIAlertAction actionWithTitle:@"替换响应" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
         NSString *pat = alert.textFields.firstObject.text;
         if (pat.length == 0) return;
-        mfLoadRules();
-        MFRewriteRule *r = [MFRewriteRule new];
-        r.pattern = pat; r.matchType = @"contain"; r.action = @"replaceResp"; r.enabled = YES;
-        [g_rewriteRules addObject:r];
-        mfSaveRules();
+        mfAddRule(pat, @"contain", @"replaceResp");
         mfPopPage(); mfShowNetworkModifyPage();
     }]];
     [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    UIView *top = [g_mfPages lastObject];
     UIViewController *vc = g_mfPanelRootVC;
     if (vc) [vc presentViewController:alert animated:YES completion:nil];
 }

@@ -9,11 +9,11 @@
 #import <dlfcn.h>
 
 // ====== 全局状态 ======
-static UIView *g_mfPanelOverlay = nil;
-static UIViewController *g_mfPanelRootVC = nil;
-static id g_mfCtrl = nil;
-static NSMutableArray *g_mfPages = nil;   // 页面栈
-static CGFloat g_mfCardW = 0, g_mfCardH = 0;
+extern UIView *g_mfPanelOverlay;
+extern UIViewController *g_mfPanelRootVC;
+extern id g_mfCtrl;
+extern NSMutableArray *g_mfPages;
+extern CGFloat g_mfCardW, g_mfCardH;
 
 // ====== 日志 ======
 static void mfLog(NSString *fmt, ...);
@@ -34,26 +34,25 @@ static void mfClosePanel(void);
 static CGFloat mfGridButton(UIView *card, CGFloat x, CGFloat y, CGFloat w, NSString *title, NSString *emoji, SEL action, BOOL switchMode, NSString *pfx);
 
 // ====== 功能页面入口（各模块 .m 定义） ======
-// 数据分析
-static void mfShowDataAnalysisPage(void);    // 实时捕获网络请求 + 数据解密
-static void mfShowNetworkCapturePage(void);   // 网络捕获列表
-static void mfShowCryptoToolboxPage(void);    // 解密工具箱
+// 数据分析（MFNetworkCapture.m）
+void mfShowDataAnalysisPage(void);    // 实时捕获网络请求 + 数据解密
+void mfShowNetworkCapturePage(void);   // 网络捕获列表
+void mfShowCryptoToolboxPage(void);    // 解密工具箱
 
-// 网络修改
-static void mfShowNetworkModifyPage(void);    // 拦截规则列表 + 开关
-static void mfShowRuleEditorPage(void);       // 规则编辑器
+// 网络修改（MFNetworkCapture.m）
+void mfShowNetworkModifyPage(void);    // 拦截规则列表 + 开关
 
-// FLEX
-static void mfShowFlexPage(void);             // FLEX 调试器
+// FLEX（MFPanel.m）
+void mfShowFlexPage(void);             // FLEX 调试器
 
-// Product（IAPHunter）
-static void mfShowProductPage(void);          // 扫描购买 / 手动购买 / 图标解锁
-static void mfShowScanPage(void);
-static void mfShowManualBuyPage(void);
-static void mfShowIconPage(void);
+// Product（IAPHunter）（MFPanel.m）
+void mfShowProductPage(void);          // 扫描购买 / 手动购买 / 图标解锁
+void mfShowScanPage(void);
+void mfShowManualBuyPage(void);
+void mfShowIconPage(void);
 
-// FakeGPS
-static void mfShowGpsPage(void);
+// FakeGPS（MFPanel.m）
+void mfShowGpsPage(void);
 
 // ====== FLEX 呼出 ======
 // FLEX 源码直接编译进 dylib，调用 [FLEXManager.sharedManager showExplorer]
