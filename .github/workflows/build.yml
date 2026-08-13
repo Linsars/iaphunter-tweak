@@ -29,53 +29,22 @@ jobs:
           git clone --depth 1 https://github.com/FLEXTool/FLEX.git /tmp/flex
           mkdir -p FLEX
           cp -R /tmp/flex/Classes FLEX/Classes
-          # 移除 Firebase 依赖文件（不链接 Firebase framework）
+          # 删 Firebase 源文件
           rm -f FLEX/Classes/Network/FLEXFirebaseTransaction.mm
-          rm -f FLEX/Classes/Network/FLEXFirebaseTransaction.h
-          # 创建 FLEXFirebaseTransaction.h stub（其他文件 import 它）
-          cat > FLEX/Classes/Network/FLEXFirebaseTransaction.h << 'STUB2'
-// Stub — Firebase not linked
-#import "FLEXNetworkTransaction.h"
-@interface FLEXFirebaseTransaction : FLEXNetworkTransaction
-+ (instancetype)documentFetch:(id)initiator;
-+ (instancetype)setData:(id)initiator data:(NSDictionary *)data;
-+ (instancetype)updateData:(id)initiator data:(NSDictionary *)data;
-+ (instancetype)addDocument:(id)initiator document:(id)doc;
-+ (instancetype)deleteDocument:(id)initiator;
-+ (instancetype)queryFetch:(id)query;
-@end
-STUB2
-          # 创建 Firestore.h stub
-          cat > FLEX/Classes/Network/Firestore.h << 'STUB3'
-// Firebase stub
-#define FIRDocumentReference NSObject
-#define FIRCollectionReference NSObject
-#define FIRQuery NSObject
-STUB3
           rm -f FLEX/Classes/ObjectExplorers/Sections/Shortcuts/FLEXShortcutsFactory+Defaults.m
           rm -f FLEX/Classes/ObjectExplorers/Sections/Shortcuts/FLEXShortcutsFactory+Defaults.h
-          # 移除 Firestore.h（Firebase C++ 头文件）
-          rm -f FLEX/Classes/Network/Firestore.h
-          # 创建 Firestore.h 空 stub（FLEXNetworkTransaction.h 引用它）
-          echo '// Firebase stub — not linked' > FLEX/Classes/Network/Firestore.h
-          # Patch：去掉剩余文件中对 Firebase 的引用
-          # FLEXNetworkRecorder.m 引用 FLEXFirebaseTransaction——stub 掉
+          # 创建 stub 头文件（用 printf 避免 YAML heredoc 冲突）
+          printf '// Firebase stub\n#define FIRDocumentReference NSObject\n#define FIRCollectionReference NSObject\n#define FIRQuery NSObject\n' > FLEX/Classes/Network/Firestore.h
+          printf '// Stub - Firebase not linked\n#import "FLEXNetworkTransaction.h"\n@interface FLEXFirebaseTransaction : FLEXNetworkTransaction\n+ (instancetype)documentFetch:(id)i;\n+ (instancetype)setData:(id)i data:(NSDictionary *)d;\n+ (instancetype)updateData:(id)i data:(NSDictionary *)d;\n+ (instancetype)addDocument:(id)i document:(id)doc;\n+ (instancetype)deleteDocument:(id)i;\n+ (instancetype)queryFetch:(id)q;\n@end\n' > FLEX/Classes/Network/FLEXFirebaseTransaction.h
+          # 去掉剩余 Firebase 引用
           sed -i '' 's/FLEXFirebaseTransaction/NSObject/g' FLEX/Classes/Network/FLEXNetworkRecorder.m
           sed -i '' 's/FLEXFirebaseTransaction/NSObject/g' FLEX/Classes/Network/FLEXNetworkMITMViewController.m
-          # FLEXShortcutsFactory 引用 FirebaseFirestore category——去掉
           sed -i '' '/FirebaseFirestore/d' FLEX/Classes/ObjectExplorers/Sections/Shortcuts/FLEXShortcutsFactory.m 2>/dev/null || true
           echo "FLEX source files:"
           find FLEX/Classes -name '*.m' -o -name '*.mm' | wc -l
       - name: Build package
-        run: make package 2>&1 || true
-        # FLEX 编译可能有警告/错误——先让构建继续看输出
-      - name: Show build log on failure
-        if: failure()
-        run: |
-          echo "=== Build failed, checking logs ==="
-          find . -name "*.log" -exec cat {} \; 2>/dev/null || true
+        run: make package
       - uses: actions/upload-artifact@v4
-        if: always()
         with:
           name: deb-packages
           path: packages/*.deb
