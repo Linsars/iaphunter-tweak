@@ -22,9 +22,9 @@
 
 // ====== 全局捕获存储 ======
 static NSMutableArray *g_capturedRecords = nil;
-static BOOL g_captureEnabled = NO;
-static BOOL g_rewriteEnabled = NO;
-static NSMutableArray *g_rewriteRules = nil;
+BOOL g_captureEnabled = NO;
+BOOL g_rewriteEnabled = NO;
+NSMutableArray *g_rewriteRules = nil;
 #define MF_MAX_RECORDS 200
 
 // ====== 拦截规则模型 ======
