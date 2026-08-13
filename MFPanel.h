@@ -27,11 +27,11 @@ static void mfSetPrefDouble(NSString *key, double val);
 static double mfPrefDouble(NSString *key, double def);
 
 // ====== 面板导航（定义在 MFPanel.m） ======
-static UIView *mfMakePage(NSString *title, BOOL showBack);
-static void mfPushPage(UIView *page);
-static void mfPopPage(void);
-static void mfClosePanel(void);
-static CGFloat mfGridButton(UIView *card, CGFloat x, CGFloat y, CGFloat w, NSString *title, NSString *emoji, SEL action, BOOL switchMode, NSString *pfx);
+UIView *mfMakePage(NSString *title, BOOL showBack);
+void mfPushPage(UIView *page);
+void mfPopPage(void);
+void mfClosePanel(void);
+CGFloat mfGridButton(UIView *card, CGFloat x, CGFloat y, CGFloat w, NSString *title, NSString *emoji, SEL action, BOOL switchMode, NSString *pfx);
 
 // ====== 功能页面入口（各模块 .m 定义） ======
 // 数据分析（MFNetworkCapture.m）
