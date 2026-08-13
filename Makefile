@@ -29,7 +29,7 @@ IAPHunter_ARCHS = arm64
 FLEX_FILES := $(shell find FLEX/Classes -name '*.m' -o -name '*.mm' 2>/dev/null)
 MinisFix_FILES = MFPanel.m MFNetworkCapture.m $(FLEX_FILES)
 MinisFix_FRAMEWORKS = UIKit Foundation StoreKit Security CoreLocation
-MinisFix_CFLAGS = -fno-objc-arc -Wno-everything
+MinisFix_CFLAGS = -fno-objc-arc -Wno-everything -IFLEX/Classes/Headers -IFLEX/Classes -IFLEX/Classes/Core -IFLEX/Classes/Network -IFLEX/Classes/Manager -IFLEX/Classes/Utility -IFLEX/Classes/Utility/Categories -IFLEX/Classes/Utility/Runtime -IFLEX/Classes/Editing -IFLEX/Classes/Editing/ArgumentInputViews -IFLEX/Classes/ExplorerInterface -IFLEX/Classes/ExplorerInterface/Bookmarks -IFLEX/Classes/ExplorerInterface/Tabs -IFLEX/Classes/GlobalStateExplorers -IFLEX/Classes/GlobalStateExplorers/DatabaseBrowser -IFLEX/Classes/GlobalStateExplorers/FileBrowser -IFLEX/Classes/GlobalStateExplorers/Globals -IFLEX/Classes/GlobalStateExplorers/Keychain -IFLEX/Classes/GlobalStateExplorers/RuntimeBrowser -IFLEX/Classes/GlobalStateExplorers/SystemLog -IFLEX/Classes/ObjectExplorers -IFLEX/Classes/ObjectExplorers/Sections -IFLEX/Classes/ObjectExplorers/Sections/Shortcuts -IFLEX/Classes/Toolbar -IFLEX/Classes/ViewHierarchy -IFLEX/Classes/ViewHierarchy/SnapshotExplorer -IFLEX/Classes/ViewHierarchy/TreeExplorer -IFLEX/Classes/Network/OSCache -IFLEX/Classes/Network/PonyDebugger
 MinisFix_ARCHS = arm64 arm64e
 
 include $(THEOS_MAKE_PATH)/tweak.mk
