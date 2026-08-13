@@ -34,7 +34,7 @@ jobs:
           rm -f FLEX/Classes/ObjectExplorers/Sections/Shortcuts/FLEXShortcutsFactory+Defaults.m
           rm -f FLEX/Classes/ObjectExplorers/Sections/Shortcuts/FLEXShortcutsFactory+Defaults.h
           # 创建 stub 头文件（用 printf 避免 YAML heredoc 冲突）
-          printf '// Firebase stub\n#define FIRDocumentReference NSObject\n#define FIRCollectionReference NSObject\n#define FIRQuery NSObject\n' > FLEX/Classes/Network/Firestore.h
+          printf '// Firebase stub\n#define FIRDocumentReference NSObject\n#define FIRCollectionReference NSObject\n#define FIRQuery NSObject\n#define FIRDocumentSnapshot NSObject\n' > FLEX/Classes/Network/Firestore.h
           printf '// Stub - Firebase not linked\n#import "FLEXNetworkTransaction.h"\n@interface FLEXFirebaseTransaction : FLEXNetworkTransaction\n+ (instancetype)documentFetch:(id)i;\n+ (instancetype)setData:(id)i data:(NSDictionary *)d;\n+ (instancetype)updateData:(id)i data:(NSDictionary *)d;\n+ (instancetype)addDocument:(id)i document:(id)doc;\n+ (instancetype)deleteDocument:(id)i;\n+ (instancetype)queryFetch:(id)q;\n@end\n' > FLEX/Classes/Network/FLEXFirebaseTransaction.h
           # 去掉剩余 Firebase 引用
           sed -i '' 's/FLEXFirebaseTransaction/NSObject/g' FLEX/Classes/Network/FLEXNetworkRecorder.m
