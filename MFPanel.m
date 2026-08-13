@@ -582,7 +582,7 @@ static void hookShakeBlock(void) {
     
     if (sel == 2) {  // Base64
         if (encrypt) {
-            output.text = [inputText dataUsingEncoding:NSUTF8StringEncoding].base64EncodedStringWithOptions:0];
+            output.text = [[inputText dataUsingEncoding:NSUTF8StringEncoding] base64EncodedStringWithOptions:0];
         } else {
             NSData *d = [[NSData alloc] initWithBase64EncodedString:inputText options:0];
             output.text = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding] ?: d.description;
@@ -629,7 +629,7 @@ static void hookShakeBlock(void) {
     CCCryptorStatus status = CCCrypt(
         encrypt ? kCCEncrypt : kCCDecrypt,
         kCCAlgorithmAES,
-        sel == 0 ? kCCOptionPKCS7Padding : kCCOptionPKCS7Padding | kCCModeECB,
+        sel == 0 ? kCCOptionPKCS7Padding : (kCCOptionPKCS7Padding | kCCOptionECBMode),
         paddedKey.bytes, 32,
         sel == 0 ? ivData.bytes : NULL,
         inputData.bytes, inputData.length,
