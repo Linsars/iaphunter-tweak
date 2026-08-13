@@ -133,7 +133,6 @@ static void mfRecordCapture(MFNetRecord *rec) {
 @property (strong) NSMutableData *data;
 @property (strong) MFNetRecord *record;
 @property (strong) NSURLResponse *response;
-@property (copy) NSURLSessionTaskCompletionHandler completionHandler;
 @end
 
 @implementation MFURLProtocol
