@@ -36,6 +36,12 @@ jobs:
           rm -f FLEX/Classes/ObjectExplorers/Sections/Shortcuts/FLEXShortcutsFactory+Defaults.h
           # 移除 Firestore.h（Firebase C++ 头文件）
           rm -f FLEX/Classes/Network/Firestore.h
+          # Patch：去掉剩余文件中对 Firebase 的引用
+          # FLEXNetworkRecorder.m 引用 FLEXFirebaseTransaction——stub 掉
+          sed -i '' 's/FLEXFirebaseTransaction/NSObject/g' FLEX/Classes/Network/FLEXNetworkRecorder.m
+          sed -i '' 's/FLEXFirebaseTransaction/NSObject/g' FLEX/Classes/Network/FLEXNetworkMITMViewController.m
+          # FLEXShortcutsFactory 引用 FirebaseFirestore category——去掉
+          sed -i '' '/FirebaseFirestore/d' FLEX/Classes/ObjectExplorers/Sections/Shortcuts/FLEXShortcutsFactory.m 2>/dev/null || true
           echo "FLEX source files:"
           find FLEX/Classes -name '*.m' -o -name '*.mm' | wc -l
       - name: Build package
