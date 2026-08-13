@@ -24,23 +24,6 @@ jobs:
           mv "$THEOS/sdks/iPhoneOS16.5.sdk" "$THEOS/sdks/iPhoneOS14.5.sdk"
       - name: Install ldid
         run: brew install ldid
-      - name: Clone FLEX source
-        run: |
-          git clone --depth 1 https://github.com/FLEXTool/FLEX.git /tmp/flex
-          mkdir -p FLEX
-          cp -R /tmp/flex/Classes FLEX/Classes
-          # 删 Firebase 源文件（FLEXNetworkTransaction.h 里已有 FLEXFirebaseTransaction 声明）
-          rm -f FLEX/Classes/Network/FLEXFirebaseTransaction.mm
-          rm -f FLEX/Classes/ObjectExplorers/Sections/Shortcuts/FLEXShortcutsFactory+Defaults.m
-          rm -f FLEX/Classes/ObjectExplorers/Sections/Shortcuts/FLEXShortcutsFactory+Defaults.h
-          # 创建 stub 头文件
-          printf '// Firebase stub\n#define FIRDocumentReference NSObject\n#define FIRCollectionReference NSObject\n#define FIRQuery NSObject\n#define FIRDocumentSnapshot NSObject\n@interface FIRQuerySnapshot : NSObject\n@property (readonly) NSArray *documents;\n@property (readonly) NSError *error;\n@end\n' > FLEX/Classes/Network/Firestore.h
-          # 创建 FLEXFirebaseTransaction.m stub（.h 声明在 FLEXNetworkTransaction.h 里已有）
-          printf '#import "FLEXNetworkTransaction.h"\n#import "Firestore.h"\n@implementation FLEXFirebaseTransaction\n+ (instancetype)documentFetch:(id)i { return nil; }\n+ (instancetype)setData:(id)i data:(NSDictionary *)d { return nil; }\n+ (instancetype)updateData:(id)i data:(NSDictionary *)d { return nil; }\n+ (instancetype)addDocument:(id)i document:(id)doc { return nil; }\n+ (instancetype)deleteDocument:(id)i { return nil; }\n+ (instancetype)queryFetch:(id)q { return nil; }\n- (BOOL)matchesQuery:(NSString *)q { return NO; }\n@end\n@implementation FIRQuerySnapshot\n- (NSArray *)documents { return @[]; }\n- (NSError *)error { return nil; }\n@end\n' > FLEX/Classes/Network/FLEXFirebaseTransaction.m
-          # PonyDebugger FLEXNetworkObserver.m 有 Logos 宏——替换为空 stub（保留 .h）
-          printf '#import "FLEXNetworkObserver.h"\nNSString *const kFLEXNetworkObserverEnabledStateChangedNotification = @"kFLEXNetworkObserverEnabledStateChangedNotification";\nNSString *const kFLEXNewTransactionRecordedNotification = @"kFLEXNewTransactionRecordedNotification";\nNSString *const kFLEXNetworkTransactionUpdatedNotification = @"kFLEXNetworkTransactionUpdatedNotification";\nNSString *const kFLEXNetworkTransactionsClearedNotification = @"kFLEXNetworkTransactionsClearedNotification";\n@implementation FLEXNetworkObserver\n+ (instancetype)sharedObserver { return nil; }\n@end\n' > FLEX/Classes/Network/PonyDebugger/FLEXNetworkObserver.m
-          echo "FLEX source files:"
-          find FLEX/Classes -name '*.m' -o -name '*.mm' | wc -l
       - name: Build package
         run: make package
       - uses: actions/upload-artifact@v4

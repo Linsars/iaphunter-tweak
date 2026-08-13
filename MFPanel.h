@@ -1,5 +1,5 @@
 // MFPanel.h — MinisFix v5.0 面板系统头文件
-// 四板块：数据分析 / 网络修改 / FLEX / Product
+// 三板块：数据分析 / 网络修改 / Product
 // 呼出：双指长按
 
 #import <Foundation/Foundation.h>
@@ -43,9 +43,6 @@ void mfShowCryptoToolboxPage(void);    // 解密工具箱
 void mfShowNetworkModifyPage(void);    // 拦截规则列表 + 开关
 void mfInstallNetworkCapture(void);     // 安装 NSURLProtocol（ctor 调用）
 
-// FLEX（MFPanel.m）
-void mfShowFlexPage(void);             // FLEX 调试器
-
 // Product（IAPHunter）（MFPanel.m）
 void mfShowProductPage(void);          // 扫描购买 / 手动购买 / 图标解锁
 void mfShowScanPage(void);
@@ -54,8 +51,3 @@ void mfShowIconPage(void);
 
 // FakeGPS（MFPanel.m）
 void mfShowGpsPage(void);
-
-// ====== FLEX 呼出 ======
-// FLEX 源码直接编译进 dylib，调用 [FLEXManager.sharedManager showExplorer]
-// 定义在 MFPanel.m
-void mfShowFLEX(void);

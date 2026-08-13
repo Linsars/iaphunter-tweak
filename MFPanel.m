@@ -1,5 +1,5 @@
 // MFPanel.m — MinisFix v5.0 面板控制器 + 导航系统 + 主面板
-// 主页双列网格：数据分析 📡 / 网络修改 🔧 / FLEX 🔍 / Product 🛍️
+// 主页双列网格：数据分析 📡 / 网络修改 🔧 / Product 🛍️
 
 #import "MFPanel.h"
 #import <CommonCrypto/CommonCrypto.h>
@@ -167,19 +167,6 @@ void mfShowDataAnalysisPage(void);  // MFNetworkCapture.m
 void mfShowNetworkCapturePage(void); // MFNetworkCapture.m
 void mfShowCryptoToolboxPage(void);  // MFNetworkCapture.m
 void mfShowNetworkModifyPage(void);  // MFNetworkCapture.m
-void mfShowFlexPage(void) {
-    mfClosePanel();
-    Class flexMgr = objc_getClass("FLEXManager");
-    if (flexMgr) {
-        id mgr = [(id)flexMgr performSelector:@selector(sharedManager)];
-        if (mgr && [mgr respondsToSelector:@selector(showExplorer)]) {
-            [mgr performSelector:@selector(showExplorer)];
-            mfLog(@"FLEX: showExplorer called");
-            return;
-        }
-    }
-    mfLog(@"FLEX: FLEXManager not found");
-}
 
 // ====== IAPHunter 功能（从 v4.1 迁移） ======
 // 远程查 IAP 列表
@@ -449,7 +436,7 @@ static void hookShakeBlock(void) {
 - (void)mfShowNetworkCapturePage { mfShowNetworkCapturePage(); }
 - (void)mfShowCryptoPage { mfShowCryptoToolboxPage(); }
 - (void)mfShowNetworkModifyPage { mfShowNetworkModifyPage(); }
-- (void)mfShowFlexPage { mfShowFlexPage(); }
+- (void)mfShowFlexPage { }  // FLEX 已砍——保留空方法防止 KVO/archive 崩
 - (void)mfShowProductPage { mfShowProductPage(); }
 - (void)mfShowScanPage { mfShowScanPage(); }
 - (void)mfShowManualBuyPage { mfShowManualBuyPage(); }
@@ -700,13 +687,12 @@ static void iaphShowPanel(UIViewController *vc) {
         [closeBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfClosePanel") forControlEvents:UIControlEventTouchUpInside];
         [content addSubview:closeBtn];
 
-        // 双列网格：数据分析 / 网络修改 / FLEX / Product
+        // 双列网格：数据分析 / 网络修改 / Product
         CGFloat gw = (cardW - 32 - 12) / 2;
         CGFloat gy = 48;
         gy = mfGridButton(content, 16, gy, gw, @"数据分析", @"📡", @selector(mfShowDataAnalysisPage), NO, nil);
         gy = mfGridButton(content, 16 + gw + 12, gy - 92, gw, @"网络修改", @"🔧", @selector(mfShowNetworkModifyPage), NO, nil);
-        gy = mfGridButton(content, 16, gy, gw, @"FLEX", @"🔍", @selector(mfShowFlexPage), NO, nil);
-        gy = mfGridButton(content, 16 + gw + 12, gy - 92, gw, @"Product", @"🛍️", @selector(mfShowProductPage), NO, nil);
+        gy = mfGridButton(content, 16, gy, gw, @"Product", @"🛍️", @selector(mfShowProductPage), NO, nil);
 
         [overlay addSubview:card];
         [keyWin addSubview:overlay];
