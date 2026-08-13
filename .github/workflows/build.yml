@@ -32,6 +32,26 @@ jobs:
           # 移除 Firebase 依赖文件（不链接 Firebase framework）
           rm -f FLEX/Classes/Network/FLEXFirebaseTransaction.mm
           rm -f FLEX/Classes/Network/FLEXFirebaseTransaction.h
+          # 创建 FLEXFirebaseTransaction.h stub（其他文件 import 它）
+          cat > FLEX/Classes/Network/FLEXFirebaseTransaction.h << 'STUB2'
+// Stub — Firebase not linked
+#import "FLEXNetworkTransaction.h"
+@interface FLEXFirebaseTransaction : FLEXNetworkTransaction
++ (instancetype)documentFetch:(id)initiator;
++ (instancetype)setData:(id)initiator data:(NSDictionary *)data;
++ (instancetype)updateData:(id)initiator data:(NSDictionary *)data;
++ (instancetype)addDocument:(id)initiator document:(id)doc;
++ (instancetype)deleteDocument:(id)initiator;
++ (instancetype)queryFetch:(id)query;
+@end
+STUB2
+          # 创建 Firestore.h stub
+          cat > FLEX/Classes/Network/Firestore.h << 'STUB3'
+// Firebase stub
+#define FIRDocumentReference NSObject
+#define FIRCollectionReference NSObject
+#define FIRQuery NSObject
+STUB3
           rm -f FLEX/Classes/ObjectExplorers/Sections/Shortcuts/FLEXShortcutsFactory+Defaults.m
           rm -f FLEX/Classes/ObjectExplorers/Sections/Shortcuts/FLEXShortcutsFactory+Defaults.h
           # 移除 Firestore.h（Firebase C++ 头文件）
