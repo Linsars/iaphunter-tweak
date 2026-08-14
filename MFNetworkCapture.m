@@ -196,6 +196,14 @@ static void mfRecordCapture(MFNetRecord *rec) {
         }
     }
     
+    // JS onRequestHeaders 钩子（规则脚本改请求 headers）
+    NSDictionary *jsHeaders = mfJSRunRequestHeaders(req.HTTPMethod, req.URL.absoluteString, req.allHTTPHeaderFields);
+    if (jsHeaders) {
+        [req setAllHTTPHeaderFields:jsHeaders];
+        self.record.reqHeaders = jsHeaders;
+        mfLog(@"JS: request headers rewritten (%lu headers)", (unsigned long)jsHeaders.count);
+    }
+
     // 转发请求
     NSURLSessionConfiguration *cfg = [NSURLSessionConfiguration defaultSessionConfiguration];
     self.session = [NSURLSession sessionWithConfiguration:cfg delegate:self delegateQueue:nil];
@@ -218,7 +226,26 @@ static void mfRecordCapture(MFNetRecord *rec) {
         self.record.status = httpResp.statusCode;
         self.record.respHeaders = httpResp.allHeaderFields;
         self.record.mimeType = httpResp.MIMEType;
+
+        // JS onResponseHeaders 钩子（规则脚本改响应 headers）
+        NSDictionary *jsRespHeaders = mfJSRunResponseHeaders(httpResp.statusCode, httpResp.URL.absoluteString, httpResp.allHeaderFields);
+        if (jsRespHeaders) {
+            NSHTTPURLResponse *newResp = [[NSHTTPURLResponse alloc] initWithURL:httpResp.URL
+                                                                      statusCode:httpResp.statusCode
+                                                                     HTTPVersion:@"HTTP/1.1"
+                                                                    headerFields:jsRespHeaders];
+            self.response = newResp;
+            self.record.respHeaders = jsRespHeaders;
+            [self.client URLProtocol:self didReceiveResponse:newResp cacheStoragePolicy:NSURLCacheStorageNotAllowed];
+            mfLog(@"JS: response headers rewritten");
+        } else {
+            [self.client URLProtocol:self didReceiveResponse:httpResp cacheStoragePolicy:NSURLCacheStorageNotAllowed];
+        }
+        self.data = [NSMutableData new];
+        completionHandler(NSURLSessionResponseAllow);
+        return;
     }
+    [self.client URLProtocol:self didReceiveResponse:response cacheStoragePolicy:NSURLCacheStorageNotAllowed];
     self.data = [NSMutableData new];
     completionHandler(NSURLSessionResponseAllow);
 }
@@ -262,6 +289,90 @@ static void mfRecordCapture(MFNetRecord *rec) {
 
 @end
 
+// ====== WebSocket 捕获（参考 FLEX injectWebsocketSendMessage/ReceiveMessage） ======
+@interface MFWebSocketRecord : NSObject
+@property (copy) NSString *url;
+@property (copy) NSString *direction;  // send / receive
+@property (copy) NSString *type;       // text / data
+@property (copy) NSString *content;
+@property (strong) NSDate *timestamp;
+@end
+@implementation MFWebSocketRecord
+@end
+
+static NSMutableArray *g_wsRecords = nil;
+
+static void mfRecordWebSocket(NSString *url, NSString *direction, NSObject *message) {
+    if (!g_captureEnabled) return;
+    if (!g_wsRecords) g_wsRecords = [NSMutableArray new];
+    MFWebSocketRecord *rec = [MFWebSocketRecord new];
+    rec.url = url;
+    rec.direction = direction;
+    rec.timestamp = [NSDate date];
+    if ([message isKindOfClass:[NSString class]]) {
+        rec.type = @"text";
+        rec.content = (NSString *)message;
+    } else if ([message isKindOfClass:[NSData class]]) {
+        rec.type = @"data";
+        rec.content = [[NSString alloc] initWithData:(NSData *)message encoding:NSUTF8StringEncoding] ?: @"<binary>";
+    } else {
+        // NSURLSessionWebSocketMessage——动态取
+        @try {
+            SEL sel = NSSelectorFromString(@"string");
+            if ([message respondsToSelector:sel]) {
+                NSString *s = [message performSelector:sel];
+                if ([s isKindOfClass:[NSString class]]) { rec.type = @"text"; rec.content = s; }
+            }
+            sel = NSSelectorFromString(@"data");
+            if (!rec.content && [message respondsToSelector:sel]) {
+                NSData *d = [message performSelector:sel];
+                if ([d isKindOfClass:[NSData class]]) {
+                    rec.type = @"data";
+                    rec.content = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding] ?: @"<binary>";
+                }
+            }
+        } @catch (NSException *e) {
+            rec.content = [message description];
+        }
+    }
+    if (rec.content.length > 2000) rec.content = [rec.content substringToIndex:2000];
+    @synchronized (g_wsRecords) {
+        [g_wsRecords addObject:rec];
+        if (g_wsRecords.count > 200) [g_wsRecords removeObjectAtIndex:0];
+    }
+    mfLog(@"WS %@ %@ (%@): %@", direction, url, rec.type, rec.content.length > 100 ? [rec.content substringToIndex:100] : rec.content);
+}
+
+// hook NSURLSessionWebSocketTask——sendMessage/receiveMessage
+static IMP orig_ws_sendMessage;
+static void new_ws_sendMessage(id self, SEL _cmd, id message, id completion) {
+    NSString *url = [[[self performSelector:NSSelectorFromString(@"originalRequest")] URL] absoluteString] ?: @"?";
+    mfRecordWebSocket(url, @"send", message);
+    ((void(*)(id, SEL, id, id))orig_ws_sendMessage)(self, _cmd, message, completion);
+}
+static IMP orig_ws_receiveMessage;
+static void new_ws_receiveMessage(id self, SEL _cmd, id completion) {
+    NSString *url = [[[self performSelector:NSSelectorFromString(@"originalRequest")] URL] absoluteString] ?: @"?";
+    id wrappedCompletion = ^(id message, id error) {
+        if (message) mfRecordWebSocket(url, @"recv", message);
+        if (completion) ((void(*)(id, SEL, id, id))completion)(message, error);
+    };
+    ((void(*)(id, SEL, id))orig_ws_receiveMessage)(self, _cmd, wrappedCompletion);
+}
+
+static void mfInstallWebSocketHooks(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        Class wsTask = NSClassFromString(@"NSURLSessionWebSocketTask");
+        if (!wsTask) { mfLog(@"WS hooks: NSURLSessionWebSocketTask not found (iOS < 15)"); return; }
+        Method m = class_getInstanceMethod(wsTask, NSSelectorFromString(@"sendMessage:completionHandler:"));
+        if (m) { orig_ws_sendMessage = method_getImplementation(m); method_setImplementation(m, (IMP)new_ws_sendMessage); }
+        m = class_getInstanceMethod(wsTask, NSSelectorFromString(@"receiveMessageWithCompletionHandler:"));
+        if (m) { orig_ws_receiveMessage = method_getImplementation(m); method_setImplementation(m, (IMP)new_ws_receiveMessage); }
+        mfLog(@"WS hooks installed (NSURLSessionWebSocketTask)");
+    });
+}
+
 // ====== 注册/注销 NSURLProtocol ======
 // swizzle NSURLSessionConfiguration.protocolClasses——所有新建 session 都带上 MFURLProtocol
 static IMP orig_protocolClasses;
@@ -294,6 +405,7 @@ static void mfInstallNetworkCaptureOnce(void) {
 
 void mfInstallNetworkCapture(void) {
     mfInstallNetworkCaptureOnce();
+    mfInstallWebSocketHooks();
 }
 
 // ====== 捕获列表页面（子页展示） ======
