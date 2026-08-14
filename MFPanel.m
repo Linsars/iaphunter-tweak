@@ -721,6 +721,57 @@ static void iaphShowPanel(UIViewController *vc) {
 // ====== ctor：注入入口 ======
 static IMP orig_viewDidAppear;
 
+// ====== IAP 收集（从 IAPHunter.m 合并） ======
+static void ensureStoreKit(void) {
+    if (NSClassFromString(@"SKProduct") != nil) return;
+    dlopen("/System/Library/Frameworks/StoreKit.framework/StoreKit", RTLD_LAZY | RTLD_GLOBAL);
+}
+
+@interface MFIAPObserver : NSObject <SKPaymentTransactionObserver>
+@end
+@implementation MFIAPObserver
+- (void)paymentQueue:(SKPaymentQueue *)queue updatedTransactions:(NSArray *)transactions {
+    for (SKPaymentTransaction *t in transactions) {
+        if (t.transactionState == SKPaymentTransactionStatePurchased ||
+            t.transactionState == SKPaymentTransactionStateFailed) {
+            [queue finishTransaction:t];
+        }
+    }
+}
+@end
+
+// SK hooks——自动收集 productIdentifier
+static IMP orig_SKProduct_pid;
+static NSString *new_SKProduct_pid(id self, SEL _cmd) {
+    NSString *r = ((NSString *(*)(id, SEL))orig_SKProduct_pid)(self, _cmd);
+    IAPRecord(r);
+    return r;
+}
+static IMP orig_SKPayment_pid;
+static NSString *new_SKPayment_pid(id self, SEL _cmd) {
+    NSString *r = ((NSString *(*)(id, SEL))orig_SKPayment_pid)(self, _cmd);
+    IAPRecord(r);
+    return r;
+}
+static IMP orig_SKPaymentTxn_pid;
+static NSString *new_SKPaymentTxn_pid(id self, SEL _cmd) {
+    NSString *r = ((NSString *(*)(id, SEL))orig_SKPaymentTxn_pid)(self, _cmd);
+    IAPRecord(r);
+    return r;
+}
+static IMP orig_SKProductsReq_init;
+static id new_SKProductsReq_init(id self, SEL _cmd, NSSet *identifiers) {
+    for (NSString *pid in identifiers) IAPRecord(pid);
+    return ((id(*)(id, SEL, NSSet *))orig_SKProductsReq_init)(self, _cmd, identifiers);
+}
+
+static void swizzle(Class cls, SEL sel, IMP newImp, IMP *origOut) {
+    Method m = class_getInstanceMethod(cls, sel);
+    if (!m) return;
+    if (origOut) *origOut = method_getImplementation(m);
+    method_setImplementation(m, newImp);
+}
+
 // 双指长按手势处理
 static void mfLongPressAction(id self, SEL _cmd, UILongPressGestureRecognizer *g) {
     if (g.state != UIGestureRecognizerStateBegan) return;
@@ -748,8 +799,25 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
         mfLog(@"=== MinisFix ctor ENTER pid=%d app=%@ ===", getpid(), [[NSBundle mainBundle] bundleIdentifier]);
 
-        // 只做手势注册——不 hook CLLocationManager / motionEnded / NSURLProtocol
-        // FakeGPS / 屏蔽摇一摇 / 网络捕获由 IAPHunter.dylib 负责 或 面板开关延迟启用
+        // IAP 收集
+        ensureStoreKit();
+        Class SKProductCls = NSClassFromString(@"SKProduct");
+        if (SKProductCls) {
+            swizzle(SKProductCls, @selector(productIdentifier), (IMP)new_SKProduct_pid, &orig_SKProduct_pid);
+            swizzle(NSClassFromString(@"SKPayment"), @selector(productIdentifier), (IMP)new_SKPayment_pid, &orig_SKPayment_pid);
+            swizzle(NSClassFromString(@"SKPaymentTransaction"), @selector(productIdentifier), (IMP)new_SKPaymentTxn_pid, &orig_SKPaymentTxn_pid);
+            swizzle(NSClassFromString(@"SKProductsRequest"), @selector(initWithProductIdentifiers:), (IMP)new_SKProductsReq_init, &orig_SKProductsReq_init);
+            mfLog(@"ctor SK hooks installed");
+        }
+        // 交易观察器（finishTransaction）
+        static MFIAPObserver *g_observer = nil;
+        static dispatch_once_t once;
+        dispatch_once(&once, ^{
+            g_observer = [[MFIAPObserver alloc] init];
+            [[SKPaymentQueue defaultQueue] addTransactionObserver:g_observer];
+        });
+
+        // 手势注册
         Class vcCls = NSClassFromString(@"UIViewController");
         if (vcCls) {
             Method m = class_getInstanceMethod(vcCls, @selector(viewDidAppear:));
