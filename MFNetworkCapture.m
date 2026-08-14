@@ -355,7 +355,10 @@ static void new_ws_receiveMessage(id self, SEL _cmd, id completion) {
     NSString *url = [[[self performSelector:NSSelectorFromString(@"originalRequest")] URL] absoluteString] ?: @"?";
     id wrappedCompletion = ^(id message, id error) {
         if (message) mfRecordWebSocket(url, @"recv", message);
-        if (completion) ((void(*)(id, SEL, id, id))completion)(message, error);
+        if (completion) {
+            void (^origBlock)(id, id) = completion;
+            origBlock(message, error);
+        }
     };
     ((void(*)(id, SEL, id))orig_ws_receiveMessage)(self, _cmd, wrappedCompletion);
 }
