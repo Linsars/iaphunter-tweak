@@ -70,7 +70,7 @@ static void new_setValue_forField(NSMutableURLRequest *self, SEL _cmd, NSString 
             }
         }
     }
-    orig_setValue_forField(self, _cmd, value, field);
+    ((void (*)(NSMutableURLRequest *, SEL, NSString *, NSString *))orig_setValue_forField)(self, _cmd, value, field);
 }
 
 void mfInstallAppStoreSpoof(void) {
