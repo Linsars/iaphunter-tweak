@@ -1,0 +1,5 @@
+{
+    Filter = {
+        Executables = ("appstored", "installd");
+    };
+}
