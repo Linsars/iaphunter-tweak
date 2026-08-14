@@ -27,13 +27,27 @@ static NSBundle *tweakBundle = nil;
     if (!_specifiers) {
         _specifiers = [self loadSpecifiersFromPlistName:@"Root" target:self];
         
-        UIAction *titleA = [UIAction actionWithTitle:@"重启用户空间" image:[UIImage systemImageNamed:@"rays"] identifier:nil handler:^(__kindof UIAction *_Nonnull action) {
+        UIAction *respringA = [UIAction actionWithTitle:LOCALIZED(@"Respring") image:[UIImage systemImageNamed:@"rays"] identifier:nil handler:^(__kindof UIAction *_Nonnull action) {
             UIActivityIndicatorView *spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleLarge];
             [spinner setCenter:CGPointMake(self.view.frame.size.width / 2, self.view.frame.size.height / 2)];
             spinner.color = [UIColor colorWithRed:0.0 green:122.0/255.0 blue:1.0 alpha:1.0];
             [self.view addSubview:spinner];
             [spinner startAnimating];
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(7.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^(void){
+                pid_t pid;
+                int status;
+                const char* args[] = { "killall", "-9", "SpringBoard", NULL };
+                posix_spawn(&pid, "/var/jb/usr/bin/killall", NULL, NULL, (char* const*)args, NULL);
+                waitpid(pid, &status, WEXITED);
+            });
+        }];
 
+        UIAction *restartUserspaceA = [UIAction actionWithTitle:@"重启用户空间" image:[UIImage systemImageNamed:@"arrow.clockwise"] identifier:nil handler:^(__kindof UIAction *_Nonnull action) {
+            UIActivityIndicatorView *spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleLarge];
+            [spinner setCenter:CGPointMake(self.view.frame.size.width / 2, self.view.frame.size.height / 2)];
+            spinner.color = [UIColor colorWithRed:0.0 green:122.0/255.0 blue:1.0 alpha:1.0];
+            [self.view addSubview:spinner];
+            [spinner startAnimating];
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^(void){
                 pid_t pid;
                 int status;
@@ -70,7 +84,7 @@ static NSBundle *tweakBundle = nil;
         
         cancelA.attributes = UIMenuElementAttributesDestructive;
 
-        UIMenu *menuActions = [UIMenu menuWithTitle:@"" children:@[titleA, cancelA]];
+        UIMenu *menuActions = [UIMenu menuWithTitle:@"" children:@[respringA, restartUserspaceA, cancelA]];
         UIBarButtonItem *optionsItem = [[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"hand.tap"] menu:menuActions];
         optionsItem.tintColor = [UIColor systemBlueColor];
 
@@ -226,7 +240,15 @@ static NSBundle *tweakBundle = nil;
     if (!_specifiers) {
         _specifiers = [self loadSpecifiersFromPlistName:@"Color" target:self];
         
-        UIAction *titleA = [UIAction actionWithTitle:@"重启用户空间" image:[UIImage systemImageNamed:@"rays"] identifier:nil handler:^(__kindof UIAction *_Nonnull action) {
+        UIAction *respringA = [UIAction actionWithTitle:LOCALIZED(@"Respring") image:[UIImage systemImageNamed:@"rays"] identifier:nil handler:^(__kindof UIAction *_Nonnull action) {
+            pid_t pid;
+            int status;
+            const char* args[] = { "killall", "-9", "SpringBoard", NULL };
+            posix_spawn(&pid, "/var/jb/usr/bin/killall", NULL, NULL, (char* const*)args, NULL);
+            waitpid(pid, &status, WEXITED);
+        }];
+
+        UIAction *restartUserspaceA = [UIAction actionWithTitle:@"重启用户空间" image:[UIImage systemImageNamed:@"arrow.clockwise"] identifier:nil handler:^(__kindof UIAction *_Nonnull action) {
             pid_t pid;
             int status;
             const char* args[] = { "/var/jb/usr/bin/launchctl", "reboot", "userspace", NULL };
@@ -257,7 +279,7 @@ static NSBundle *tweakBundle = nil;
         
         cancelA.attributes = UIMenuElementAttributesDestructive;
 
-        UIMenu *menuActions = [UIMenu menuWithTitle:@"" children:@[titleA, cancelA]];
+        UIMenu *menuActions = [UIMenu menuWithTitle:@"" children:@[respringA, restartUserspaceA, cancelA]];
         UIBarButtonItem *optionsItem = [[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"hand.tap"] menu:menuActions];
         optionsItem.tintColor = [UIColor systemBlueColor];
 
