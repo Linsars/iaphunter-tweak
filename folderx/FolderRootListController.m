@@ -428,6 +428,11 @@ typedef NS_ENUM(NSInteger, XXDynamicSpecifierOperatorType) {
 @implementation MinisFixIAPController
 - (NSArray *)specifiers {
     if (!_specifiers) {
+        // AltList 是运行时 framework（不静态链接），需 dlopen 让 ATL 类可用
+        static dispatch_once_t once;
+        dispatch_once(&once, ^{
+            dlopen("/var/jb/Library/Frameworks/AltList.framework/AltList", RTLD_LAZY);
+        });
         _specifiers = [self loadSpecifiersFromPlistName:@"IAPSettings" target:self];
     }
     return _specifiers;

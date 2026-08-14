@@ -42,7 +42,7 @@
 			<key>defaults</key>
 			<string>com.linsars.minisfix</string>
 			<key>detail</key>
-			<string>ALTApplicationListMultiSelectionController</string>
+			<string>ATLApplicationListMultiSelectionController</string>
 			<key>hideSearchBarWhileScrolling</key>
 			<true/>
 			<key>includeIdentifiersInSearch</key>
