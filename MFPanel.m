@@ -48,6 +48,19 @@ NSDictionary *mfPrefsDict(void) {
     NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:path];
     return d ?: @{};
 }
+
+// 设置页启用检查：启用 IAP工具箱（mfIAPEnabled，默认开）× 应用程序白名单（mfIAPAppList，
+// AltList 多选存启用数组；空=不启用任何 app）。所有更改需 respring 生效（ctor 只跑一次）。
+BOOL mfIsEnabledForCurrentApp(void) {
+    NSDictionary *prefs = mfPrefsDict();
+    NSNumber *en = prefs[@"mfIAPEnabled"];
+    if (en && ![en boolValue]) return NO;
+    NSArray *wl = prefs[@"mfIAPAppList"];
+    if (![wl isKindOfClass:[NSArray class]]) return NO;
+    NSString *bid = [[NSBundle mainBundle] bundleIdentifier] ?: @"";
+    if (wl.count == 0) return NO;
+    return [wl containsObject:bid];
+}
 void mfSetPrefs(NSDictionary *d) {
     [d writeToFile:@"/var/jb/var/mobile/Library/Preferences/com.linsars.minisfix.plist" atomically:YES];
 }
@@ -955,6 +968,12 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
         mfLog(@"=== MinisFix ctor ENTER pid=%d app=%@ ===", getpid(), [[NSBundle mainBundle] bundleIdentifier]);
+
+        // 启用检查：设置页「启用 IAP工具箱」×「应用程序」白名单（不通过则不加载任何功能）
+        if (!mfIsEnabledForCurrentApp()) {
+            mfLog(@"app not in IAP工具箱 whitelist — MinisFix disabled in this app");
+            return;
+        }
 
         // IAP 收集
         ensureStoreKit();

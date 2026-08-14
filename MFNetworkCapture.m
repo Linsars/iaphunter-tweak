@@ -140,6 +140,8 @@ static void mfRecordCapture(MFNetRecord *rec) {
 @property (strong) NSMutableData *data;
 @property (strong) MFNetRecord *record;
 @property (strong) NSURLResponse *response;
+@property (strong) NSData *replaceBody;   // replaceResp 预构建的替换 body
+@property BOOL replacingBody;             // 是否正在替换 body（原始数据不转发）
 @end
 
 @implementation MFURLProtocol
@@ -147,7 +149,12 @@ static void mfRecordCapture(MFNetRecord *rec) {
 + (BOOL)canInitWithRequest:(NSURLRequest *)request {
     if ([NSURLProtocol propertyForKey:@"MFHandled" inRequest:request]) return NO;
     NSString *scheme = request.URL.scheme.lowercaseString;
-    return [scheme isEqualToString:@"http"] || [scheme isEqualToString:@"https"];
+    if (![scheme isEqualToString:@"http"] && ![scheme isEqualToString:@"https"]) return NO;
+    // WebSocket upgrade 请求不拦截——NSURLProtocol 无法正确转发 101 Switching Protocols，
+    // 会导致上层 NSURLSessionWebSocketTask 状态错乱甚至崩溃（openminis 闪退根因之一）
+    NSString *upgrade = request.allHTTPHeaderFields[@"Upgrade"];
+    if ([upgrade.lowercaseString containsString:@"websocket"]) return NO;
+    return YES;
 }
 
 + (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request {
@@ -235,18 +242,45 @@ static void mfRecordCapture(MFNetRecord *rec) {
 
         // JS onResponseHeaders 钩子（规则脚本改响应 headers）
         NSDictionary *jsRespHeaders = mfJSRunResponseHeaders(httpResp.statusCode, httpResp.URL.absoluteString, httpResp.allHeaderFields);
+        NSHTTPURLResponse *outResp = httpResp;
+        NSDictionary *outHeaders = httpResp.allHeaderFields;
         if (jsRespHeaders) {
-            NSHTTPURLResponse *newResp = [[NSHTTPURLResponse alloc] initWithURL:httpResp.URL
-                                                                      statusCode:httpResp.statusCode
-                                                                     HTTPVersion:@"HTTP/1.1"
-                                                                    headerFields:jsRespHeaders];
-            self.response = newResp;
-            self.record.respHeaders = jsRespHeaders;
-            [self.client URLProtocol:self didReceiveResponse:newResp cacheStoragePolicy:NSURLCacheStorageNotAllowed];
+            outHeaders = jsRespHeaders;
+            outResp = [[NSHTTPURLResponse alloc] initWithURL:httpResp.URL
+                                                   statusCode:httpResp.statusCode
+                                                  HTTPVersion:@"HTTP/1.1"
+                                                 headerFields:jsRespHeaders];
             mfLog(@"JS: response headers rewritten");
-        } else {
-            [self.client URLProtocol:self didReceiveResponse:httpResp cacheStoragePolicy:NSURLCacheStorageNotAllowed];
         }
+
+        // replaceResp 规则——在响应阶段预构建替换 body
+        // （不能在 didCompleteWithError 里再次 didReceiveResponse——NSURLProtocolClient
+        //   每 task 只允许一次 response，重复调用触发 NSInternalInconsistencyException 崩溃）
+        NSData *replBody = nil;
+        if (g_rewriteEnabled) {
+            mfLoadRules();
+            for (MFRewriteRule *rule in g_rewriteRules) {
+                if (!mfRuleMatchesURL(rule, self.record.url)) continue;
+                if ([rule.action isEqualToString:@"replaceResp"] && rule.bodyReplace.length > 0) {
+                    replBody = [rule.bodyReplace dataUsingEncoding:NSUTF8StringEncoding];
+                    break;
+                }
+            }
+        }
+        if (replBody) {
+            NSMutableDictionary *hdrs = [outHeaders mutableCopy];
+            hdrs[@"Content-Length"] = [NSString stringWithFormat:@"%lu", (unsigned long)replBody.length];
+            outResp = [[NSHTTPURLResponse alloc] initWithURL:httpResp.URL
+                                                   statusCode:httpResp.statusCode
+                                                  HTTPVersion:@"HTTP/1.1"
+                                                 headerFields:hdrs];
+            self.replaceBody = replBody;
+            self.replacingBody = YES;
+            self.record.respHeaders = hdrs;
+            mfLog(@"replaceResp: body replaced (%lu bytes)", (unsigned long)replBody.length);
+        }
+
+        [self.client URLProtocol:self didReceiveResponse:outResp cacheStoragePolicy:NSURLCacheStorageNotAllowed];
         self.data = [NSMutableData new];
         completionHandler(NSURLSessionResponseAllow);
         return;
@@ -257,6 +291,7 @@ static void mfRecordCapture(MFNetRecord *rec) {
 }
 
 - (void)URLSession:(NSURLSession *)session dataTask:(NSURLSessionDataTask *)dataTask didReceiveData:(NSData *)data {
+    if (self.replacingBody) return;  // 原始 body 不转发（已被规则替换）
     [self.data appendData:data];
     [self.client URLProtocol:self didLoadData:data];
 }
@@ -267,26 +302,12 @@ static void mfRecordCapture(MFNetRecord *rec) {
         self.record.status = -1;
         self.record.summary = [NSString stringWithFormat:@"ERROR: %@", error.localizedDescription];
     } else {
-        // 应用响应拦截规则
-        self.record.respBody = self.data;
-        if (g_rewriteEnabled) {
-            for (MFRewriteRule *rule in g_rewriteRules) {
-                if (!mfRuleMatchesURL(rule, self.record.url)) continue;
-                if ([rule.action isEqualToString:@"replaceResp"]) {
-                    // 替换响应 body
-                    if (rule.bodyReplace.length > 0) {
-                        NSData *newBody = [rule.bodyReplace dataUsingEncoding:NSUTF8StringEncoding];
-                        self.record.respBody = newBody;
-                        // 重新构建响应
-                        NSHTTPURLResponse *orig = (NSHTTPURLResponse *)self.response;
-                        NSMutableDictionary *hdrs = [orig.allHeaderFields mutableCopy];
-                        hdrs[@"Content-Length"] = [NSString stringWithFormat:@"%lu", (unsigned long)newBody.length];
-                        NSHTTPURLResponse *newResp = [[NSHTTPURLResponse alloc] initWithURL:orig.URL statusCode:orig.statusCode HTTPVersion:nil headerFields:hdrs];
-                        [self.client URLProtocol:self didReceiveResponse:newResp cacheStoragePolicy:NSURLCacheStorageNotAllowed];
-                        [self.client URLProtocol:self didLoadData:newBody];
-                    }
-                }
-            }
+        if (self.replacingBody && self.replaceBody) {
+            // 发送替换后的 body（正常路径数据已在 didReceiveData 转发，此处只发替换 body）
+            self.record.respBody = self.replaceBody;
+            [self.client URLProtocol:self didLoadData:self.replaceBody];
+        } else {
+            self.record.respBody = self.data;
         }
         [self.client URLProtocolDidFinishLoading:self];
     }

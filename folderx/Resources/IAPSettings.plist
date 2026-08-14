@@ -8,9 +8,9 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>自动收集 IAP 产品 ID，长按界面呼出购买面板</string>
+			<string>开启后仅在下方「应用程序」勾选的 App 内启用 IAP工具箱（面板/捕获/规则全部功能）。所有更改需 respring 后生效。</string>
 			<key>label</key>
-			<string>IAPHunter</string>
+			<string>IAP工具箱</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -20,22 +20,57 @@
 			<key>defaults</key>
 			<string>com.linsars.minisfix</string>
 			<key>key</key>
-			<string>IAPHunterEnabled</string>
+			<string>mfIAPEnabled</string>
 			<key>label</key>
-			<string>启用 IAPHunter</string>
+			<string>启用 IAP工具箱</string>
+			<key>PostNotification</key>
+			<string>com.linsars.minisfix/ReloadPrefs</string>
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>PSLinkCell</string>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>勾选要启用 IAP工具箱 的 App。未勾选的 App 不加载任何 MinisFix 功能。</string>
+			<key>label</key>
+			<string>作用范围</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSLinkListCell</string>
+			<key>defaultApplicationSwitchValue</key>
+			<false/>
+			<key>defaults</key>
+			<string>com.linsars.minisfix</string>
 			<key>detail</key>
-			<string>MinisFixAppListController</string>
-			<key>isController</key>
+			<string>ALTApplicationListMultiSelectionController</string>
+			<key>hideSearchBarWhileScrolling</key>
 			<true/>
+			<key>includeIdentifiersInSearch</key>
+			<true/>
+			<key>key</key>
+			<string>mfIAPAppList</string>
 			<key>label</key>
 			<string>应用程序</string>
+			<key>PostNotification</key>
+			<string>com.linsars.minisfix/ReloadPrefs</string>
+			<key>sections</key>
+			<array>
+				<dict>
+					<key>sectionType</key>
+					<string>User</string>
+				</dict>
+				<dict>
+					<key>sectionType</key>
+					<string>System</string>
+				</dict>
+			</array>
+			<key>showIdentifiersAsSubtitle</key>
+			<true/>
+			<key>useSearchBar</key>
+			<true/>
 		</dict>
 	</array>
 	<key>title</key>
-	<string>IAPHunter</string>
+	<string>IAP工具箱</string>
 </dict>
 </plist>
