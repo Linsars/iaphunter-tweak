@@ -58,3 +58,18 @@ void mfShowGpsPage(void);
 BOOL mfJSLoadScript(NSString *script);
 NSDictionary *mfJSRunRequestHeaders(NSString *method, NSString *url, NSDictionary *headers);
 NSDictionary *mfJSRunResponseHeaders(int status, NSString *url, NSDictionary *headers);
+
+// ====== 捕获数据模型 ======
+@interface MFNetRecord : NSObject
+@property (copy) NSString *url;
+@property (copy) NSString *method;
+@property (copy) NSDictionary *reqHeaders;
+@property (copy) NSData *reqBody;
+@property (copy) NSDictionary *respHeaders;
+@property (copy) NSData *respBody;
+@property NSInteger status;
+@property (copy) NSString *mimeType;
+@property (strong) NSDate *timestamp;
+@property (copy) NSString *summary;
+@end
+void mfShowCaptureDetailPage(MFNetRecord *rec);

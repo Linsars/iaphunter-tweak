@@ -5,19 +5,7 @@
 #import "MFPanel.h"
 #import <objc/runtime.h>
 
-// ====== 捕获记录模型 ======
-@interface MFNetRecord : NSObject
-@property (copy) NSString *url;
-@property (copy) NSString *method;
-@property (copy) NSDictionary *reqHeaders;
-@property (copy) NSData *reqBody;
-@property (copy) NSDictionary *respHeaders;
-@property (copy) NSData *respBody;
-@property NSInteger status;
-@property (copy) NSString *mimeType;
-@property (strong) NSDate *timestamp;
-@property (copy) NSString *summary;  // 简要描述
-@end
+// ====== 捕获记录模型（@interface 在 MFPanel.h 共享） ======
 @implementation MFNetRecord
 @end
 
@@ -412,6 +400,163 @@ void mfInstallNetworkCapture(void) {
 }
 
 // ====== 捕获列表页面（子页展示） ======
+static NSString *mfDisplayDict(NSDictionary *d) {
+    if (!d || d.count == 0) return @"(空)";
+    NSMutableString *s = [NSMutableString string];
+    for (NSString *k in d) [s appendFormat:@"%@: %@\n", k, d[k]];
+    return s;
+}
+static NSString *mfDisplayData(NSData *data) {
+    if (!data || data.length == 0) return @"(空)";
+    NSString *s = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    if (!s) return [NSString stringWithFormat:@"<二进制 %lu 字节>", (unsigned long)data.length];
+    return s;
+}
+
+// 详情页——完整展示请求/响应 headers/body，可复制
+void mfShowCaptureDetailPage(MFNetRecord *rec) {
+    if (!rec) return;
+    UIView *page = mfMakePage(@"请求详情", YES);
+
+    // 复制按钮（右上）
+    UIButton *copyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    copyBtn.frame = CGRectMake(g_mfCardW - 78, 8, 56, 28);
+    [copyBtn setTitle:@"复制" forState:UIControlStateNormal];
+    copyBtn.titleLabel.font = [UIFont systemFontOfSize:13];
+    objc_setAssociatedObject(copyBtn, "rec", rec, OBJC_ASSOCIATION_RETAIN);
+    [copyBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfCopyRecord:") forControlEvents:UIControlEventTouchUpInside];
+    [page addSubview:copyBtn];
+
+    UIScrollView *sv = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 42, g_mfCardW, g_mfCardH - 42)];
+    CGFloat y = 8;
+
+    // 概览
+    NSString *summary = [NSString stringWithFormat:@"%@ %ld  %@",
+        rec.method ?: @"?", (long)rec.status, rec.url ?: @"?"];
+    UILabel *sumLb = [UILabel new];
+    sumLb.font = [UIFont systemFontOfSize:12];
+    sumLb.textColor = [UIColor labelColor];
+    sumLb.numberOfLines = 0;
+    sumLb.frame = CGRectMake(12, y, g_mfCardW - 24, 46);
+    sumLb.text = summary;
+    [sv addSubview:sumLb];
+    y += 52;
+
+    // Section
+    NSArray *sectionTitles = @[@"请求 Headers", @"请求 Body", @"响应 Headers", @"响应 Body"];
+    NSArray *sectionValues = @[
+        mfDisplayDict(rec.reqHeaders),
+        mfDisplayData(rec.reqBody),
+        mfDisplayDict(rec.respHeaders),
+        mfDisplayData(rec.respBody),
+    ];
+    for (NSUInteger i = 0; i < sectionTitles.count; i++) {
+        UILabel *t = [UILabel new];
+        t.font = [UIFont boldSystemFontOfSize:12];
+        t.textColor = [UIColor systemBlueColor];
+        t.frame = CGRectMake(12, y, g_mfCardW - 24, 22);
+        t.text = sectionTitles[i];
+        [sv addSubview:t];
+        y += 24;
+
+        UILabel *v = [UILabel new];
+        v.font = [UIFont systemFontOfSize:11];
+        v.textColor = [UIColor secondaryLabelColor];
+        v.numberOfLines = 0;
+        NSString *val = sectionValues[i];
+        CGSize size = [val boundingRectWithSize:CGSizeMake(g_mfCardW - 24, CGFLOAT_MAX)
+            options:NSStringDrawingUsesLineFragmentOrigin
+            attributes:@{NSFontAttributeName: v.font} context:nil].size;
+        v.frame = CGRectMake(12, y, g_mfCardW - 24, size.height + 4);
+        v.text = val;
+        [sv addSubview:v];
+        y += size.height + 12;
+    }
+
+    sv.contentSize = CGSizeMake(g_mfCardW, y + 16);
+    [page addSubview:sv];
+    mfPushPage(page);
+}
+
+// 详情页——完整展示请求/响应 headers/body，可复制
+void mfShowCaptureDetailPage(MFNetRecord *rec) {
+    if (!rec) return;
+    UIView *page = mfMakePage(@"请求详情", YES);
+    
+    // 复制按钮（右上）
+    UIButton *copyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    copyBtn.frame = CGRectMake(g_mfCardW - 78, 8, 56, 28);
+    [copyBtn setTitle:@"复制" forState:UIControlStateNormal];
+    copyBtn.titleLabel.font = [UIFont systemFontOfSize:13];
+    objc_setAssociatedObject(copyBtn, "rec", rec, OBJC_ASSOCIATION_RETAIN);
+    [copyBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfCopyRecord:") forControlEvents:UIControlEventTouchUpInside];
+    [page addSubview:copyBtn];
+
+    UIScrollView *sv = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 42, g_mfCardW, g_mfCardH - 42)];
+    CGFloat y = 8;
+
+    // 概览
+    NSString *summary = [NSString stringWithFormat:@"%@ %ld  %@\n%@",
+        rec.method ?: @"?", (long)rec.status, rec.url ?: @"?",
+        rec.timestamp ? [NSString stringWithFormat:@"%.0f", [rec.timestamp timeIntervalSince1970]] : @""];
+    UILabel *sumLb = [UILabel new];
+    sumLb.font = [UIFont systemFontOfSize:12];
+    sumLb.textColor = [UIColor labelColor];
+    sumLb.numberOfLines = 0;
+    sumLb.frame = CGRectMake(12, y, g_mfCardW - 24, 46);
+    sumLb.text = summary;
+    [sv addSubview:sumLb];
+    y += 52;
+
+    // Section 工具
+    NSArray *sectionTitles = @[@"请求 Headers", @"请求 Body", @"响应 Headers", @"响应 Body"];
+    NSArray *sectionValues = @[
+        [self displayDict:rec.reqHeaders],
+        [self displayData:rec.reqBody],
+        [self displayDict:rec.respHeaders],
+        [self displayData:rec.respBody],
+    ];
+    for (NSUInteger i = 0; i < sectionTitles.count; i++) {
+        UILabel *t = [UILabel new];
+        t.font = [UIFont boldSystemFontOfSize:12];
+        t.textColor = [UIColor systemBlueColor];
+        t.frame = CGRectMake(12, y, g_mfCardW - 24, 22);
+        t.text = sectionTitles[i];
+        [sv addSubview:t];
+        y += 24;
+
+        UILabel *v = [UILabel new];
+        v.font = [UIFont systemFontOfSize:11];
+        v.textColor = [UIColor secondaryLabelColor];
+        v.numberOfLines = 0;
+        NSString *val = sectionValues[i];
+        CGSize size = [val boundingRectWithSize:CGSizeMake(g_mfCardW - 24, CGFLOAT_MAX)
+            options:NSStringDrawingUsesLineFragmentOrigin
+            attributes:@{NSFontAttributeName: v.font} context:nil].size;
+        v.frame = CGRectMake(12, y, g_mfCardW - 24, size.height + 4);
+        v.text = val;
+        [sv addSubview:v];
+        y += size.height + 12;
+    }
+
+    sv.contentSize = CGSizeMake(g_mfCardW, y + 16);
+    [page addSubview:sv];
+    mfPushPage(page);
+}
+
++ (NSString *)displayDict:(NSDictionary *)d {
+    if (!d || d.count == 0) return @"(空)";
+    NSMutableString *s = [NSMutableString string];
+    for (NSString *k in d) [s appendFormat:@"%@: %@\n", k, d[k]];
+    return s;
+}
++ (NSString *)displayData:(NSData *)data {
+    if (!data || data.length == 0) return @"(空)";
+    NSString *s = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    if (!s) return [NSString stringWithFormat:@"<二进制 %lu 字节>", (unsigned long)data.length];
+    return s;
+}
+
 void mfShowNetworkCapturePage(void) {
     UIView *page = mfMakePage(@"网络捕获", YES);
     UIScrollView *sv = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 42, g_mfCardW, g_mfCardH - 42)];
@@ -448,6 +593,10 @@ void mfShowNetworkCapturePage(void) {
                 [row addSubview:info];
                 
                 [sv addSubview:row];
+                // 点击行 → 详情页
+                UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:g_mfCtrl action:NSSelectorFromString(@"mfShowCaptureDetail:")];
+                objc_setAssociatedObject(tap, "rec", rec, OBJC_ASSOCIATION_RETAIN);
+                [row addGestureRecognizer:tap];
                 y += 62;
             }
         }

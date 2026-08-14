@@ -454,6 +454,34 @@ static void hookShakeBlock(void) {
 - (void)mfShowIconPage { mfShowIconPage(); }
 - (void)mfShowGpsPage { mfShowGpsPage(); }
 
+// 捕获详情
+- (void)mfShowCaptureDetail:(UITapGestureRecognizer *)g {
+    MFNetRecord *rec = objc_getAssociatedObject(g, "rec");
+    mfShowCaptureDetailPage(rec);
+}
+- (void)mfCopyRecord:(UIButton *)btn {
+    MFNetRecord *rec = objc_getAssociatedObject(btn, "rec");
+    if (!rec) return;
+    NSMutableString *s = [NSMutableString string];
+    [s appendFormat:@"%@ %ld %@\n", rec.method ?: @"?", (long)rec.status, rec.url ?: @"?"];
+    [s appendString:@"\n--- 请求 Headers ---\n"];
+    for (NSString *k in rec.reqHeaders) [s appendFormat:@"%@: %@\n", k, rec.reqHeaders[k]];
+    if (rec.reqBody.length) {
+        [s appendString:@"\n--- 请求 Body ---\n"];
+        [s appendString:[[NSString alloc] initWithData:rec.reqBody encoding:NSUTF8StringEncoding] ?: @""];
+    }
+    [s appendString:@"\n--- 响应 Headers ---\n"];
+    for (NSString *k in rec.respHeaders) [s appendFormat:@"%@: %@\n", k, rec.respHeaders[k]];
+    if (rec.respBody.length) {
+        [s appendString:@"\n--- 响应 Body ---\n"];
+        [s appendString:[[NSString alloc] initWithData:rec.respBody encoding:NSUTF8StringEncoding] ?: @""];
+    }
+    [UIPasteboard generalPasteboard].string = s;
+    mfLog(@"copied %lu chars to pasteboard", (unsigned long)s.length);
+    // 视觉反馈
+    [UIView animateWithDuration:0.15 animations:^{ btn.alpha = 0.3; } completion:^(BOOL f){ btn.alpha = 1; }];
+}
+
 // 网格开关
 - (void)mfGridSwitchChanged:(UIButton *)b {
     NSString *key = objc_getAssociatedObject(b, "pfx");
