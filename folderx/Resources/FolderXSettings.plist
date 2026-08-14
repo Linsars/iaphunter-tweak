@@ -320,6 +320,52 @@
 			<key>label</key>
 			<string>Drag Multi Widgets</string>
 		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>增加 Dock 栏图标数量（默认4个），需 respring 生效。</string>
+			<key>label</key>
+			<string>Dock</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+			<key>defaults</key>
+			<string>com.linsars.minisfix</string>
+			<key>key</key>
+			<string>mfDockEnabled</string>
+			<key>label</key>
+			<string>多图标 Dock</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSegmentCell</string>
+			<key>default</key>
+			<string>5</string>
+			<key>defaults</key>
+			<string>com.linsars.minisfix</string>
+			<key>key</key>
+			<string>mfDockColumns</string>
+			<key>label</key>
+			<string>图标数量</string>
+			<key>validTitles</key>
+			<array>
+				<string>5</string>
+				<string>6</string>
+				<string>7</string>
+				<string>8</string>
+			</array>
+			<key>validValues</key>
+			<array>
+				<string>5</string>
+				<string>6</string>
+				<string>7</string>
+				<string>8</string>
+			</array>
+		</dict>
 	</array>
 	<key>title</key>
 	<string>FolderX</string>

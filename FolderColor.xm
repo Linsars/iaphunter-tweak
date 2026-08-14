@@ -236,3 +236,18 @@ static NSString *domain = @"com.lizynz.folderx";
     return %orig;
 }
 %end
+
+// ====== Dock 多图标（参考 FiveIconDock13：dock=1行布局，通过 numberOfPortraitRows==1 判断） ======
+%hook SBIconListGridLayoutConfiguration
+- (unsigned long long)numberOfPortraitColumns {
+    unsigned long long orig = %orig;
+    NSDictionary *prefs = [NSDictionary dictionaryWithContentsOfFile:kRWSettingsPath];
+    if (prefs && [[prefs objectForKey:@"mfDockEnabled"] boolValue]) {
+        int cols = [prefs objectForKey:@"mfDockColumns"] ? [[prefs objectForKey:@"mfDockColumns"] intValue] : 5;
+        unsigned long long rows = self.numberOfPortraitRows;
+        // dock固定1行——主屏幕2行以上，用行数区分 dock 与主屏幕
+        if (rows == 1 && cols >= 5 && cols <= 10) return cols;
+    }
+    return orig;
+}
+%end

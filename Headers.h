@@ -64,6 +64,12 @@
 @interface SBDockIconListView : SBIconListView
 @end
 
+@interface SBIconListGridLayoutConfiguration : NSObject
+@property (nonatomic, readonly) unsigned long long numberOfPortraitRows;
+@property (nonatomic, readonly) unsigned long long numberOfPortraitColumns;
+@property (nonatomic, readonly) unsigned long long numberOfLandscapeRows;
+@end
+
 @interface _SBIconGridWrapperView : UIView
 @property (nonatomic, assign) CGAffineTransform transform;
 @end
