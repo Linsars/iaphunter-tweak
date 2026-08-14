@@ -2,6 +2,7 @@
 #import "FolderRootListController.h"
 #import <spawn.h>
 #import <CoreServices/CoreServices.h>
+#import <dlfcn.h>
 
 #define kMinisFixPrefsPath @"/var/jb/var/mobile/Library/Preferences/com.linsars.minisfix.plist"
 
