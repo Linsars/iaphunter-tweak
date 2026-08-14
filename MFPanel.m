@@ -558,7 +558,7 @@ static void hookShakeBlock(void) {
 - (void)mfRuleSwitchChanged:(UISwitch *)sw {
     NSInteger idx = [objc_getAssociatedObject(sw, "idx") integerValue];
     if (idx >= 0 && idx < (NSInteger)g_rewriteRules.count) {
-        g_rewriteRules[idx].enabled = sw.on;
+        ((MFRewriteRule *)g_rewriteRules[idx]).enabled = sw.on;
         mfSaveRule(g_rewriteRules[idx], idx);
         mfLog(@"rule %ld enabled -> %d", (long)idx, sw.on);
     }
@@ -577,7 +577,7 @@ static void hookShakeBlock(void) {
     NSInteger idx = [objc_getAssociatedObject(btn, "idx") integerValue];
     if (idx < 0 || idx >= (NSInteger)g_rewriteRules.count) return;
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"删除规则"
-        message:[NSString stringWithFormat:@"确定删除这条规则？\n%@", g_rewriteRules[idx].pattern]
+        message:[NSString stringWithFormat:@"确定删除这条规则？\n%@", ((MFRewriteRule *)g_rewriteRules[idx]).pattern]
         preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"删除" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *a) {
         mfRemoveRule(idx);
@@ -617,7 +617,7 @@ static void hookShakeBlock(void) {
     r.headerReplaces = @{};
     r.enabled = YES;
     if (index >= 0 && index < (NSInteger)g_rewriteRules.count) {
-        r.appBundle = g_rewriteRules[index].appBundle;
+        r.appBundle = ((MFRewriteRule *)g_rewriteRules[index]).appBundle;
     } else {
         r.appBundle = mfCurrentBundleId();
     }
