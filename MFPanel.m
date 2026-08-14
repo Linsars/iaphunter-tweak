@@ -74,13 +74,16 @@ static void new_setValue_forField(NSMutableURLRequest *self, SEL _cmd, NSString 
 }
 
 void mfInstallAppStoreSpoof(void) {
-    Class cls = NSClassFromString(@"NSMutableURLRequest");
-    if (!cls) return;
-    SEL sel = @selector(setValue:forHTTPHeaderField:);
-    Method m = class_getInstanceMethod(cls, sel);
-    if (!m) return;
-    orig_setValue_forField = method_setImplementation(m, (IMP)new_setValue_forField);
-    mfLog(@"AppStore version spoof hook installed");
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        Class cls = NSClassFromString(@"NSMutableURLRequest");
+        if (!cls) return;
+        SEL sel = @selector(setValue:forHTTPHeaderField:);
+        Method m = class_getInstanceMethod(cls, sel);
+        if (!m) return;
+        orig_setValue_forField = method_setImplementation(m, (IMP)new_setValue_forField);
+        mfLog(@"AppStore version spoof hook installed");
+    });
 }
 
 // 设置页启用检查：启用 IAP工具箱（mfIAPEnabled，默认开）× 应用程序白名单（mfIAPAppList，
@@ -413,6 +416,27 @@ void mfShowProductPage(void) {
     gy = mfGridButton(page, 16, gy, gw, @"扫描购买", @"🔍", @selector(mfShowScanPage), NO, nil);
     gy = mfGridButton(page, 16 + gw + 12, gy - 92, gw, @"手动购买", @"⌨️", @selector(mfShowManualBuyPage), NO, nil);
     gy = mfGridButton(page, 16, gy, gw, @"图标解锁", @"🎨", @selector(mfShowIconPage), NO, nil);
+
+    // AppStore 版本伪装开关（仅在 App Store 主 app 里显示）
+    if ([[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.apple.AppStore"]) {
+        CGFloat swY = gy + 8;
+        UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectMake(16, swY, 60, 31)];
+        sw.on = [[mfPrefsDict() objectForKey:@"mfSpoofEnabled"] boolValue];
+        [sw addTarget:g_mfCtrl action:NSSelectorFromString(@"mfSpoofSwitchChanged:") forControlEvents:UIControlEventValueChanged];
+        [page addSubview:sw];
+        UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(84, swY + 4, g_mfCardW - 100, 24)];
+        label.text = @"版本伪装（购买高版本App）";
+        label.font = [UIFont systemFontOfSize:13];
+        label.textColor = [UIColor secondaryLabelColor];
+        [page addSubview:label];
+        NSString *ver = [mfPrefsDict() objectForKey:@"mfSpoofVersion"] ?: @"99.0.0";
+        UILabel *verLb = [[UILabel alloc] initWithFrame:CGRectMake(84, swY + 26, g_mfCardW - 100, 18)];
+        verLb.text = [NSString stringWithFormat:@"伪装 iOS %@，需 respring 生效", ver];
+        verLb.font = [UIFont systemFontOfSize:11];
+        verLb.textColor = [UIColor tertiaryLabelColor];
+        [page addSubview:verLb];
+    }
+
     mfPushPage(page);
 }
 
@@ -680,6 +704,13 @@ static void hookShakeBlock(void) {
 // 添加规则（列表页）——走完整编辑页
 - (void)mfAddRuleTapped {
     mfShowRuleEditPage(nil, @"replaceResp", -1, YES);
+}
+
+// AppStore 版本伪装开关（面板 Product 页）
+- (void)mfSpoofSwitchChanged:(UISwitch *)sw {
+    mfSetBoolPref(@"mfSpoofEnabled", sw.on);
+    if (sw.on) mfInstallAppStoreSpoof();
+    mfLog(@"spoof enabled -> %d", sw.on);
 }
 
 // IAP 购买
