@@ -59,9 +59,10 @@ static void new_setValue_forField(NSMutableURLRequest *self, SEL _cmd, NSString 
     if ([field isEqualToString:@"User-Agent"]) {
         NSString *url = [self.URL absoluteString] ?: @"";
         if ([url containsString:@"WebObjects/MZBuy.woa/wa/buyProduct"]) {
-            NSDictionary *prefs = mfPrefsDict();
-            if ([[prefs objectForKey:@"mfSpoofEnabled"] boolValue]) {
-                NSString *version = [prefs objectForKey:@"mfSpoofVersion"] ?: @"99.0.0";
+            // daemon 里用 NSUserDefaults 读 prefs（NSDictionary 读文件可能无权限）
+            NSUserDefaults *ud = [[NSUserDefaults alloc] initWithSuiteName:@"com.linsars.minisfix"];
+            if ([ud boolForKey:@"mfSpoofEnabled"]) {
+                NSString *version = [ud stringForKey:@"mfSpoofVersion"] ?: @"99.0.0";
                 value = [value stringByReplacingOccurrencesOfString:@"iOS/\\d+\\.\\d+\\.\\d+\\s"
                                                          withString:[NSString stringWithFormat:@"iOS/%@ ", version]
                                                            options:NSRegularExpressionSearch

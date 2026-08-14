@@ -73,7 +73,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>拦截 App Store 购买请求，伪装 iOS 版本号（默认99.0.0）。解决低版本 iOS 设备"此 App 需要更高版本"的购买限制。购买后回此设备下载最后兼容版本。需 respring 生效。</string>
+			<string>拦截 App Store 购买请求，伪装 iOS 版本号（默认99.0.0）。解决低版本 iOS 设备"此 App 需要更高版本"的购买限制。购买后回此设备下载最后兼容版本。需重启用户空间（appstored）生效。</string>
 			<key>label</key>
 			<string>AppStore 版本伪装</string>
 		</dict>
