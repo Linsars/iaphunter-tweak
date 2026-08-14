@@ -53,3 +53,8 @@ void mfShowIconPage(void);
 
 // FakeGPS（MFPanel.m）
 void mfShowGpsPage(void);
+
+// ====== JS 规则引擎（MFJSRules.m） ======
+BOOL mfJSLoadScript(NSString *script);
+NSDictionary *mfJSRunRequestHeaders(NSString *method, NSString *url, NSDictionary *headers);
+NSDictionary *mfJSRunResponseHeaders(int status, NSString *url, NSDictionary *headers);
