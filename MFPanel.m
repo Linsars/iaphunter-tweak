@@ -644,7 +644,7 @@ static void iaphShowPanel(UIViewController *vc) {
     if (g_mfPanelOverlay) return;
     if (!g_mfCtrl) g_mfCtrl = [[MFPanelCtrl alloc] init];
     @try {
-        mfLog(@"panel: show vc=%@", NSStringFromClass([vc class]));
+        mfLog(@"PANEL STEP 1: vc=%@", NSStringFromClass([vc class]));
         UIWindow *keyWin = nil;
         if (@available(iOS 13.0, *)) {
             for (id sc in [UIApplication sharedApplication].connectedScenes) {
@@ -654,26 +654,31 @@ static void iaphShowPanel(UIViewController *vc) {
             }
         }
         if (!keyWin) keyWin = [UIApplication sharedApplication].keyWindow;
-        if (!keyWin) { mfLog(@"panel: NO keyWindow"); return; }
+        if (!keyWin) { mfLog(@"PANEL: NO keyWindow"); return; }
+        mfLog(@"PANEL STEP 2: keyWin=%@", keyWin);
 
         CGRect sb = keyWin.bounds;
         UIView *overlay = [[UIView alloc] initWithFrame:sb];
         overlay.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        mfLog(@"PANEL STEP 3: overlay created");
+
         UIButton *mask = [UIButton buttonWithType:UIButtonTypeCustom];
         mask.frame = overlay.bounds;
         mask.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
         mask.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.35];
         [mask addTarget:g_mfCtrl action:NSSelectorFromString(@"mfClosePanel") forControlEvents:UIControlEventTouchUpInside];
         [overlay addSubview:mask];
+        mfLog(@"PANEL STEP 4: mask added");
 
         CGFloat cardW = sb.size.width - 32;
-        CGFloat cardH = 280;  // 四板块 2x2 + 标题
+        CGFloat cardH = 280;
         g_mfCardW = cardW; g_mfCardH = cardH;
         UIVisualEffectView *card = [[UIVisualEffectView alloc] initWithFrame:CGRectMake(16, (sb.size.height - cardH)/2, cardW, cardH)];
         card.effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
         card.layer.cornerRadius = 22;
         card.clipsToBounds = YES;
         UIView *content = card.contentView;
+        mfLog(@"PANEL STEP 5: card created");
 
         UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(20, 12, 200, 26)];
         title.text = @"MinisFix";
@@ -686,23 +691,30 @@ static void iaphShowPanel(UIViewController *vc) {
         closeBtn.titleLabel.font = [UIFont systemFontOfSize:17];
         [closeBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfClosePanel") forControlEvents:UIControlEventTouchUpInside];
         [content addSubview:closeBtn];
+        mfLog(@"PANEL STEP 6: title+close added");
 
-        // 双列网格：数据分析 / 网络修改 / Product
         CGFloat gw = (cardW - 32 - 12) / 2;
         CGFloat gy = 48;
         gy = mfGridButton(content, 16, gy, gw, @"数据分析", @"📡", @selector(mfShowDataAnalysisPage), NO, nil);
+        mfLog(@"PANEL STEP 7a: dataAnalysis btn");
         gy = mfGridButton(content, 16 + gw + 12, gy - 92, gw, @"网络修改", @"🔧", @selector(mfShowNetworkModifyPage), NO, nil);
+        mfLog(@"PANEL STEP 7b: networkModify btn");
         gy = mfGridButton(content, 16, gy, gw, @"Product", @"🛍️", @selector(mfShowProductPage), NO, nil);
+        mfLog(@"PANEL STEP 7c: product btn");
 
         [overlay addSubview:card];
-        [keyWin addSubview:overlay];
         g_mfPanelOverlay = overlay;
         g_mfPanelRootVC = vc;
+        mfLog(@"PANEL STEP 8: overlay stored, g_mfCtrl=%p g_mfPanelOverlay=%p", g_mfCtrl, g_mfPanelOverlay);
+
+        [keyWin addSubview:overlay];
+        mfLog(@"PANEL STEP 9: added to keyWin");
+
         overlay.alpha = 0;
         [UIView animateWithDuration:0.25 animations:^{ overlay.alpha = 1; }];
-        mfLog(@"panel: SHOWN (v5.0 home)");
+        mfLog(@"PANEL STEP 10: animation started — DONE");
     } @catch (NSException *e) {
-        mfLog(@"panel EXCEPTION: %@ %@", e.name, e.reason);
+        mfLog(@"PANEL EXCEPTION: %@ %@\n%@", e.name, e.reason, e.callStackSymbols);
     }
 }
 
