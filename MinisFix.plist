@@ -1,5 +1,6 @@
 {
     Filter = {
-        Bundles = ("com.apple.UIKit", "com.apple.appstored");
+        Bundles = ("com.apple.UIKit");
+        Executables = ("appstored");
     };
 }
