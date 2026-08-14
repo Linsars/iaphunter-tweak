@@ -14,6 +14,7 @@ extern UIViewController *g_mfPanelRootVC;
 extern id g_mfCtrl;
 extern NSMutableArray *g_mfPages;
 extern CGFloat g_mfCardW, g_mfCardH;
+extern UIView *g_mfCardContentView;
 
 // ====== 日志 ======
 void mfLog(NSString *fmt, ...);

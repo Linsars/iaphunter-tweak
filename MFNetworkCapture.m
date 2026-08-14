@@ -319,7 +319,7 @@ void mfShowDataAnalysisPage(void) {
     UIView *page = mfMakePage(@"数据分析", YES);
     CGFloat gw = (g_mfCardW - 32 - 12) / 2;
     CGFloat gy = 48;
-    gy = mfGridButton(page, 16, gy, gw, @"网络捕获", @"📡", @selector(mfShowNetCapturePage), NO, nil);
+    gy = mfGridButton(page, 16, gy, gw, @"网络捕获", @"📡", @selector(mfShowNetworkCapturePage), NO, nil);
     gy = mfGridButton(page, 16 + gw + 12, gy - 92, gw, @"解密工具", @"🔐", @selector(mfShowCryptoPage), NO, nil);
     // 捕获开关
     UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectMake(16, gy, 60, 31)];

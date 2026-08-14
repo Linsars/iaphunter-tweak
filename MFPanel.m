@@ -11,6 +11,7 @@ UIViewController *g_mfPanelRootVC = nil;
 id g_mfCtrl = nil;
 NSMutableArray *g_mfPages = nil;
 CGFloat g_mfCardW = 0, g_mfCardH = 0;
+UIView *g_mfCardContentView = nil;  // card.contentView——子页挂这里
 
 // ====== 日志 ======
 void mfLog(NSString *fmt, ...) {
@@ -105,7 +106,9 @@ UIView *mfMakePage(NSString *title, BOOL showBack) {
 void mfPushPage(UIView *page) {
     if (!g_mfPages) g_mfPages = [[NSMutableArray alloc] init];
     for (UIView *p in g_mfPages) p.hidden = YES;
-    [g_mfPanelOverlay addSubview:page];
+    // 子页挂到 card.contentView 上——跟主页按钮同一个容器
+    UIView *container = g_mfCardContentView ?: g_mfPanelOverlay;
+    [container addSubview:page];
     [g_mfPages addObject:page];
 }
 
@@ -124,6 +127,7 @@ void mfClosePanel(void) {
             [ov removeFromSuperview];
             g_mfPanelOverlay = nil;
             g_mfPanelRootVC = nil;
+            g_mfCardContentView = nil;
             [g_mfPages removeAllObjects];
             mfLog(@"panel: closed");
         }];
@@ -678,6 +682,7 @@ static void iaphShowPanel(UIViewController *vc) {
         card.layer.cornerRadius = 22;
         card.clipsToBounds = YES;
         UIView *content = card.contentView;
+        g_mfCardContentView = content;
         mfLog(@"PANEL STEP 5: card created");
 
         UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(20, 12, 200, 26)];
