@@ -23,6 +23,7 @@ FolderX_ARCHS = arm64 arm64e
 # MinisFix v5.0（新面板：数据分析/网络修改/Product）
 MinisFix_FILES = MFPanel.m MFNetworkCapture.m MFJSRules.m
 MinisFix_FRAMEWORKS = UIKit Foundation StoreKit JavaScriptCore
+MinisFix_LDFLAGS = -weak_framework UIKit -weak_framework StoreKit -weak_framework JavaScriptCore
 MinisFix_CFLAGS = -fobjc-arc -Wno-everything
 MinisFix_ARCHS = arm64 arm64e
 
