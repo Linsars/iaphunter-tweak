@@ -1002,12 +1002,21 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
         NSString *procName = [[NSProcessInfo processInfo] processName];
-        // appstored（后台购买 daemon）：只装 AppStore 版本伪装 hook，不碰 UI
+        // appstored daemon：只装 AppStore 版本伪装 hook，不碰 UI
         if ([procName isEqualToString:@"appstored"]) {
             mfInstallAppStoreSpoof();
             return;
         }
         mfLog(@"=== MinisFix ctor ENTER pid=%d app=%@ ===", getpid(), [[NSBundle mainBundle] bundleIdentifier]);
+
+        // App Store 主 app：直接在进程内 hook NSMutableURLRequest（购买请求构建阶段拦截 User-Agent）
+        // 不需要注入 daemon——购买请求的 NSMutableURLRequest 在 App Store 进程里创建
+        if ([[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.apple.AppStore"]) {
+            NSDictionary *prefs = mfPrefsDict();
+            if ([[prefs objectForKey:@"mfSpoofEnabled"] boolValue]) {
+                mfInstallAppStoreSpoof();
+            }
+        }
 
         // 启用检查：设置页「启用 IAP工具箱」×「应用程序」白名单（不通过则不加载任何功能）
         if (!mfIsEnabledForCurrentApp()) {
