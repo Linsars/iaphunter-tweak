@@ -12,6 +12,7 @@ id g_mfCtrl = nil;
 NSMutableArray *g_mfPages = nil;
 CGFloat g_mfCardW = 0, g_mfCardH = 0;
 UIView *g_mfCardContentView = nil;  // card.contentView——子页挂这里
+UIView *g_mfHomePage = nil;         // 主页内容容器——push 子页时隐藏
 
 // ====== 日志 ======
 void mfLog(NSString *fmt, ...) {
@@ -105,8 +106,9 @@ UIView *mfMakePage(NSString *title, BOOL showBack) {
 
 void mfPushPage(UIView *page) {
     if (!g_mfPages) g_mfPages = [[NSMutableArray alloc] init];
+    // 隐藏主页和所有已存在子页
+    if (g_mfHomePage) g_mfHomePage.hidden = YES;
     for (UIView *p in g_mfPages) p.hidden = YES;
-    // 子页挂到 card.contentView 上——跟主页按钮同一个容器
     UIView *container = g_mfCardContentView ?: g_mfPanelOverlay;
     [container addSubview:page];
     [g_mfPages addObject:page];
@@ -117,7 +119,11 @@ void mfPopPage(void) {
     UIView *top = [g_mfPages lastObject];
     [top removeFromSuperview];
     [g_mfPages removeLastObject];
-    if (g_mfPages.count > 0) [[g_mfPages lastObject] setHidden:NO];
+    if (g_mfPages.count > 0) {
+        [[g_mfPages lastObject] setHidden:NO];
+    } else if (g_mfHomePage) {
+        g_mfHomePage.hidden = NO;
+    }
 }
 
 void mfClosePanel(void) {
@@ -128,6 +134,7 @@ void mfClosePanel(void) {
             g_mfPanelOverlay = nil;
             g_mfPanelRootVC = nil;
             g_mfCardContentView = nil;
+            g_mfHomePage = nil;
             [g_mfPages removeAllObjects];
             mfLog(@"panel: closed");
         }];
@@ -460,6 +467,12 @@ static void hookShakeBlock(void) {
 // 网络捕获开关
 - (void)mfCaptureSwitchChanged:(UISwitch *)sw {
     g_captureEnabled = sw.on;
+    if (sw.on) {
+        // 开启时注册 NSURLProtocol（延迟注册——不影响未开启的 app）
+        extern void mfInstallNetworkCapture(void);
+        mfInstallNetworkCapture();
+        mfLog(@"capture ON — NSURLProtocol registered");
+    }
     mfLog(@"capture -> %d", sw.on);
 }
 
@@ -685,26 +698,32 @@ static void iaphShowPanel(UIViewController *vc) {
         g_mfCardContentView = content;
         mfLog(@"PANEL STEP 5: card created");
 
+        // 主页内容容器——push 子页时隐藏它
+        UIView *home = [[UIView alloc] initWithFrame:content.bounds];
+        home.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        [content addSubview:home];
+        g_mfHomePage = home;
+
         UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(20, 12, 200, 26)];
         title.text = @"MinisFix";
         title.font = [UIFont boldSystemFontOfSize:18];
         title.textColor = [UIColor labelColor];
-        [content addSubview:title];
+        [home addSubview:title];
         UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
         closeBtn.frame = CGRectMake(cardW - 44, 10, 32, 32);
         [closeBtn setTitle:@"✕" forState:UIControlStateNormal];
         closeBtn.titleLabel.font = [UIFont systemFontOfSize:17];
         [closeBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfClosePanel") forControlEvents:UIControlEventTouchUpInside];
-        [content addSubview:closeBtn];
+        [home addSubview:closeBtn];
         mfLog(@"PANEL STEP 6: title+close added");
 
         CGFloat gw = (cardW - 32 - 12) / 2;
         CGFloat gy = 48;
-        gy = mfGridButton(content, 16, gy, gw, @"数据分析", @"📡", @selector(mfShowDataAnalysisPage), NO, nil);
+        gy = mfGridButton(home, 16, gy, gw, @"数据分析", @"📡", @selector(mfShowDataAnalysisPage), NO, nil);
         mfLog(@"PANEL STEP 7a: dataAnalysis btn");
-        gy = mfGridButton(content, 16 + gw + 12, gy - 92, gw, @"网络修改", @"🔧", @selector(mfShowNetworkModifyPage), NO, nil);
+        gy = mfGridButton(home, 16 + gw + 12, gy - 92, gw, @"网络修改", @"🔧", @selector(mfShowNetworkModifyPage), NO, nil);
         mfLog(@"PANEL STEP 7b: networkModify btn");
-        gy = mfGridButton(content, 16, gy, gw, @"Product", @"🛍️", @selector(mfShowProductPage), NO, nil);
+        gy = mfGridButton(home, 16, gy, gw, @"Product", @"🛍️", @selector(mfShowProductPage), NO, nil);
         mfLog(@"PANEL STEP 7c: product btn");
 
         [overlay addSubview:card];
