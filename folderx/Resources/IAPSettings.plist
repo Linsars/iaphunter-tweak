@@ -83,9 +83,9 @@
 			<key>default</key>
 			<false/>
 			<key>defaults</key>
-			<string>com.linsars.minisfix</string>
+			<string>dev.mineek.appstoretroller</string>
 			<key>key</key>
-			<string>mfSpoofEnabled</string>
+			<string>enabled</string>
 			<key>label</key>
 			<string>启用版本伪装</string>
 		</dict>
@@ -95,9 +95,9 @@
 			<key>default</key>
 			<string>99.0.0</string>
 			<key>defaults</key>
-			<string>com.linsars.minisfix</string>
+			<string>dev.mineek.appstoretroller</string>
 			<key>key</key>
-			<string>mfSpoofVersion</string>
+			<string>iOSVersion</string>
 			<key>label</key>
 			<string>伪装版本号</string>
 			<key>placeholder</key>

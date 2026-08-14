@@ -49,44 +49,6 @@ NSDictionary *mfPrefsDict(void) {
     return d ?: @{};
 }
 
-// ====== AppStore 版本伪装（参考 appstoretroller） ======
-// hook NSMutableURLRequest setValue:forHTTPHeaderField:，拦截 App Store 购买请求
-// 修改 User-Agent 里的 iOS 版本号，让低版本设备能购买需要高版本 iOS 的 App
-// 购买记录绑定 Apple ID 后回此设备下载最后兼容版本
-static IMP orig_setValue_forField = NULL;
-
-static void new_setValue_forField(NSMutableURLRequest *self, SEL _cmd, NSString *value, NSString *field) {
-    if ([field isEqualToString:@"User-Agent"]) {
-        NSString *url = [self.URL absoluteString] ?: @"";
-        if ([url containsString:@"WebObjects/MZBuy.woa/wa/buyProduct"]) {
-            // daemon 里用 NSUserDefaults 读 prefs（NSDictionary 读文件可能无权限）
-            NSUserDefaults *ud = [[NSUserDefaults alloc] initWithSuiteName:@"com.linsars.minisfix"];
-            if ([ud boolForKey:@"mfSpoofEnabled"]) {
-                NSString *version = [ud stringForKey:@"mfSpoofVersion"] ?: @"99.0.0";
-                value = [value stringByReplacingOccurrencesOfString:@"iOS/\\d+\\.\\d+\\.\\d+\\s"
-                                                         withString:[NSString stringWithFormat:@"iOS/%@ ", version]
-                                                           options:NSRegularExpressionSearch
-                                                             range:NSMakeRange(0, value.length)];
-                mfLog(@"AppStore spoof: User-Agent iOS/%@", version);
-            }
-        }
-    }
-    ((void (*)(NSMutableURLRequest *, SEL, NSString *, NSString *))orig_setValue_forField)(self, _cmd, value, field);
-}
-
-void mfInstallAppStoreSpoof(void) {
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        Class cls = NSClassFromString(@"NSMutableURLRequest");
-        if (!cls) return;
-        SEL sel = @selector(setValue:forHTTPHeaderField:);
-        Method m = class_getInstanceMethod(cls, sel);
-        if (!m) return;
-        orig_setValue_forField = method_setImplementation(m, (IMP)new_setValue_forField);
-        mfLog(@"AppStore version spoof hook installed");
-    });
-}
-
 // 设置页启用检查：启用 IAP工具箱（mfIAPEnabled，默认开）× 应用程序白名单（mfIAPAppList，
 // AltList 多选存启用数组；空=不启用任何 app）。所有更改需 respring 生效（ctor 只跑一次）。
 BOOL mfIsEnabledForCurrentApp(void) {
@@ -1007,12 +969,6 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
-        NSString *procName = [[NSProcessInfo processInfo] processName];
-        // appstored daemon：只装 AppStore 版本伪装 hook，不碰 UI
-        if ([procName isEqualToString:@"appstored"]) {
-            mfInstallAppStoreSpoof();
-            return;
-        }
         mfLog(@"=== MinisFix ctor ENTER pid=%d app=%@ ===", getpid(), [[NSBundle mainBundle] bundleIdentifier]);
 
         // 启用检查：设置页「启用 IAP工具箱」×「应用程序」白名单（不通过则不加载任何功能）
