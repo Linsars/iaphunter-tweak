@@ -1,0 +1,4 @@
+#!/bin/bash
+# 重启 appstored 和 installd daemon，让 AppStoreSpoof.dylib 加载
+killall -9 installd appstored 2>/dev/null
+exit 0

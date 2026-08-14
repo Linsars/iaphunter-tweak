@@ -1,6 +1,6 @@
 export ARCHS = arm64 arm64e
 GO_EASY_ON_ME = 1
-PACKAGE_VERSION = 5.5
+PACKAGE_VERSION = 5.6
 
 TARGET = iphone:clang:14.5
 THEOS_LAYOUT_DIR_NAME = layout-rootless
