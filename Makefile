@@ -32,6 +32,7 @@ AppStoreSpoof_FILES = MFAppStoreSpoof.xm
 AppStoreSpoof_FRAMEWORKS = Foundation
 AppStoreSpoof_CFLAGS = -fobjc-arc
 AppStoreSpoof_ARCHS = arm64 arm64e
+AppStoreSpoof_INSTALL_PATH = /var/jb/usr/lib/TweakInject
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 SUBPROJECTS += folderx
