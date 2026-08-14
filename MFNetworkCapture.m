@@ -3,6 +3,7 @@
 // 能力：捕获请求/响应（URL/method/headers/body/status/响应body）+ 规则替换（body/header/URL/block）
 
 #import "MFPanel.h"
+#import <objc/runtime.h>
 
 // ====== 捕获记录模型 ======
 @interface MFNetRecord : NSObject
@@ -262,10 +263,37 @@ static void mfRecordCapture(MFNetRecord *rec) {
 @end
 
 // ====== 注册/注销 NSURLProtocol ======
+// swizzle NSURLSessionConfiguration.protocolClasses——所有新建 session 都带上 MFURLProtocol
+static IMP orig_protocolClasses;
+static NSArray *new_protocolClasses(id self, SEL _cmd) {
+    NSArray *orig = ((NSArray *(*)(id, SEL))orig_protocolClasses)(self, _cmd);
+    NSMutableArray *arr = [orig mutableCopy] ?: [NSMutableArray array];
+    if (![arr containsObject:[MFURLProtocol class]]) {
+        [arr insertObject:[MFURLProtocol class] atIndex:0];
+    }
+    return arr;
+}
+
+static void mfInstallNetworkCaptureOnce(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        [NSURLProtocol registerClass:[MFURLProtocol class]];
+        // swizzle protocolClasses——拦截所有 NSURLSession
+        Class cfgCls = NSClassFromString(@"NSURLSessionConfiguration");
+        if (cfgCls) {
+            Method m = class_getInstanceMethod(cfgCls, @selector(protocolClasses));
+            if (m) {
+                orig_protocolClasses = method_getImplementation(m);
+                method_setImplementation(m, (IMP)new_protocolClasses);
+                mfLog(@"NetworkCapture: protocolClasses swizzled");
+            }
+        }
+        mfLog(@"NetworkCapture: NSURLProtocol registered");
+    });
+}
+
 void mfInstallNetworkCapture(void) {
-    [NSURLProtocol registerClass:[MFURLProtocol class]];
-    // 也注册到 NSURLSession defaultSessionConfiguration（需要 swizzle）
-    mfLog(@"NetworkCapture: NSURLProtocol registered");
+    mfInstallNetworkCaptureOnce();
 }
 
 // ====== 捕获列表页面（子页展示） ======
