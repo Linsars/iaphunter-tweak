@@ -400,6 +400,13 @@ void mfInstallNetworkCapture(void) {
 }
 
 // ====== 捕获列表页面（子页展示） ======
+static void mfExpandCardForPage(void) {
+    // 子页创建前先拉长卡片——让滚动视图等基于 g_mfCardH 的布局用大高度
+    if (g_mfPanelOverlay) {
+        CGFloat maxH = MIN(560, g_mfPanelOverlay.bounds.size.height - 100);
+        if (g_mfCardH < maxH) mfSetCardHeight(maxH);
+    }
+}
 static NSString *mfDisplayDict(NSDictionary *d) {
     if (!d || d.count == 0) return @"(空)";
     NSMutableString *s = [NSMutableString string];
@@ -416,11 +423,12 @@ static NSString *mfDisplayData(NSData *data) {
 // 详情页——完整展示请求/响应 headers/body，可复制
 void mfShowCaptureDetailPage(MFNetRecord *rec) {
     if (!rec) return;
+    mfExpandCardForPage();
     UIView *page = mfMakePage(@"请求详情", YES);
 
-    // 复制按钮（右上）
+    // 复制按钮（左上——远离右上角关闭 X，防误触）
     UIButton *copyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    copyBtn.frame = CGRectMake(g_mfCardW - 78, 8, 56, 28);
+    copyBtn.frame = CGRectMake(g_mfCardW - 136, 8, 56, 28);
     [copyBtn setTitle:@"复制" forState:UIControlStateNormal];
     copyBtn.titleLabel.font = [UIFont systemFontOfSize:13];
     objc_setAssociatedObject(copyBtn, "rec", rec, OBJC_ASSOCIATION_RETAIN);
@@ -479,6 +487,7 @@ void mfShowCaptureDetailPage(MFNetRecord *rec) {
 }
 
 void mfShowNetworkCapturePage(void) {
+    mfExpandCardForPage();
     UIView *page = mfMakePage(@"网络捕获", YES);
     UIScrollView *sv = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 42, g_mfCardW, g_mfCardH - 42)];
     

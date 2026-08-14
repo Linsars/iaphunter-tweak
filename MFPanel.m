@@ -13,6 +13,8 @@ NSMutableArray *g_mfPages = nil;
 CGFloat g_mfCardW = 0, g_mfCardH = 0;
 UIView *g_mfCardContentView = nil;  // card.contentView——子页挂这里
 UIView *g_mfHomePage = nil;         // 主页内容容器——push 子页时隐藏
+UIVisualEffectView *g_mfCardView = nil;  // 卡片引用——动态伸缩用
+CGFloat g_mfHomeCardH = 300;        // 主页卡片高度
 
 // ====== 日志 ======
 void mfLog(NSString *fmt, ...) {
@@ -78,6 +80,11 @@ extern void mfAddRule(NSString *pattern, NSString *matchType, NSString *action);
 
 // ====== 页面导航 ======
 UIView *mfMakePage(NSString *title, BOOL showBack) {
+    // 子页统一拉长卡片（主页不经过这里）
+    if (g_mfPanelOverlay) {
+        CGFloat maxH = MIN(560, g_mfPanelOverlay.bounds.size.height - 100);
+        if (g_mfCardH < maxH) mfSetCardHeight(maxH);
+    }
     UIView *page = [[UIView alloc] initWithFrame:CGRectMake(0, 0, g_mfCardW, g_mfCardH)];
     page.backgroundColor = [UIColor clearColor];
     UIView *nav = [[UIView alloc] initWithFrame:CGRectMake(0, 0, g_mfCardW, 40)];
@@ -104,11 +111,30 @@ UIView *mfMakePage(NSString *title, BOOL showBack) {
     return page;
 }
 
+// 动态调整卡片高度（子页拉长 / 主页恢复紧凑）
+void mfSetCardHeight(CGFloat h) {
+    if (!g_mfCardView || !g_mfPanelOverlay) return;
+    CGRect sb = g_mfPanelOverlay.bounds;
+    CGRect f = g_mfCardView.frame;
+    f.size.height = h;
+    f.origin.y = (sb.size.height - h) / 2;
+    g_mfCardView.frame = f;
+    g_mfCardH = h;
+    g_mfCardContentView.frame = CGRectMake(0, 0, f.size.width, h);
+    mfLog(@"card height -> %.0f", h);
+}
+
 void mfPushPage(UIView *page) {
     if (!g_mfPages) g_mfPages = [[NSMutableArray alloc] init];
     // 隐藏主页和所有已存在子页
     if (g_mfHomePage) g_mfHomePage.hidden = YES;
     for (UIView *p in g_mfPages) p.hidden = YES;
+    // 子页自动拉长卡片（最高 560 或屏高-100）
+    if (g_mfPanelOverlay) {
+        CGFloat maxH = MIN(560, g_mfPanelOverlay.bounds.size.height - 100);
+        if (g_mfCardH < maxH) mfSetCardHeight(maxH);
+    }
+    page.frame = CGRectMake(0, 0, g_mfCardW, g_mfCardH);
     UIView *container = g_mfCardContentView ?: g_mfPanelOverlay;
     [container addSubview:page];
     [g_mfPages addObject:page];
@@ -121,8 +147,12 @@ void mfPopPage(void) {
     [g_mfPages removeLastObject];
     if (g_mfPages.count > 0) {
         [[g_mfPages lastObject] setHidden:NO];
+        // 子页还在——保持拉长
     } else if (g_mfHomePage) {
         g_mfHomePage.hidden = NO;
+        // 回主页——恢复紧凑高度
+        if (g_mfHomeCardH > 0) mfSetCardHeight(g_mfHomeCardH);
+        if (g_mfHomePage) g_mfHomePage.frame = g_mfCardContentView.bounds;
     }
 }
 
@@ -135,6 +165,7 @@ void mfClosePanel(void) {
             g_mfPanelRootVC = nil;
             g_mfCardContentView = nil;
             g_mfHomePage = nil;
+            g_mfCardView = nil;
             [g_mfPages removeAllObjects];
             mfLog(@"panel: closed");
         }];
@@ -716,12 +747,14 @@ static void iaphShowPanel(UIViewController *vc) {
         mfLog(@"PANEL STEP 4: mask added");
 
         CGFloat cardW = sb.size.width - 32;
-        CGFloat cardH = 280;
+        CGFloat cardH = 300;  // 主页紧凑——子页 push 时自动拉长
         g_mfCardW = cardW; g_mfCardH = cardH;
+        g_mfHomeCardH = cardH;
         UIVisualEffectView *card = [[UIVisualEffectView alloc] initWithFrame:CGRectMake(16, (sb.size.height - cardH)/2, cardW, cardH)];
         card.effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
         card.layer.cornerRadius = 22;
         card.clipsToBounds = YES;
+        g_mfCardView = card;
         UIView *content = card.contentView;
         g_mfCardContentView = content;
         mfLog(@"PANEL STEP 5: card created");

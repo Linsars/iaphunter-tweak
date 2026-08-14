@@ -16,6 +16,9 @@ extern NSMutableArray *g_mfPages;
 extern CGFloat g_mfCardW, g_mfCardH;
 extern UIView *g_mfCardContentView;
 extern UIView *g_mfHomePage;
+extern UIVisualEffectView *g_mfCardView;
+extern CGFloat g_mfHomeCardH;
+void mfSetCardHeight(CGFloat h);
 
 // ====== 日志 ======
 void mfLog(NSString *fmt, ...);
