@@ -562,16 +562,9 @@ __attribute__((constructor)) static void IAPHunterCtor(void) {
         NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
         iaphLog(@"=== ctor ENTER pid=%d app=%@ ===", getpid(), bid);
         if (!iaphIsAppAllowed()) { iaphLog(@"ctor EXIT: app not allowed"); return; }
-        // v3.0: 屏蔽摇一摇 + FakeGPS hook
-        hookShakeBlock(); iaphLog(@"ctor hookShakeBlock done");
-        hookFakeGPS(); iaphLog(@"ctor hookFakeGPS done");
-
+        // 面板呼出 + FakeGPS + 摇一摇已由 MinisFix.dylib 负责
+        // IAPHunter 只做 IAP 收集（SK hooks）
         ensureStoreKit(); iaphLog(@"ctor ensureStoreKit done");
-
-        Class UIViewControllerCls = NSClassFromString(@"UIViewController");
-        swizzle(UIViewControllerCls, @selector(viewDidAppear:), (IMP)new_viewDidAppear, &orig_viewDidAppear);
-        addMethod(UIViewControllerCls, @selector(handleLongPress:), (IMP)longPressAction, "v@:@");
-        iaphLog(@"ctor UIViewController swizzle+addMethod done (cls=%@)", UIViewControllerCls ? NSStringFromClass(UIViewControllerCls) : @"nil");
 
         Class SKProductCls = NSClassFromString(@"SKProduct");
         swizzle(SKProductCls, @selector(productIdentifier), (IMP)new_SKProduct_productIdentifier, &orig_SKProduct_productIdentifier);
