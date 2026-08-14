@@ -76,3 +76,22 @@ NSDictionary *mfJSRunResponseHeaders(int status, NSString *url, NSDictionary *he
 @property (copy) NSString *summary;
 @end
 void mfShowCaptureDetailPage(MFNetRecord *rec);
+
+// ====== 拦截规则模型（实现 MFNetworkCapture.m） ======
+// 规则隔离：appBundle 非空时只对创建它的 app 生效
+@interface MFRewriteRule : NSObject
+@property (copy) NSString *pattern;
+@property (copy) NSString *matchType;    // url / regex / contain
+@property (copy) NSString *action;       // block / replaceReq / replaceResp
+@property (copy) NSString *urlReplace;
+@property (copy) NSString *bodyReplace;
+@property (copy) NSDictionary *headerReplaces;
+@property BOOL enabled;
+@property (copy) NSString *appBundle;
+- (NSDictionary *)toDict;
++ (instancetype)fromDict:(NSDictionary *)d;
+@end
+void mfSaveRule(MFRewriteRule *rule, NSInteger index);   // index<0 追加
+void mfRemoveRule(NSInteger index);
+NSString *mfCurrentBundleId(void);
+void mfShowRuleEditPage(NSString *pattern, NSString *action, NSInteger index, BOOL fromList);

@@ -16,19 +16,7 @@ BOOL g_rewriteEnabled = NO;
 NSMutableArray *g_rewriteRules = nil;
 #define MF_MAX_RECORDS 200
 
-// ====== 拦截规则模型 ======
-// 规则 JSON: {pattern, matchType(url/regex/contain), action(capture/block/replaceReq/replaceResp), urlReplace, bodyReplace, headerReplaces, enabled}
-@interface MFRewriteRule : NSObject
-@property (copy) NSString *pattern;
-@property (copy) NSString *matchType;    // url / regex / contain
-@property (copy) NSString *action;       // block / replaceReq / replaceResp
-@property (copy) NSString *urlReplace;
-@property (copy) NSString *bodyReplace;
-@property (copy) NSDictionary *headerReplaces;
-@property BOOL enabled;
-- (NSDictionary *)toDict;
-+ (instancetype)fromDict:(NSDictionary *)d;
-@end
+// ====== 拦截规则模型（@interface 在 MFPanel.h 共享） ======
 @implementation MFRewriteRule
 - (NSDictionary *)toDict {
     return @{
@@ -39,6 +27,7 @@ NSMutableArray *g_rewriteRules = nil;
         @"bodyReplace": self.bodyReplace ?: @"",
         @"headerReplaces": self.headerReplaces ?: @{},
         @"enabled": @(self.enabled),
+        @"appBundle": self.appBundle ?: @"",
     };
 }
 + (instancetype)fromDict:(NSDictionary *)d {
@@ -50,13 +39,21 @@ NSMutableArray *g_rewriteRules = nil;
     r.bodyReplace = d[@"bodyReplace"];
     r.headerReplaces = d[@"headerReplaces"];
     r.enabled = [d[@"enabled"] boolValue];
+    r.appBundle = d[@"appBundle"];
     return r;
 }
 @end
 
+// 当前 app bundle id（规则隔离用）
+NSString *mfCurrentBundleId(void) {
+    return [[NSBundle mainBundle] bundleIdentifier] ?: @"";
+}
+
 // ====== 规则匹配 ======
 static BOOL mfRuleMatchesURL(MFRewriteRule *rule, NSString *url) {
     if (!rule.enabled || rule.pattern.length == 0) return NO;
+    // 规则隔离：带 appBundle 的规则只对创建它的 app 生效
+    if (rule.appBundle.length > 0 && ![rule.appBundle isEqualToString:mfCurrentBundleId()]) return NO;
     NSString *pat = rule.pattern;
     if ([rule.matchType isEqualToString:@"url"]) {
         return [url isEqualToString:pat];
@@ -85,14 +82,35 @@ static void mfSaveRules(void) {
     [d writeToFile:@"/var/jb/var/mobile/Library/Preferences/com.linsars.minisfix.plist" atomically:YES];
 }
 
-// MFPanel.m 调用的接口——添加规则
-void mfAddRule(NSString *pattern, NSString *matchType, NSString *action) {
+// 保存规则：index<0 追加，否则替换 index 处
+void mfSaveRule(MFRewriteRule *rule, NSInteger index) {
     mfLoadRules();
+    if (index >= 0 && index < (NSInteger)g_rewriteRules.count) {
+        [g_rewriteRules replaceObjectAtIndex:index withObject:rule];
+        mfLog(@"rule updated: %@ %@ %@", rule.pattern, rule.matchType, rule.action);
+    } else {
+        [g_rewriteRules addObject:rule];
+        mfLog(@"rule added: %@ %@ %@", rule.pattern, rule.matchType, rule.action);
+    }
+    mfSaveRules();
+}
+
+// 删除规则
+void mfRemoveRule(NSInteger index) {
+    mfLoadRules();
+    if (index >= 0 && index < (NSInteger)g_rewriteRules.count) {
+        [g_rewriteRules removeObjectAtIndex:index];
+        mfSaveRules();
+        mfLog(@"rule removed at %ld", (long)index);
+    }
+}
+
+// MFPanel.m 调用的接口——添加规则（带当前 app 隔离）
+void mfAddRule(NSString *pattern, NSString *matchType, NSString *action) {
     MFRewriteRule *r = [MFRewriteRule new];
     r.pattern = pattern; r.matchType = matchType; r.action = action; r.enabled = YES;
-    [g_rewriteRules addObject:r];
-    mfSaveRules();
-    mfLog(@"rule added: %@ %@ %@", pattern, matchType, action);
+    r.appBundle = mfCurrentBundleId();
+    mfSaveRule(r, -1);
 }
 
 // ====== 记录捕获 ======
@@ -435,6 +453,16 @@ void mfShowCaptureDetailPage(MFNetRecord *rec) {
     [copyBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfCopyRecord:") forControlEvents:UIControlEventTouchUpInside];
     [page addSubview:copyBtn];
 
+    // 改响应按钮——用当前记录 URL 预填规则（跳规则编辑页）
+    UIButton *modBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    modBtn.frame = CGRectMake(g_mfCardW - 200, 8, 56, 28);
+    [modBtn setTitle:@"改响应" forState:UIControlStateNormal];
+    modBtn.titleLabel.font = [UIFont systemFontOfSize:13];
+    modBtn.tintColor = [UIColor systemOrangeColor];
+    objc_setAssociatedObject(modBtn, "rec", rec, OBJC_ASSOCIATION_RETAIN);
+    [modBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfModifyResponse:") forControlEvents:UIControlEventTouchUpInside];
+    [page addSubview:modBtn];
+
     UIScrollView *sv = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 42, g_mfCardW, g_mfCardH - 42)];
     CGFloat y = 8;
 
@@ -619,7 +647,125 @@ void mfShowCryptoToolboxPage(void) {
     mfPushPage(page);
 }
 
-// ====== 网络修改页（规则列表 + 开关） ======
+// ====== 规则编辑页（新建/编辑共用） ======
+// index<0 新建；>=0 编辑 g_rewriteRules[index]
+static void mfShowRuleEditPageImpl(NSString *pattern, NSString *action, NSInteger index, BOOL fromList) {
+    UIView *page = mfMakePage(index < 0 ? @"新建规则" : @"编辑规则", YES);
+    UIScrollView *sv = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 42, g_mfCardW, g_mfCardH - 42)];
+    CGFloat y = 12;
+
+    // 编辑模式预填
+    MFRewriteRule *editRule = nil;
+    if (index >= 0 && index < (NSInteger)g_rewriteRules.count) editRule = g_rewriteRules[index];
+    NSString *initPattern = editRule.pattern ?: pattern ?: @"";
+    NSString *initMatch = editRule.matchType ?: @"contain";
+    NSString *initAction = editRule.action ?: (action ?: @"replaceResp");
+    NSString *initUrlRepl = editRule.urlReplace ?: @"";
+    NSString *initBody = editRule.bodyReplace ?: @"";
+
+    // 匹配方式分段
+    UILabel *mLabel = [UILabel new];
+    mLabel.frame = CGRectMake(16, y, 100, 22);
+    mLabel.text = @"匹配方式";
+    mLabel.font = [UIFont systemFontOfSize:13];
+    mLabel.textColor = [UIColor secondaryLabelColor];
+    [sv addSubview:mLabel];
+    UISegmentedControl *matchSeg = [[UISegmentedControl alloc] initWithItems:@[@"包含", @"精确", @"正则"]];
+    matchSeg.frame = CGRectMake(16, y + 24, g_mfCardW - 32, 32);
+    matchSeg.selectedSegmentIndex = [initMatch isEqualToString:@"url"] ? 1 : ([initMatch isEqualToString:@"regex"] ? 2 : 0);
+    [sv addSubview:matchSeg];
+    y += 64;
+
+    // 匹配内容输入框
+    UITextField *patField = [[UITextField alloc] initWithFrame:CGRectMake(16, y, g_mfCardW - 32, 40)];
+    patField.placeholder = @"匹配的 URL（含域名即可）";
+    patField.text = initPattern;
+    patField.font = [UIFont systemFontOfSize:13];
+    patField.borderStyle = UITextBorderStyleRoundedRect;
+    patField.clearButtonMode = UITextFieldViewModeWhileEditing;
+    patField.autocapitalizationType = UITextAutocapitalizationTypeNone;
+    patField.autocorrectionType = UITextAutocorrectionTypeNo;
+    patField.keyboardType = UIKeyboardTypeURL;
+    [sv addSubview:patField];
+    y += 48;
+
+    // 动作分段
+    UILabel *aLabel = [UILabel new];
+    aLabel.frame = CGRectMake(16, y, 100, 22);
+    aLabel.text = @"动作";
+    aLabel.font = [UIFont systemFontOfSize:13];
+    aLabel.textColor = [UIColor secondaryLabelColor];
+    [sv addSubview:aLabel];
+    UISegmentedControl *actSeg = [[UISegmentedControl alloc] initWithItems:@[@"替换响应", @"替换请求", @"屏蔽"]];
+    actSeg.frame = CGRectMake(16, y + 24, g_mfCardW - 32, 32);
+    actSeg.selectedSegmentIndex = [initAction isEqualToString:@"replaceReq"] ? 1 : ([initAction isEqualToString:@"block"] ? 2 : 0);
+    [sv addSubview:actSeg];
+    y += 64;
+
+    // 替换 URL（replaceReq 用）
+    UITextField *urlField = [[UITextField alloc] initWithFrame:CGRectMake(16, y, g_mfCardW - 32, 40)];
+    urlField.placeholder = @"替换为的 URL（替换请求时用）";
+    urlField.text = initUrlRepl;
+    urlField.font = [UIFont systemFontOfSize:13];
+    urlField.borderStyle = UITextBorderStyleRoundedRect;
+    urlField.clearButtonMode = UITextFieldViewModeWhileEditing;
+    urlField.autocapitalizationType = UITextAutocapitalizationTypeNone;
+    urlField.keyboardType = UIKeyboardTypeURL;
+    [sv addSubview:urlField];
+    y += 48;
+
+    // 替换 Body（replaceResp 用，多行）
+    UILabel *bLabel = [UILabel new];
+    bLabel.frame = CGRectMake(16, y, 200, 22);
+    bLabel.text = @"替换响应 Body";
+    bLabel.font = [UIFont systemFontOfSize:13];
+    bLabel.textColor = [UIColor secondaryLabelColor];
+    [sv addSubview:bLabel];
+    y += 26;
+    UITextView *bodyView = [[UITextView alloc] initWithFrame:CGRectMake(16, y, g_mfCardW - 32, 120)];
+    bodyView.text = initBody;
+    bodyView.font = [UIFont systemFontOfSize:12];
+    bodyView.layer.cornerRadius = 8;
+    bodyView.layer.borderWidth = 0.5;
+    bodyView.layer.borderColor = [UIColor systemGray3Color].CGColor;
+    bodyView.backgroundColor = [UIColor secondarySystemBackgroundColor];
+    [sv addSubview:bodyView];
+    y += 128;
+
+    // 保存按钮
+    UIButton *saveBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    saveBtn.frame = CGRectMake(16, y + 4, g_mfCardW - 32, 40);
+    saveBtn.backgroundColor = [UIColor systemBlueColor];
+    saveBtn.layer.cornerRadius = 10;
+    [saveBtn setTitle:@"保存规则" forState:UIControlStateNormal];
+    [saveBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    [saveBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfSaveRuleTapped:") forControlEvents:UIControlEventTouchUpInside];
+    [sv addSubview:saveBtn];
+    y += 56;
+
+    sv.contentSize = CGSizeMake(g_mfCardW, y + 20);
+    [page addSubview:sv];
+
+    // 保存按钮回调所需上下文（segments 引用 + index + 来源标记）
+    objc_setAssociatedObject(saveBtn, "seg", matchSeg, OBJC_ASSOCIATION_RETAIN);
+    objc_setAssociatedObject(saveBtn, "seg2", actSeg, OBJC_ASSOCIATION_RETAIN);
+    objc_setAssociatedObject(saveBtn, "f1", patField, OBJC_ASSOCIATION_RETAIN);
+    objc_setAssociatedObject(saveBtn, "f2", urlField, OBJC_ASSOCIATION_RETAIN);
+    objc_setAssociatedObject(saveBtn, "tv", bodyView, OBJC_ASSOCIATION_RETAIN);
+    objc_setAssociatedObject(saveBtn, "idx", @(index), OBJC_ASSOCIATION_RETAIN);
+    objc_setAssociatedObject(saveBtn, "fromList", @(fromList), OBJC_ASSOCIATION_RETAIN);
+
+    mfPushPage(page);
+}
+
+// 对外入口：详情页"改响应"→ 预填当前记录 URL（fromList=NO，保存后回详情）；
+// 列表页添加/编辑（fromList=YES，保存后刷新列表）
+void mfShowRuleEditPage(NSString *pattern, NSString *action, NSInteger index, BOOL fromList) {
+    mfLoadRules();
+    mfShowRuleEditPageImpl(pattern, action, index, fromList);
+}
+
+// ====== 网络修改页（当前 app 的规则列表 + 开关） ======
 void mfShowNetworkModifyPage(void) {
     UIView *page = mfMakePage(@"网络修改", YES);
     mfLoadRules();
@@ -628,37 +774,75 @@ void mfShowNetworkModifyPage(void) {
     sw.on = g_rewriteEnabled;
     [sw addTarget:g_mfCtrl action:NSSelectorFromString(@"mfRewriteSwitchChanged:") forControlEvents:UIControlEventValueChanged];
     [page addSubview:sw];
-    UILabel *swLb = [[UILabel alloc] initWithFrame:CGRectMake(84, 52, 200, 24)];
+    UILabel *swLb = [[UILabel alloc] initWithFrame:CGRectMake(84, 52, 220, 24)];
     swLb.text = @"启用拦截修改";
     swLb.font = [UIFont systemFontOfSize:14];
     [page addSubview:swLb];
-    // 规则列表
-    UIScrollView *sv = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 90, g_mfCardW, g_mfCardH - 90)];
+    UILabel *scopeLb = [[UILabel alloc] initWithFrame:CGRectMake(84, 74, g_mfCardW - 100, 16)];
+    scopeLb.text = [NSString stringWithFormat:@"仅作用于：%@", mfCurrentBundleId()];
+    scopeLb.font = [UIFont systemFontOfSize:10];
+    scopeLb.textColor = [UIColor tertiaryLabelColor];
+    [page addSubview:scopeLb];
+
+    // 规则列表（只显示当前 app 的规则）
+    UIScrollView *sv = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 96, g_mfCardW, g_mfCardH - 96)];
     CGFloat y = 8;
-    if (g_rewriteRules.count == 0) {
+    NSMutableArray *myRules = [NSMutableArray new];
+    for (MFRewriteRule *r in g_rewriteRules) {
+        if (r.appBundle.length == 0 || [r.appBundle isEqualToString:mfCurrentBundleId()]) [myRules addObject:r];
+    }
+    if (myRules.count == 0) {
         UILabel *e = [[UILabel alloc] initWithFrame:CGRectMake(16, 20, g_mfCardW - 32, 40)];
-        e.text = @"暂无规则，点击下方添加";
+        e.text = @"暂无规则\n可在捕获详情页点「改响应」快速添加";
+        e.numberOfLines = 0;
         e.textAlignment = NSTextAlignmentCenter;
         e.textColor = [UIColor secondaryLabelColor];
+        e.font = [UIFont systemFontOfSize:13];
         [sv addSubview:e];
     } else {
-        for (NSUInteger i = 0; i < g_rewriteRules.count; i++) {
-            MFRewriteRule *rule = g_rewriteRules[i];
-            UIView *row = [[UIView alloc] initWithFrame:CGRectMake(12, y, g_mfCardW - 24, 50)];
+        for (MFRewriteRule *rule in myRules) {
+            NSInteger idx = [g_rewriteRules indexOfObject:rule];
+            UIView *row = [[UIView alloc] initWithFrame:CGRectMake(12, y, g_mfCardW - 24, 62)];
             row.backgroundColor = [UIColor secondarySystemBackgroundColor];
             row.layer.cornerRadius = 10;
-            UILabel *pat = [[UILabel alloc] initWithFrame:CGRectMake(10, 4, row.bounds.size.width - 20, 20)];
+            CGFloat rightX = row.bounds.size.width - 8;
+            // 左侧：pattern + 信息
+            UILabel *pat = [[UILabel alloc] initWithFrame:CGRectMake(10, 6, rightX - 110, 20)];
             pat.font = [UIFont systemFontOfSize:11];
             pat.textColor = rule.enabled ? [UIColor systemBlueColor] : [UIColor secondaryLabelColor];
             pat.text = rule.pattern;
             [row addSubview:pat];
-            UILabel *act = [[UILabel alloc] initWithFrame:CGRectMake(10, 26, row.bounds.size.width - 20, 18)];
+            UILabel *act = [[UILabel alloc] initWithFrame:CGRectMake(10, 28, rightX - 110, 30)];
             act.font = [UIFont systemFontOfSize:10];
             act.textColor = [UIColor secondaryLabelColor];
-            act.text = [NSString stringWithFormat:@"%@ | %@", rule.matchType, rule.action];
+            act.numberOfLines = 2;
+            NSString *actName = [rule.action isEqualToString:@"block"] ? @"屏蔽" :
+                ([rule.action isEqualToString:@"replaceReq"] ? @"替换请求" : @"替换响应");
+            act.text = [NSString stringWithFormat:@"%@ | %@", rule.matchType, actName];
             [row addSubview:act];
+            // 右侧：开关（上）+ 编辑/删除（下）
+            UISwitch *rsw = [[UISwitch alloc] initWithFrame:CGRectMake(rightX - 51, 4, 51, 31)];
+            rsw.on = rule.enabled;
+            objc_setAssociatedObject(rsw, "idx", @(idx), OBJC_ASSOCIATION_RETAIN);
+            [rsw addTarget:g_mfCtrl action:NSSelectorFromString(@"mfRuleSwitchChanged:") forControlEvents:UIControlEventValueChanged];
+            [row addSubview:rsw];
+            UIButton *editBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+            editBtn.frame = CGRectMake(rightX - 80, 38, 36, 20);
+            [editBtn setTitle:@"编辑" forState:UIControlStateNormal];
+            editBtn.titleLabel.font = [UIFont systemFontOfSize:11];
+            objc_setAssociatedObject(editBtn, "idx", @(idx), OBJC_ASSOCIATION_RETAIN);
+            [editBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfEditRuleTapped:") forControlEvents:UIControlEventTouchUpInside];
+            [row addSubview:editBtn];
+            UIButton *delBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+            delBtn.frame = CGRectMake(rightX - 40, 38, 32, 20);
+            [delBtn setTitle:@"删除" forState:UIControlStateNormal];
+            delBtn.titleLabel.font = [UIFont systemFontOfSize:11];
+            [delBtn setTitleColor:[UIColor systemRedColor] forState:UIControlStateNormal];
+            objc_setAssociatedObject(delBtn, "idx", @(idx), OBJC_ASSOCIATION_RETAIN);
+            [delBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfDeleteRuleTapped:") forControlEvents:UIControlEventTouchUpInside];
+            [row addSubview:delBtn];
             [sv addSubview:row];
-            y += 56;
+            y += 68;
         }
     }
     // 添加规则按钮

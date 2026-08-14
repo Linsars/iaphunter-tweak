@@ -513,6 +513,19 @@ static void hookShakeBlock(void) {
     [UIView animateWithDuration:0.15 animations:^{ btn.alpha = 0.3; } completion:^(BOOL f){ btn.alpha = 1; }];
 }
 
+// 详情页"改响应"→ 用当前记录 URL 预填规则编辑页
+- (void)mfModifyResponse:(UIButton *)btn {
+    MFNetRecord *rec = objc_getAssociatedObject(btn, "rec");
+    if (!rec) return;
+    // 预填：scheme://host（包含匹配该域名所有请求）
+    NSString *pattern = rec.url ?: @"";
+    NSURL *u = [NSURL URLWithString:pattern];
+    if (u.host.length > 0) {
+        pattern = [NSString stringWithFormat:@"%@://%@", u.scheme ?: @"https", u.host];
+    }
+    mfShowRuleEditPage(pattern, @"replaceResp", -1, NO);
+}
+
 // 网格开关
 - (void)mfGridSwitchChanged:(UIButton *)b {
     NSString *key = objc_getAssociatedObject(b, "pfx");
@@ -541,26 +554,85 @@ static void hookShakeBlock(void) {
     mfLog(@"rewrite -> %d", sw.on);
 }
 
-// 添加规则（简化版：用 UIAlertController 弹输入）
-- (void)mfAddRuleTapped {
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"添加规则"
-        message:@"输入 URL 匹配模式（包含匹配）" preferredStyle:UIAlertControllerStyleAlert];
-    [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) { tf.placeholder = @"例如: api.example.com"; }];
-    [alert addAction:[UIAlertAction actionWithTitle:@"拦截(Block)" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-        NSString *pat = alert.textFields.firstObject.text;
-        if (pat.length == 0) return;
-        mfAddRule(pat, @"contain", @"block");
-        mfPopPage(); mfShowNetworkModifyPage();
-    }]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"替换响应" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-        NSString *pat = alert.textFields.firstObject.text;
-        if (pat.length == 0) return;
-        mfAddRule(pat, @"contain", @"replaceResp");
+// 规则行开关
+- (void)mfRuleSwitchChanged:(UISwitch *)sw {
+    NSInteger idx = [objc_getAssociatedObject(sw, "idx") integerValue];
+    if (idx >= 0 && idx < (NSInteger)g_rewriteRules.count) {
+        g_rewriteRules[idx].enabled = sw.on;
+        mfSaveRule(g_rewriteRules[idx], idx);
+        mfLog(@"rule %ld enabled -> %d", (long)idx, sw.on);
+    }
+}
+
+// 编辑规则
+- (void)mfEditRuleTapped:(UIButton *)btn {
+    NSInteger idx = [objc_getAssociatedObject(btn, "idx") integerValue];
+    if (idx >= 0 && idx < (NSInteger)g_rewriteRules.count) {
+        mfShowRuleEditPage(nil, nil, idx, YES);
+    }
+}
+
+// 删除规则（带确认）
+- (void)mfDeleteRuleTapped:(UIButton *)btn {
+    NSInteger idx = [objc_getAssociatedObject(btn, "idx") integerValue];
+    if (idx < 0 || idx >= (NSInteger)g_rewriteRules.count) return;
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"删除规则"
+        message:[NSString stringWithFormat:@"确定删除这条规则？\n%@", g_rewriteRules[idx].pattern]
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"删除" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *a) {
+        mfRemoveRule(idx);
         mfPopPage(); mfShowNetworkModifyPage();
     }]];
     [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
     UIViewController *vc = g_mfPanelRootVC;
     if (vc) [vc presentViewController:alert animated:YES completion:nil];
+}
+
+// 保存规则（编辑页）
+- (void)mfSaveRuleTapped:(UIButton *)btn {
+    UISegmentedControl *matchSeg = objc_getAssociatedObject(btn, "seg");
+    UISegmentedControl *actSeg = objc_getAssociatedObject(btn, "seg2");
+    UITextField *patField = objc_getAssociatedObject(btn, "f1");
+    UITextField *urlField = objc_getAssociatedObject(btn, "f2");
+    UITextView *bodyView = objc_getAssociatedObject(btn, "tv");
+    NSInteger index = [objc_getAssociatedObject(btn, "idx") integerValue];
+    BOOL fromList = [objc_getAssociatedObject(btn, "fromList") boolValue];
+
+    NSString *pattern = [patField.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (pattern.length == 0) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"提示" message:@"请填写匹配的 URL" preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
+        [g_mfPanelRootVC presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+    NSString *matchType = matchSeg.selectedSegmentIndex == 1 ? @"url" : (matchSeg.selectedSegmentIndex == 2 ? @"regex" : @"contain");
+    NSString *action = actSeg.selectedSegmentIndex == 1 ? @"replaceReq" : (actSeg.selectedSegmentIndex == 2 ? @"block" : @"replaceResp");
+
+    MFRewriteRule *r = [MFRewriteRule new];
+    r.pattern = pattern;
+    r.matchType = matchType;
+    r.action = action;
+    r.urlReplace = urlField.text ?: @"";
+    r.bodyReplace = bodyView.text ?: @"";
+    r.headerReplaces = @{};
+    r.enabled = YES;
+    if (index >= 0 && index < (NSInteger)g_rewriteRules.count) {
+        r.appBundle = g_rewriteRules[index].appBundle;
+    } else {
+        r.appBundle = mfCurrentBundleId();
+    }
+    mfSaveRule(r, index);
+    // 保存后返回并刷新列表
+    mfPopPage();               // 弹掉编辑页
+    if (fromList) {
+        mfPopPage();           // 弹掉列表页
+        mfShowNetworkModifyPage();
+    }
+}
+
+// 添加规则（列表页）——走完整编辑页
+- (void)mfAddRuleTapped {
+    mfShowRuleEditPage(nil, @"replaceResp", -1, YES);
 }
 
 // IAP 购买
