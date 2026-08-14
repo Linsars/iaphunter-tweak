@@ -725,7 +725,6 @@ static IMP orig_viewDidAppear;
 static void mfLongPressAction(id self, SEL _cmd, UILongPressGestureRecognizer *g) {
     if (g.state != UIGestureRecognizerStateBegan) return;
     mfLog(@"LONGPRESS BEGAN touches=%lu", (unsigned long)g.numberOfTouches);
-    // 如果已有面板打开，不重复呼出
     if (g_mfPanelOverlay) { mfLog(@"panel already open, skip"); return; }
     iaphShowPanel((UIViewController *)self);
     mfLog(@"LONGPRESS iaphShowPanel called");
@@ -733,7 +732,6 @@ static void mfLongPressAction(id self, SEL _cmd, UILongPressGestureRecognizer *g
 
 static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     ((void(*)(id, SEL, BOOL))orig_viewDidAppear)(self, _cmd, animated);
-    // 给 view 加双指长按手势（防重复）
     static const char kLPKey = 0;
     if (objc_getAssociatedObject(self, &kLPKey) == nil) {
         UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(mfHandleLongPress:)];
@@ -750,20 +748,8 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
         mfLog(@"=== MinisFix ctor ENTER pid=%d app=%@ ===", getpid(), [[NSBundle mainBundle] bundleIdentifier]);
 
-        // 屏蔽摇一摇
-        hookShakeBlock();
-        mfLog(@"ctor hookShakeBlock done");
-
-        // FakeGPS hook
-        hookFakeGPS();
-        mfLog(@"ctor hookFakeGPS done");
-
-        // 网络捕获
-        extern void mfInstallNetworkCapture(void);
-        mfInstallNetworkCapture();
-        mfLog(@"ctor network capture installed");
-
-        // 手势注册：swizzle viewDidAppear → 添加双指长按手势
+        // 只做手势注册——不 hook CLLocationManager / motionEnded / NSURLProtocol
+        // FakeGPS / 屏蔽摇一摇 / 网络捕获由 IAPHunter.dylib 负责 或 面板开关延迟启用
         Class vcCls = NSClassFromString(@"UIViewController");
         if (vcCls) {
             Method m = class_getInstanceMethod(vcCls, @selector(viewDidAppear:));
@@ -772,7 +758,6 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
                 method_setImplementation(m, (IMP)new_viewDidAppear);
                 mfLog(@"ctor viewDidAppear swizzled");
             }
-            // 添加手势处理方法
             class_addMethod(vcCls, @selector(mfHandleLongPress:), (IMP)mfLongPressAction, "v@:@");
             mfLog(@"ctor longPress method added");
         }
