@@ -13,7 +13,7 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME = FolderX MinisFix
 
 # FolderX（文件夹变色——原有功能不变）
-FolderX_FILES = $(filter-out MFPanel.m MFNetworkCapture.m, $(wildcard *.xm *.m))
+FolderX_FILES = $(filter-out MFPanel.m MFNetworkCapture.m MFJSRules.m, $(wildcard *.xm *.m))
 FolderX_FRAMEWORKS = UIKit Foundation SpringBoardServices
 FolderX_CFLAGS = -fno-objc-arc -fmodules
 FolderX_ARCHS = arm64 arm64e
