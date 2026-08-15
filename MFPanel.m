@@ -389,7 +389,38 @@ static void IAPRecord(NSString *pid) {
     }
 }
 
-// 扫描购买页（本地扫描 + SKProductsRequest 验证 + 在线查询，去重合并）
+// 解析价格字符串为数字（支持 ¥6.00, $0.99, €1,99, 0, 免费 等格式）
+static double mfParsePrice(NSString *priceStr) {
+    if (!priceStr.length || [priceStr isEqualToString:@"?"] || [priceStr isEqualToString:@"未上架"]) return 99999;
+    if ([priceStr containsString:@"免费"] || [priceStr containsString:@"Free"]) return 0;
+    // 提取数字部分（保留小数点，处理逗号作为小数点）
+    NSMutableString *num = [NSMutableString string];
+    BOOL hasDot = NO;
+    for (NSUInteger i = 0; i < priceStr.length; i++) {
+        unichar c = [priceStr characterAtIndex:i];
+        if (c >= '0' && c <= '9') {
+            [num appendFormat:@"%C", c];
+        } else if ((c == '.' || c == ',') && !hasDot) {
+            // 取最后一个数字分隔符作为小数点
+            if (num.length > 0) {
+                // 检查后面是否有数字
+                BOOL digitAfter = NO;
+                for (NSUInteger j = i + 1; j < priceStr.length; j++) {
+                    unichar nc = [priceStr characterAtIndex:j];
+                    if (nc >= '0' && nc <= '9') { digitAfter = YES; break; }
+                    if (nc != ' ') break;
+                }
+                if (digitAfter) {
+                    hasDot = YES;
+                    [num appendString:@"."];
+                }
+            }
+        }
+    }
+    return num.length > 0 ? [num doubleValue] : 99999;
+}
+
+// 扫描购买页（本地扫描 + SKProductsRequest 验证 + 在线查询，去重合并，按价格排序）
 void mfShowScanPage(void) {
     UIView *page = mfMakePage(@"扫描购买", YES);
     UILabel *st = [[UILabel alloc] initWithFrame:CGRectMake(16, g_mfCardH/2 - 20, g_mfCardW - 32, 40)];
@@ -431,6 +462,15 @@ void mfShowScanPage(void) {
                     for (NSString *pid in verifiedPrices) {
                         [merged addObject:@{@"pid": pid, @"price": verifiedPrices[pid], @"src": @"本地"}];
                     }
+
+                    // 按价格从低到高排序
+                    [merged sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+                        double pa = mfParsePrice(a[@"price"]);
+                        double pb = mfParsePrice(b[@"price"]);
+                        if (pa < pb) return NSOrderedAscending;
+                        if (pa > pb) return NSOrderedDescending;
+                        return NSOrderedSame;
+                    }];
 
                     if (merged.count == 0) {
                         UILabel *e = [[UILabel alloc] initWithFrame:CGRectMake(16, 100, g_mfCardW - 32, 40)];
