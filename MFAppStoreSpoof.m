@@ -4,6 +4,7 @@
 
 #import <Foundation/Foundation.h>
 #import <objc/runtime.h>
+#import <mach-o/dyld.h>
 
 // 配置
 static NSString *g_spoofVersion = nil;
@@ -35,13 +36,17 @@ static BOOL isProcess(const char *name) {
 static void (*orig_setValue)(id self, SEL _cmd, NSString *value, NSString *field);
 static void hook_setValue(id self, SEL _cmd, NSString *value, NSString *field) {
     if ([field isEqualToString:@"User-Agent"] && [value containsString:@"iOS/"]) {
-        NSString *modified = [value stringByReplacingOccurrencesOfString:
-            [NSString stringWithFormat:@"iOS/%@", 
-                [[value componentsSeparatedByString:@"iOS/"] lastObject]
-                    componentsSeparatedByString:@" "].firstObject]
-            withString:[NSString stringWithFormat:@"iOS/%@", g_spoofVersion]];
-        orig_setValue(self, _cmd, modified, field);
-        return;
+        // 提取 "iOS/x.x.x" 部分并替换版本号
+        NSRange range = [value rangeOfString:@"iOS/"];
+        if (range.location != NSNotFound) {
+            NSString *afterIOS = [value substringFromIndex:range.location + range.length];
+            NSString *oldVersion = [[afterIOS componentsSeparatedByString:@" "] firstObject];
+            NSString *oldFull = [NSString stringWithFormat:@"iOS/%@", oldVersion];
+            NSString *newFull = [NSString stringWithFormat:@"iOS/%@", g_spoofVersion];
+            NSString *modified = [value stringByReplacingOccurrencesOfString:oldFull withString:newFull];
+            orig_setValue(self, _cmd, modified, field);
+            return;
+        }
     }
     orig_setValue(self, _cmd, value, field);
 }
