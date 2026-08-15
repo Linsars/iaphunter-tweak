@@ -109,11 +109,17 @@ static void hook_setValue(id self, SEL _cmd, NSString *value, NSString *field) {
     orig_setValue(self, _cmd, value, field);
 }
 
-// hook 2: MIBundle isMinimumOSVersion:applicableToOSVersion:requiredOS:error:
+// hook 2: MIBundle 版本检查方法
 // 绕过 installd 的最低版本检查
 static BOOL (*orig_isMinOS)(id self, SEL _cmd, NSString *min, NSString *current, NSString *required, NSError **err);
 static BOOL hook_isMinOS(id self, SEL _cmd, NSString *min, NSString *current, NSString *required, NSError **err) {
-    spoofLog(@"hook_isMinOS: min=%@ current=%@ required=%@ -> YES", min, current, required);
+    spoofLog(@"hook_isMinOS called -> YES");
+    return YES;
+}
+
+static BOOL (*orig_isApplicable)(id self, SEL _cmd, NSError **err);
+static BOOL hook_isApplicable(id self, SEL _cmd, NSError **err) {
+    spoofLog(@"hook_isApplicable called -> YES");
     return YES;
 }
 
@@ -167,26 +173,40 @@ static void AppStoreSpoof_init(void) {
         Class cls = objc_getClass("MIBundle");
         if (cls) {
             spoofLog(@"Found MIBundle class");
-            Method m = class_getInstanceMethod(cls, 
-                @selector(isMinimumOSVersion:applicableToOSVersion:requiredOS:error:));
-            if (m) {
-                orig_isMinOS = (void *)method_getImplementation(m);
-                method_setImplementation(m, (IMP)hook_isMinOS);
-                spoofLog(@"hook_isMinOS installed");
-            } else {
-                spoofLog(@"isMinimumOSVersion:applicableToOSVersion:requiredOS:error: method not found on MIBundle");
-                // 列出 MIBundle 的所有方法
-                unsigned int methodCount = 0;
-                Method *methods = class_copyMethodList(cls, &methodCount);
-                spoofLog(@"MIBundle has %u methods:", methodCount);
-                for (unsigned int i = 0; i < methodCount; i++) {
-                    SEL sel = method_getName(methods[i]);
-                    NSString *selName = NSStringFromSelector(sel);
-                    if ([selName containsString:@"ersion"] || [selName containsString:@"inimum"] || [selName containsString:@"ompatible"]) {
-                        spoofLog(@"  - %@", selName);
+            
+            // 尝试多个可能的方法名
+            SEL selectors[] = {
+                @selector(_isMinimumOSVersion:applicableToOSVersion:requiredOS:error:),
+                @selector(isMinimumOSVersion:applicableToOSVersion:error:),
+                @selector(isApplicableToCurrentOSVersionWithError:),
+            };
+            const char *selNames[] = {
+                "_isMinimumOSVersion:applicableToOSVersion:requiredOS:error:",
+                "isMinimumOSVersion:applicableToOSVersion:error:",
+                "isApplicableToCurrentOSVersionWithError:",
+            };
+            
+            BOOL hooked = NO;
+            for (int i = 0; i < 3; i++) {
+                Method m = class_getInstanceMethod(cls, selectors[i]);
+                if (m) {
+                    if (i < 2) {
+                        orig_isMinOS = (void *)method_getImplementation(m);
+                        method_setImplementation(m, (IMP)hook_isMinOS);
+                    } else {
+                        orig_isApplicable = (void *)method_getImplementation(m);
+                        method_setImplementation(m, (IMP)hook_isApplicable);
                     }
+                    spoofLog(@"hook installed: %s", selNames[i]);
+                    hooked = YES;
+                    // 继续 hook 其他方法
+                } else {
+                    spoofLog(@"method not found: %s", selNames[i]);
                 }
-                free(methods);
+            }
+            
+            if (!hooked) {
+                spoofLog(@"No version check method found on MIBundle");
             }
         } else {
             spoofLog(@"MIBundle class not found");
