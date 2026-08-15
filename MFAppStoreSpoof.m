@@ -62,6 +62,32 @@ static BOOL isProcess(const char *name) {
     return result;
 }
 
+// 列出所有包含特定关键字的类
+static void listClassesWithKeyword(NSString *keyword) {
+    unsigned int count = 0;
+    Class *classes = objc_copyClassList(&count);
+    
+    spoofLog(@"=== Classes containing '%@' ===", keyword);
+    for (unsigned int i = 0; i < count; i++) {
+        NSString *className = NSStringFromClass(classes[i]);
+        if ([className containsString:keyword]) {
+            // 列出这个类的方法
+            unsigned int methodCount = 0;
+            Method *methods = class_copyMethodList(classes[i], &methodCount);
+            spoofLog(@"  %@ (%u methods)", className, methodCount);
+            
+            // 列出前10个方法
+            for (unsigned int j = 0; j < MIN(methodCount, 10); j++) {
+                SEL sel = method_getName(methods[j]);
+                NSString *selName = NSStringFromSelector(sel);
+                spoofLog(@"    - %@", selName);
+            }
+            free(methods);
+        }
+    }
+    free(classes);
+}
+
 // hook 1: NSMutableURLRequest setValue:forHTTPHeaderField:
 // 拦截购买请求，修改 User-Agent 里的 iOS 版本号
 static void (*orig_setValue)(id self, SEL _cmd, NSString *value, NSString *field);
@@ -126,10 +152,21 @@ static void AppStoreSpoof_init(void) {
             spoofLog(@"NSMutableURLRequest class not found");
         }
     } else if (isProcess("installd")) {
-        spoofLog(@"in installd, installing hook_isMinOS");
-        // hook MIBundle
+        spoofLog(@"in installd, listing classes...");
+        
+        // 列出包含 "MI" 的类
+        listClassesWithKeyword(@"MI");
+        
+        // 列出包含 "Bundle" 的类
+        listClassesWithKeyword(@"Bundle");
+        
+        // 列出包含 "Install" 的类
+        listClassesWithKeyword(@"Install");
+        
+        // 尝试 hook MIBundle
         Class cls = objc_getClass("MIBundle");
         if (cls) {
+            spoofLog(@"Found MIBundle class");
             Method m = class_getInstanceMethod(cls, 
                 @selector(isMinimumOSVersion:applicableToOSVersion:requiredOS:error:));
             if (m) {
@@ -137,7 +174,19 @@ static void AppStoreSpoof_init(void) {
                 method_setImplementation(m, (IMP)hook_isMinOS);
                 spoofLog(@"hook_isMinOS installed");
             } else {
-                spoofLog(@"isMinimumOSVersion:applicableToOSVersion:requiredOS:error: method not found");
+                spoofLog(@"isMinimumOSVersion:applicableToOSVersion:requiredOS:error: method not found on MIBundle");
+                // 列出 MIBundle 的所有方法
+                unsigned int methodCount = 0;
+                Method *methods = class_copyMethodList(cls, &methodCount);
+                spoofLog(@"MIBundle has %u methods:", methodCount);
+                for (unsigned int i = 0; i < methodCount; i++) {
+                    SEL sel = method_getName(methods[i]);
+                    NSString *selName = NSStringFromSelector(sel);
+                    if ([selName containsString:@"ersion"] || [selName containsString:@"inimum"] || [selName containsString:@"ompatible"]) {
+                        spoofLog(@"  - %@", selName);
+                    }
+                }
+                free(methods);
             }
         } else {
             spoofLog(@"MIBundle class not found");
