@@ -64,21 +64,21 @@ __attribute__((constructor)) static void init(void) {
                 MSHookMessageEx(cls, sel, (IMP)hook_setValue_forField, (IMP *)&orig_setValue_forField);
             }
         } else if ([processName isEqualToString:@"installd"]) {
-            // DEBUG: 写日志确认 installd 是否加载了 dylib
-            [@"ctor_entered" writeToFile:@"/var/mobile/Library/Preferences/spoof_debug.log" atomically:YES encoding:NSUTF8StringEncoding error:nil];
+            // DEBUG: 写日志到 /tmp（installd 以 _installd 用户运行，写不到 /var/mobile/）
+            [@"ctor_entered" writeToFile:@"/tmp/spoof_debug.log" atomically:YES encoding:NSUTF8StringEncoding error:nil];
             
             // installd 不受 enabled 影响——直接 hook（和 AppStoreTroller 一致）
             Class cls = NSClassFromString(@"MIBundle");
             if (cls) {
                 SEL sel = NSSelectorFromString(@"isMinimumOSVersion:applicableToOSVersion:requiredOS:error:");
                 MSHookMessageEx(cls, sel, (IMP)hook_isMinimumOSVersion, (IMP *)&orig_isMinimumOSVersion);
-                [@"hook_installed" writeToFile:@"/var/mobile/Library/Preferences/spoof_debug.log" atomically:YES encoding:NSUTF8StringEncoding error:nil];
+                [@"hook_installed" writeToFile:@"/tmp/spoof_debug.log" atomically:YES encoding:NSUTF8StringEncoding error:nil];
             } else {
-                [@"MIBundle_not_found" writeToFile:@"/var/mobile/Library/Preferences/spoof_debug.log" atomically:YES encoding:NSUTF8StringEncoding error:nil];
+                [@"MIBundle_not_found" writeToFile:@"/tmp/spoof_debug.log" atomically:YES encoding:NSUTF8StringEncoding error:nil];
             }
         } else {
             NSString *msg = [NSString stringWithFormat:@"process=%@", processName];
-            [msg writeToFile:@"/var/mobile/Library/Preferences/spoof_debug.log" atomically:YES encoding:NSUTF8StringEncoding error:nil];
+            [msg writeToFile:@"/tmp/spoof_debug.log" atomically:YES encoding:NSUTF8StringEncoding error:nil];
         }
     }
 }
