@@ -254,6 +254,9 @@ static void mfFetchIAPList(void (^cb)(NSArray *items, NSString *err)) {
 }
 
 // ====== 本地二进制扫描 ======
+// 前向声明
+static NSSet *mfScanFileForPIDs(NSString *path);
+
 // 从 Mach-O 的 __cstring / __objc_methname / __objc_classname 段提取 product ID
 static NSArray *mfScanLocalProductIDs(void) {
     NSMutableSet *found = [NSMutableSet set];
