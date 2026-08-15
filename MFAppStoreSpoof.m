@@ -9,19 +9,23 @@ static NSUserDefaults *prefs;
 
 // ====== NSMutableURLRequest setValue:forHTTPHeaderField: hook ======
 // 拦截 App Store 购买请求，修改 User-Agent 里的 iOS 版本号
+// AppStoreTroller 逻辑：enabled 检查 + iOSVersion 全局变量（为空跳过修改）
+static NSString *g_spoofVersion;  // ctor 里从 prefs 读取，为空则跳过修改
 static void (*orig_setValue_forField)(id self, SEL _cmd, NSString *value, NSString *field);
 
 static void hook_setValue_forField(id self, SEL _cmd, NSString *value, NSString *field) {
+    // AppStoreTroller: 先检查全局 iOSVersion，为空直接跳过
+    if (!g_spoofVersion) {
+        orig_setValue_forField(self, _cmd, value, field);
+        return;
+    }
     if ([field isEqualToString:@"User-Agent"]) {
         NSString *url = [[self URL] absoluteString] ?: @"";
         if ([url containsString:@"WebObjects/MZBuy.woa/wa/buyProduct"]) {
-            NSString *version = [prefs stringForKey:@"iOSVersion"] ?: @"99.0.0";
-            if (version.length > 0) {
-                value = [value stringByReplacingOccurrencesOfString:@"iOS/.*? "
-                                                         withString:[NSString stringWithFormat:@"iOS/%@ ", version]
-                                                           options:NSRegularExpressionSearch
-                                                             range:NSMakeRange(0, value.length)];
-            }
+            value = [value stringByReplacingOccurrencesOfString:@"iOS/.*? "
+                                                     withString:[NSString stringWithFormat:@"iOS/%@ ", g_spoofVersion]
+                                                       options:NSRegularExpressionSearch
+                                                         range:NSMakeRange(0, value.length)];
         }
     }
     orig_setValue_forField(self, _cmd, value, field);
@@ -36,6 +40,10 @@ static BOOL hook_isMinimumOSVersion(id self, SEL _cmd, id arg1, id arg2, id arg3
 }
 
 // ====== ctor ======
+// AppStoreTroller 逻辑：
+// 1. 读 prefs enabled 开关——NO 则不 hook appstored
+// 2. 读 iOSVersion 存全局变量——hook 函数里用全局变量，为空则跳过修改
+// 3. installd 分支不受 enabled 影响——直接 hook
 __attribute__((constructor)) static void init(void) {
     @autoreleasepool {
         NSString *processName = [[NSProcessInfo processInfo] processName];
@@ -43,14 +51,20 @@ __attribute__((constructor)) static void init(void) {
         prefs = [[NSUserDefaults alloc] initWithSuiteName:@"dev.mineek.appstoretroller"];
         
         if ([processName isEqualToString:@"appstored"]) {
-            // hook NSMutableURLRequest setValue:forHTTPHeaderField:
+            // 和 AppStoreTroller 一致：检查 enabled 开关
+            if (![prefs boolForKey:@"enabled"]) {
+                return;  // disabled → 不注册任何 hook
+            }
+            // 读 iOSVersion 存全局变量（AppStoreTroller 在 ctor 里一次性读好）
+            g_spoofVersion = [[prefs stringForKey:@"iOSVersion"] copy];
+            
             Class cls = NSClassFromString(@"NSMutableURLRequest");
             if (cls) {
                 SEL sel = @selector(setValue:forHTTPHeaderField:);
                 MSHookMessageEx(cls, sel, (IMP)hook_setValue_forField, (IMP *)&orig_setValue_forField);
             }
         } else if ([processName isEqualToString:@"installd"]) {
-            // hook MIBundle isMinimumOSVersion:applicableToOSVersion:requiredOS:error:
+            // installd 不受 enabled 影响——直接 hook（和 AppStoreTroller 一致）
             Class cls = NSClassFromString(@"MIBundle");
             if (cls) {
                 SEL sel = NSSelectorFromString(@"isMinimumOSVersion:applicableToOSVersion:requiredOS:error:");
