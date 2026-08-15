@@ -61,6 +61,8 @@ static NSUserDefaults *prefs;
         }
         %init(AppStoredHook);
     } else if ([processName isEqualToString:@"installd"]) {
+        [@"" writeToFile:@"/tmp/spoof_debug.log" atomically:YES encoding:NSUTF8StringEncoding error:nil];
         %init(InstalldHook);
+        [@"logos_hook_done" writeToFile:@"/tmp/spoof_debug.log" atomically:YES encoding:NSUTF8StringEncoding error:nil];
     }
 }
