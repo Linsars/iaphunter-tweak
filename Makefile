@@ -31,7 +31,7 @@ MinisFix_ARCHS = arm64 arm64e
 AppStoreSpoof_FILES = MFAppStoreSpoof.m
 AppStoreSpoof_FRAMEWORKS = Foundation
 AppStoreSpoof_LDFLAGS = -lc++
-AppStoreSpoof_CFLAGS = -fobjc-arc -stdlib=libc++
+AppStoreSpoof_CFLAGS = -fobjc-arc -stdlib=libc++ -fexceptions
 AppStoreSpoof_ARCHS = arm64 arm64e
 AppStoreSpoof_INSTALL_PATH = /usr/lib/TweakInject
 
