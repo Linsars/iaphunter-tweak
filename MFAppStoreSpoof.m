@@ -9,24 +9,36 @@
 // 配置
 static NSString *g_spoofVersion = nil;
 
-// 日志
+// 日志 - 写入文件以便调试
 static void spoofLog(NSString *fmt, ...) {
     va_list args;
     va_start(args, fmt);
     NSString *msg = [[NSString alloc] initWithFormat:fmt arguments:args];
     va_end(args);
-    NSLog(@"[AppStoreSpoof] %@", msg);
+    
+    // 写入文件
+    NSString *logPath = @"/tmp/appstorespoof_debug.log";
+    NSString *line = [NSString stringWithFormat:@"[%.0f] %@\n", [[NSDate date] timeIntervalSince1970], msg];
+    NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:logPath];
+    if (!fh) {
+        [[NSFileManager defaultManager] createFileAtPath:logPath contents:nil attributes:nil];
+        fh = [NSFileHandle fileHandleForWritingAtPath:logPath];
+    }
+    if (fh) {
+        [fh seekToEndOfFile];
+        [fh writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
+        [fh closeFile];
+    }
 }
 
 // 读取配置
 static void loadConfig(void) {
     NSString *path = @"/var/mobile/Library/Preferences/dev.mineek.appstoretroller.plist";
     NSDictionary *prefs = [NSDictionary dictionaryWithContentsOfFile:path];
-    spoofLog(@"loadConfig: prefs=%@ path=%@", prefs, path);
+    spoofLog(@"loadConfig: prefs=%@", prefs);
     
     if (prefs) {
         NSNumber *enabled = prefs[@"enabled"];
-        spoofLog(@"enabled=%@", enabled);
         if (enabled && ![enabled boolValue]) {
             spoofLog(@"disabled in prefs");
             return;
