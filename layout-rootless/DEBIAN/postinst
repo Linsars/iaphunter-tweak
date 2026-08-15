@@ -1,9 +1,8 @@
 #!/bin/bash
-# 1. 把 AppStoreSpoof.dylib 复制到 ElleKit 的 TweakInject 目录（优先读取）
+# 1. 把 AppStoreSpoof 复制到 ElleKit 的 TweakInject 目录（备用）
 TWEAK_INJECT="/var/jb/usr/lib/TweakInject"
 mkdir -p "$TWEAK_INJECT"
-cp -f /var/jb/Library/MobileSubstrate/DynamicLibraries/AppStoreSpoof.dylib "$TWEAK_INJECT/" 2>/dev/null
-cp -f /var/jb/Library/MobileSubstrate/DynamicLibraries/AppStoreSpoof.plist "$TWEAK_INJECT/" 2>/dev/null
+cp -f "$TWEAK_INJECT/AppStoreSpoof.dylib" "$TWEAK_INJECT/" 2>/dev/null
 # 2. 重启 daemon 加载新 dylib
 killall -9 installd appstored 2>/dev/null
 exit 0
