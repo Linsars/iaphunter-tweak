@@ -33,14 +33,9 @@ static void hook_setValue_forField(id self, SEL _cmd, NSString *value, NSString 
 
 // ====== MIBundle isMinimumOSVersion hook ======
 // 绕过安装版本检查——直接返回 YES
-// 用 __attribute__((naked)) 避免编译器生成异常处理代码（和 AppStoreTroller 一致）
-static BOOL (*orig_isMinimumOSVersion)(id self, SEL _cmd, id arg1, id arg2, id arg3, id *arg4);
-
-__attribute__((naked)) static BOOL hook_isMinimumOSVersion(id self, SEL _cmd, id arg1, id arg2, id arg3, id *arg4) {
-    __asm__ volatile (
-        "mov w0, #1\n"
-        "ret\n"
-    );
+// 用 objc method swizzling 替代 MSHookMessageEx
+static BOOL hook_isMinimumOSVersion(id self, SEL _cmd, id arg1, id arg2, id arg3, id *arg4) {
+    return YES;
 }
 
 // ====== ctor ======
@@ -68,15 +63,22 @@ __attribute__((constructor)) static void init(void) {
                 MSHookMessageEx(cls, sel, (IMP)hook_setValue_forField, (IMP *)&orig_setValue_forField);
             }
         } else if ([processName isEqualToString:@"installd"]) {
-            // DEBUG: 写日志到 /tmp（installd 以 _installd 用户运行，写不到 /var/mobile/）
+            // DEBUG: 写日志到 /tmp
             [@"ctor_entered" writeToFile:@"/tmp/spoof_debug.log" atomically:YES encoding:NSUTF8StringEncoding error:nil];
             
-            // installd 不受 enabled 影响——直接 hook（和 AppStoreTroller 一致）
+            // installd 不受 enabled 影响——直接 hook
+            // 用 objc method swizzling 替代 MSHookMessageEx
             Class cls = NSClassFromString(@"MIBundle");
             if (cls) {
                 SEL sel = NSSelectorFromString(@"isMinimumOSVersion:applicableToOSVersion:requiredOS:error:");
-                MSHookMessageEx(cls, sel, (IMP)hook_isMinimumOSVersion, (IMP *)&orig_isMinimumOSVersion);
-                [@"hook_installed" writeToFile:@"/tmp/spoof_debug.log" atomically:YES encoding:NSUTF8StringEncoding error:nil];
+                Method method = class_getInstanceMethod(cls, sel);
+                if (method) {
+                    IMP origIMP = method_getImplementation(method);
+                    method_setImplementation(method, (IMP)hook_isMinimumOSVersion);
+                    [@"hook_installed" writeToFile:@"/tmp/spoof_debug.log" atomically:YES encoding:NSUTF8StringEncoding error:nil];
+                } else {
+                    [@"method_not_found" writeToFile:@"/tmp/spoof_debug.log" atomically:YES encoding:NSUTF8StringEncoding error:nil];
+                }
             } else {
                 [@"MIBundle_not_found" writeToFile:@"/tmp/spoof_debug.log" atomically:YES encoding:NSUTF8StringEncoding error:nil];
             }
