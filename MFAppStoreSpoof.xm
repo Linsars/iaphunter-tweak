@@ -6,6 +6,8 @@
 static NSUserDefaults *prefs;
 
 // ====== appstored: NSMutableURLRequest setValue:forHTTPHeaderField: hook ======
+%group AppStoredHook
+
 %hook NSMutableURLRequest
 
 - (void)setValue:(NSString *)value forHTTPHeaderField:(NSString *)field {
@@ -33,7 +35,11 @@ static NSUserDefaults *prefs;
 
 %end
 
+%end
+
 // ====== installd: MIBundle isMinimumOSVersion hook ======
+%group InstalldHook
+
 %hook MIBundle
 
 - (BOOL)isMinimumOSVersion:(id)arg1 applicableToOSVersion:(id)arg2 requiredOS:(id)arg3 error:(id *)arg4 {
@@ -42,18 +48,19 @@ static NSUserDefaults *prefs;
 
 %end
 
+%end
+
 // ====== ctor ======
 %ctor {
     NSString *processName = [[NSProcessInfo processInfo] processName];
     
-    // 根据进程名决定启用哪些 hook
     if ([processName isEqualToString:@"appstored"]) {
         prefs = [[NSUserDefaults alloc] initWithSuiteName:@"dev.mineek.appstoretroller"];
         if (![prefs boolForKey:@"enabled"]) {
-            return;  // disabled → 不注册 hook
+            return;
         }
-        %init(NSMutableURLRequest);
+        %init(AppStoredHook);
     } else if ([processName isEqualToString:@"installd"]) {
-        %init(MIBundle);
+        %init(InstalldHook);
     }
 }
