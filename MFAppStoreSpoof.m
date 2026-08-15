@@ -33,10 +33,14 @@ static void hook_setValue_forField(id self, SEL _cmd, NSString *value, NSString 
 
 // ====== MIBundle isMinimumOSVersion hook ======
 // 绕过安装版本检查——直接返回 YES
+// 用 __attribute__((naked)) 避免编译器生成异常处理代码（和 AppStoreTroller 一致）
 static BOOL (*orig_isMinimumOSVersion)(id self, SEL _cmd, id arg1, id arg2, id arg3, id *arg4);
 
-static BOOL hook_isMinimumOSVersion(id self, SEL _cmd, id arg1, id arg2, id arg3, id *arg4) {
-    return YES;
+__attribute__((naked)) static BOOL hook_isMinimumOSVersion(id self, SEL _cmd, id arg1, id arg2, id arg3, id *arg4) {
+    __asm__ volatile (
+        "mov w0, #1\n"
+        "ret\n"
+    );
 }
 
 // ====== ctor ======
