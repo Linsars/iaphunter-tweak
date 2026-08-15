@@ -944,6 +944,41 @@ static void swizzle(Class cls, SEL sel, IMP newImp, IMP *origOut) {
     method_setImplementation(m, newImp);
 }
 
+// ====== TestFlight 版本绕过 ======
+// hook TFAppBuild 的兼容性检查，让高版本 App 在低版本设备上显示兼容
+// 同时 hook 过期日期，保留已过期的 Build
+
+static BOOL (*orig_tfCompatible)(id self, SEL _cmd);
+static BOOL (*orig_tfPlatformCompatible)(id self, SEL _cmd);
+static BOOL (*orig_tfHardwareCompatible)(id self, SEL _cmd);
+static BOOL (*orig_tfMinOSCompatible)(id self, SEL _cmd);
+static NSDate *(*orig_tfExpirationDate)(id self, SEL _cmd);
+static void (*orig_tfSetExpirationDate)(id self, SEL _cmd, NSDate *date);
+
+static BOOL hook_tfCompatible(id self, SEL _cmd) { return YES; }
+static BOOL hook_tfPlatformCompatible(id self, SEL _cmd) { return YES; }
+static BOOL hook_tfHardwareCompatible(id self, SEL _cmd) { return YES; }
+static BOOL hook_tfMinOSCompatible(id self, SEL _cmd) { return YES; }
+static NSDate *hook_tfExpirationDate(id self, SEL _cmd) { return [NSDate distantFuture]; }
+static void hook_tfSetExpirationDate(id self, SEL _cmd, NSDate *date) { /* 阻止设置过期日期 */ }
+
+static void mfInstallTestFlightBypass(void) {
+    Class TFAppBuild = objc_getClass("TFAppBuild");
+    if (!TFAppBuild) return;  // 不在 TestFlight 进程里
+    
+    // 版本兼容绕过
+    swizzle(TFAppBuild, @selector(compatible), (IMP)hook_tfCompatible, (IMP *)&orig_tfCompatible);
+    swizzle(TFAppBuild, @selector(platformCompatible), (IMP)hook_tfPlatformCompatible, (IMP *)&orig_tfPlatformCompatible);
+    swizzle(TFAppBuild, @selector(hardwareCompatible), (IMP)hook_tfHardwareCompatible, (IMP *)&orig_tfHardwareCompatible);
+    swizzle(TFAppBuild, @selector(minOSCompatible), (IMP)hook_tfMinOSCompatible, (IMP *)&orig_tfMinOSCompatible);
+    
+    // Build 保留（阻止过期）
+    swizzle(TFAppBuild, @selector(expirationDate), (IMP)hook_tfExpirationDate, (IMP *)&orig_tfExpirationDate);
+    swizzle(TFAppBuild, @selector(setExpirationDate:), (IMP)hook_tfSetExpirationDate, (IMP *)&orig_tfSetExpirationDate);
+    
+    mfLog(@"TestFlight bypass installed");
+}
+
 // 双指长按手势处理
 static void mfLongPressAction(id self, SEL _cmd, UILongPressGestureRecognizer *g) {
     if (g.state != UIGestureRecognizerStateBegan) return;
@@ -970,6 +1005,11 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
         mfLog(@"=== MinisFix ctor ENTER pid=%d app=%@ ===", getpid(), [[NSBundle mainBundle] bundleIdentifier]);
+
+        // TestFlight 版本绕过（独立于 IAP工具箱，始终检查）
+        if (mfPrefBool(@"mfTFBypassEnabled", NO)) {
+            mfInstallTestFlightBypass();
+        }
 
         // 启用检查：设置页「启用 IAP工具箱」×「应用程序」白名单（不通过则不加载任何功能）
         if (!mfIsEnabledForCurrentApp()) {
