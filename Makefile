@@ -28,7 +28,7 @@ MinisFix_CFLAGS = -fobjc-arc -Wno-everything
 MinisFix_ARCHS = arm64 arm64e
 
 # AppStoreSpoof（版本伪装——独立轻量 dylib，注入 appstored + installd，不依赖 UIKit）
-AppStoreSpoof_FILES = MFAppStoreSpoof.xm
+AppStoreSpoof_FILES = MFAppStoreSpoof.m
 AppStoreSpoof_FRAMEWORKS = Foundation
 AppStoreSpoof_CFLAGS = -fobjc-arc
 AppStoreSpoof_ARCHS = arm64 arm64e
