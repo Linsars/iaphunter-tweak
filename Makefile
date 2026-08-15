@@ -10,7 +10,7 @@ export SYSROOT = $(THEOS)/sdks/iPhoneOS14.5.sdk
 
 include $(THEOS)/makefiles/common.mk
 
-TWEAK_NAME = FolderX MinisFix AppStoreSpoof
+TWEAK_NAME = FolderX MinisFix
 
 # FolderX（文件夹变色——原有功能不变）
 FolderX_FILES = $(filter-out MFPanel.m MFNetworkCapture.m MFJSRules.m MFAppStoreSpoof.xm, $(wildcard *.xm *.m))
@@ -27,13 +27,7 @@ MinisFix_LDFLAGS = -weak_framework UIKit -weak_framework StoreKit -weak_framewor
 MinisFix_CFLAGS = -fobjc-arc -Wno-everything
 MinisFix_ARCHS = arm64 arm64e
 
-# AppStoreSpoof（版本伪装——独立轻量 dylib，注入 appstored + installd，不依赖 UIKit）
-AppStoreSpoof_FILES = MFAppStoreSpoof.m
-AppStoreSpoof_FRAMEWORKS = Foundation
-AppStoreSpoof_LDFLAGS = -lc++
-AppStoreSpoof_CFLAGS = -fobjc-arc -stdlib=libc++ -fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables -x objective-c++
-AppStoreSpoof_ARCHS = arm64 arm64e
-AppStoreSpoof_INSTALL_PATH = /usr/lib/TweakInject
+# AppStoreSpoof：使用预编译的二进制（AppStoreTroller 原版），在 workflow 里手动复制到打包目录
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 SUBPROJECTS += folderx
