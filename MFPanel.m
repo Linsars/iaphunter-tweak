@@ -256,14 +256,13 @@ static void mfFetchIAPList(void (^cb)(NSArray *items, NSString *err)) {
 // ====== 本地二进制扫描 ======
 // 前向声明
 static NSSet *mfScanFileForPIDs(NSString *path);
+static void mfQueryLocalPrices(NSArray *pids, void (^cb)(NSDictionary *pidToPrice));
 
-// 从 Mach-O 的 __cstring / __objc_methname / __objc_classname 段提取 product ID
+// 从 Mach-O 的 __cstring 段提取 product ID（只匹配 bundleId. 前缀）
 static NSArray *mfScanLocalProductIDs(void) {
     NSMutableSet *found = [NSMutableSet set];
-    // 主二进制
     NSString *exePath = [[NSBundle mainBundle] executablePath];
     if (exePath) [found unionSet:mfScanFileForPIDs(exePath)];
-    // Frameworks
     NSString *fwDir = [[NSBundle mainBundle] privateFrameworksPath];
     if (fwDir) {
         for (NSString *fw in [[NSFileManager defaultManager] contentsOfDirectoryAtPath:fwDir error:nil]) {
@@ -274,7 +273,6 @@ static NSArray *mfScanLocalProductIDs(void) {
             }
         }
     }
-    // PlugIns
     NSString *pluginDir = [[NSBundle mainBundle] builtInPlugInsPath];
     if (pluginDir) {
         for (NSString *ext in [[NSFileManager defaultManager] contentsOfDirectoryAtPath:pluginDir error:nil]) {
@@ -288,26 +286,12 @@ static NSArray *mfScanLocalProductIDs(void) {
     return [[found allObjects] sortedArrayUsingSelector:@selector(compare:)];
 }
 
-// 扫描单个文件中的 product ID 模式（com.xxx.xxx.xxx）
+// 扫描单个文件：提取所有 com.xxx.xxx.xxx 格式的字符串（3段以上点分）
+// 后续由 SKProductsRequest 验证哪些是真正的 product ID
 static NSSet *mfScanFileForPIDs(NSString *path) {
     NSMutableSet *pids = [NSMutableSet set];
     NSData *data = [NSData dataWithContentsOfFile:path options:NSDataReadingMappedIfSafe error:nil];
     if (!data.length) return pids;
-    // 取 bundle id 前缀作为锚点（如 com.zijayrate.analogcam）
-    NSString *bid = [[NSBundle mainBundle] bundleIdentifier] ?: @"";
-    // 方案1：找 bundleId. 开头的字符串（最精准）
-    NSString *prefix = [bid stringByAppendingString:@"."];
-    // 方案2：找 com.xxx.xxx. 开头且含 vip/premium/subscribe/monthly/yearly/forever/package/coin/gem/token 等关键词的字符串
-    static NSArray *iapKeywords = nil;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        iapKeywords = @[@"vip", @"premium", @"subscribe", @"subscription",
-                        @"monthly", @"yearly", @"weekly", @"forever", @"lifetime",
-                        @"combo", @"package", @"coin", @"gem", @"token", @"pro",
-                        @"unlock", @"adfree", @"ad_free", @"no_ads", @"remove_ads",
-                        @"box", @"offer", @"trial", @"draw"];
-    });
-    // 扫描 __cstring 段：提取所有 C 字符串
     const uint8_t *bytes = (const uint8_t *)data.bytes;
     NSUInteger len = data.length;
     NSMutableString *current = [NSMutableString string];
@@ -316,40 +300,83 @@ static NSSet *mfScanFileForPIDs(NSString *path) {
         if (c >= 0x20 && c < 0x7F) {
             [current appendFormat:@"%c", c];
         } else {
-            if (current.length >= 8) {  // 最短合理 product ID 长度
-                // 方案1：bundleId 前缀匹配
-                if ([current hasPrefix:prefix] && current.length > prefix.length) {
-                    [pids addObject:[current copy]];
+            if (current.length >= 10 && [current hasPrefix:@"com."]) {
+                // 至少3段（com.xxx.xxx），排除系统框架标识符
+                NSInteger dots = 0;
+                for (NSUInteger j = 0; j < current.length; j++) {
+                    if ([current characterAtIndex:j] == '.') dots++;
                 }
-                // 方案2：com.xxx.xxx 模式 + IAP 关键词
-                else if ([current hasPrefix:@"com."] && current.length >= 10) {
-                    NSString *lower = [current lowercaseString];
-                    for (NSString *kw in iapKeywords) {
-                        if ([lower containsString:kw]) {
-                            [pids addObject:[current copy]];
-                            break;
-                        }
+                if (dots >= 2) {
+                    NSString *s = [current copy];
+                    // 排除已知系统前缀
+                    if ([s hasPrefix:@"com.apple."] ||
+                        [s hasPrefix:@"com.facebook.sdk."] ||
+                        [s hasPrefix:@"com.google."] ||
+                        [s hasPrefix:@"com.adjust."] ||
+                        [s hasPrefix:@"com.appsflyer."] ||
+                        [s hasPrefix:@"com.branch."]) {
+                        // skip
+                    } else {
+                        [pids addObject:s];
                     }
                 }
             }
             [current setString:@""];
         }
     }
-    // 最后一个字符串
-    if (current.length >= 8) {
-        if ([current hasPrefix:prefix] && current.length > prefix.length) {
-            [pids addObject:[current copy]];
-        } else if ([current hasPrefix:@"com."] && current.length >= 10) {
-            NSString *lower = [current lowercaseString];
-            for (NSString *kw in iapKeywords) {
-                if ([lower containsString:kw]) {
-                    [pids addObject:[current copy]];
-                    break;
-                }
+    if (current.length >= 10 && [current hasPrefix:@"com."]) {
+        NSInteger dots = 0;
+        for (NSUInteger j = 0; j < current.length; j++) {
+            if ([current characterAtIndex:j] == '.') dots++;
+        }
+        if (dots >= 2) {
+            NSString *s = [current copy];
+            if (![s hasPrefix:@"com.apple."] && ![s hasPrefix:@"com.facebook.sdk."] &&
+                ![s hasPrefix:@"com.google."] && ![s hasPrefix:@"com.adjust."] &&
+                ![s hasPrefix:@"com.appsflyer."] && ![s hasPrefix:@"com.branch."]) {
+                [pids addObject:s];
             }
         }
     }
     return pids;
+}
+
+// SKProductsRequest 查询本地 PID 的价格
+@interface MFProductReqDelegate : NSObject <SKProductsRequestDelegate>
+@property (nonatomic, copy) void (^cb)(NSDictionary *);
+@end
+@implementation MFProductReqDelegate
+- (void)productsRequest:(SKProductsRequest *)request didReceiveResponse:(SKProductsResponse *)response {
+    NSMutableDictionary *map = [NSMutableDictionary dictionary];
+    for (SKProduct *p in response.products) {
+        NSNumberFormatter *fmt = [[NSNumberFormatter alloc] init];
+        fmt.numberStyle = NSNumberFormatterCurrencyStyle;
+        fmt.locale = p.priceLocale;
+        NSString *priceStr = [fmt stringFromNumber:p.price];
+        if (priceStr.length) map[p.productIdentifier] = priceStr;
+    }
+    if (self.cb) self.cb([map copy]);
+}
+- (void)request:(SKRequest *)request didFailWithError:(NSError *)error {
+    if (self.cb) self.cb(@{});
+}
+@end
+static void mfQueryLocalPrices(NSArray *pids, void (^cb)(NSDictionary *pidToPrice)) {
+    if (pids.count == 0) { cb(@{}); return; }
+    SKProductsRequest *req = [[SKProductsRequest alloc] initWithProductIdentifiers:[NSSet setWithArray:pids]];
+    MFProductReqDelegate *delegate = [[MFProductReqDelegate alloc] init];
+    __block BOOL done = NO;
+    delegate.cb = ^(NSDictionary *map) {
+        if (!done) { done = YES; cb(map); }
+    };
+    req.delegate = delegate;
+    // 防 ARC 释放 delegate
+    objc_setAssociatedObject(req, "delegate", delegate, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [req start];
+    // 超时保护（8秒）
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 8 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        if (!done) { done = YES; cb(@{}); }
+    });
 }
 
 // IAP 记录
@@ -362,7 +389,7 @@ static void IAPRecord(NSString *pid) {
     }
 }
 
-// 扫描购买页（本地 + 在线双查询）
+// 扫描购买页（本地扫描 + SKProductsRequest 验证 + 在线查询，去重合并）
 void mfShowScanPage(void) {
     UIView *page = mfMakePage(@"扫描购买", YES);
     UILabel *st = [[UILabel alloc] initWithFrame:CGRectMake(16, g_mfCardH/2 - 20, g_mfCardW - 32, 40)];
@@ -373,67 +400,76 @@ void mfShowScanPage(void) {
     [page addSubview:st];
     mfPushPage(page);
 
-    // 同时执行本地扫描 + 在线查询
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        NSArray *localPIDs = mfScanLocalProductIDs();
+        // 1. 本地扫描：提取所有 com.xxx.xxx 格式字符串
+        NSArray *localCandidates = mfScanLocalProductIDs();
+        mfLog(@"scan local candidates: %d", (int)localCandidates.count);
 
+        // 2. 在线查询
         mfFetchIAPList(^(NSArray *onlineItems, NSString *err) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [st removeFromSuperview];
+            NSMutableDictionary *onlineMap = [NSMutableDictionary dictionary]; // pid -> price
+            for (NSDictionary *item in onlineItems) {
+                if (item[@"pid"]) onlineMap[item[@"pid"]] = item[@"price"] ?: @"?";
+            }
 
-                // 合并：本地 PID 去重，排除在线已有的
-                NSMutableSet *onlinePIDs = [NSMutableSet set];
-                NSMutableArray *merged = [NSMutableArray array];
-                // 在线结果放前面（带价格）
-                for (NSDictionary *item in onlineItems) {
-                    [merged addObject:item];
-                    if (item[@"pid"]) [onlinePIDs addObject:item[@"pid"]];
-                }
-                // 本地结果追加（无价格，标记来源）
-                for (NSString *pid in localPIDs) {
-                    if (![onlinePIDs containsObject:pid]) {
-                        [merged addObject:@{@"pid": pid, @"price": @"本地扫描", @"local": @YES}];
+            // 3. 本地候选中排除在线已有的，剩下的用 SKProductsRequest 验证
+            NSMutableArray *toVerify = [NSMutableArray array];
+            for (NSString *pid in localCandidates) {
+                if (!onlineMap[pid]) [toVerify addObject:pid];
+            }
+
+            mfQueryLocalPrices(toVerify, ^(NSDictionary *verifiedPrices) {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [st removeFromSuperview];
+
+                    // 4. 合并：在线结果 + SKProductsRequest 验证通过的本地结果
+                    NSMutableArray *merged = [NSMutableArray array];
+                    for (NSDictionary *item in onlineItems) {
+                        [merged addObject:@{@"pid": item[@"pid"], @"price": item[@"price"] ?: @"?", @"src": @"在线"}];
                     }
-                }
+                    // verifiedPrices 里的是 Apple 确认可购买的 PID
+                    for (NSString *pid in verifiedPrices) {
+                        [merged addObject:@{@"pid": pid, @"price": verifiedPrices[pid], @"src": @"本地"}];
+                    }
 
-                if (merged.count == 0) {
-                    UILabel *e = [[UILabel alloc] initWithFrame:CGRectMake(16, 100, g_mfCardW - 32, 40)];
-                    e.text = @"未找到 IAP 产品"; e.textAlignment = NSTextAlignmentCenter;
-                    e.textColor = [UIColor secondaryLabelColor]; [page addSubview:e]; return;
-                }
+                    if (merged.count == 0) {
+                        UILabel *e = [[UILabel alloc] initWithFrame:CGRectMake(16, 100, g_mfCardW - 32, 40)];
+                        e.text = @"未找到 IAP 产品"; e.textAlignment = NSTextAlignmentCenter;
+                        e.textColor = [UIColor secondaryLabelColor]; [page addSubview:e]; return;
+                    }
 
-                // 统计标签
-                UILabel *countLb = [[UILabel alloc] initWithFrame:CGRectMake(16, 46, g_mfCardW - 32, 20)];
-                countLb.text = [NSString stringWithFormat:@"在线 %lu  本地 %lu",
-                    (unsigned long)onlinePIDs.count, (unsigned long)(merged.count - onlinePIDs.count)];
-                countLb.font = [UIFont systemFontOfSize:11];
-                countLb.textColor = [UIColor tertiaryLabelColor];
-                [page addSubview:countLb];
+                    UILabel *countLb = [[UILabel alloc] initWithFrame:CGRectMake(16, 46, g_mfCardW - 32, 20)];
+                    countLb.text = [NSString stringWithFormat:@"在线 %lu  本地验证 %lu（共 %d）",
+                        (unsigned long)onlineItems.count, (unsigned long)verifiedPrices.count, (int)merged.count];
+                    countLb.font = [UIFont systemFontOfSize:11];
+                    countLb.textColor = [UIColor tertiaryLabelColor];
+                    [page addSubview:countLb];
 
-                UIScrollView *sv = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 70, g_mfCardW, g_mfCardH - 70)];
-                CGFloat y = 8;
-                for (NSDictionary *item in merged) {
-                    UIButton *row = [UIButton buttonWithType:UIButtonTypeSystem];
-                    row.frame = CGRectMake(12, y, g_mfCardW - 24, 46);
-                    BOOL isLocal = [item[@"local"] boolValue];
-                    row.backgroundColor = isLocal ?
-                        [UIColor tertiarySystemBackgroundColor] :
-                        [UIColor secondarySystemBackgroundColor];
-                    row.layer.cornerRadius = 12;
-                    [row setTitle:[NSString stringWithFormat:@"%@    %@", item[@"pid"], item[@"price"]] forState:UIControlStateNormal];
-                    row.titleLabel.font = [UIFont systemFontOfSize:13];
-                    row.titleLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
-                    [row setContentHorizontalAlignment:UIControlContentHorizontalAlignmentLeft];
-                    [row setTitleEdgeInsets:UIEdgeInsetsMake(0, 14, 0, 14)];
-                    objc_setAssociatedObject(row, "pid", item[@"pid"], OBJC_ASSOCIATION_RETAIN);
-                    [row addTarget:g_mfCtrl action:NSSelectorFromString(@"mfBuyProduct:") forControlEvents:UIControlEventTouchUpInside];
-                    [sv addSubview:row];
-                    y += 52;
-                }
-                sv.contentSize = CGSizeMake(g_mfCardW, y + 16);
-                [page addSubview:sv];
-                mfLog(@"scan: online=%lu local=%lu merged=%d",
-                    (unsigned long)onlinePIDs.count, (unsigned long)(merged.count - onlinePIDs.count), (int)merged.count);
+                    UIScrollView *sv = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 70, g_mfCardW, g_mfCardH - 70)];
+                    CGFloat y = 8;
+                    for (NSDictionary *item in merged) {
+                        UIButton *row = [UIButton buttonWithType:UIButtonTypeSystem];
+                        row.frame = CGRectMake(12, y, g_mfCardW - 24, 46);
+                        BOOL isLocal = [item[@"src"] isEqualToString:@"本地"];
+                        row.backgroundColor = isLocal ?
+                            [UIColor tertiarySystemBackgroundColor] :
+                            [UIColor secondarySystemBackgroundColor];
+                        row.layer.cornerRadius = 12;
+                        [row setTitle:[NSString stringWithFormat:@"%@    %@", item[@"pid"], item[@"price"]] forState:UIControlStateNormal];
+                        row.titleLabel.font = [UIFont systemFontOfSize:13];
+                        row.titleLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
+                        [row setContentHorizontalAlignment:UIControlContentHorizontalAlignmentLeft];
+                        [row setTitleEdgeInsets:UIEdgeInsetsMake(0, 14, 0, 14)];
+                        objc_setAssociatedObject(row, "pid", item[@"pid"], OBJC_ASSOCIATION_RETAIN);
+                        [row addTarget:g_mfCtrl action:NSSelectorFromString(@"mfBuyProduct:") forControlEvents:UIControlEventTouchUpInside];
+                        [sv addSubview:row];
+                        y += 52;
+                    }
+                    sv.contentSize = CGSizeMake(g_mfCardW, y + 16);
+                    [page addSubview:sv];
+                    mfLog(@"scan merged: online=%lu localVerified=%lu total=%d",
+                        (unsigned long)onlineItems.count, (unsigned long)verifiedPrices.count, (int)merged.count);
+                });
             });
         });
     });
