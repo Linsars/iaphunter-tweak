@@ -77,7 +77,8 @@ __attribute__((constructor)) static void init(void) {
                 [@"MIBundle_not_found" writeToFile:@"/var/mobile/Library/Preferences/spoof_debug.log" atomically:YES encoding:NSUTF8StringEncoding error:nil];
             }
         } else {
-            [NSString stringWithFormat:@"process=%@", processName writeToFile:@"/var/mobile/Library/Preferences/spoof_debug.log" atomically:YES encoding:NSUTF8StringEncoding error:nil];
+            NSString *msg = [NSString stringWithFormat:@"process=%@", processName];
+            [msg writeToFile:@"/var/mobile/Library/Preferences/spoof_debug.log" atomically:YES encoding:NSUTF8StringEncoding error:nil];
         }
     }
 }
