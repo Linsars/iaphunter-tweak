@@ -1251,6 +1251,9 @@ static void hook_tfReloadCVData(id self, SEL _cmd) {
     if (!objc_getClass("OASAppList")) return;
     UICollectionView *cv = (UICollectionView *)self;
     if (![cv isKindOfClass:[UICollectionView class]]) return;
+    // 只在有可见 cell 时触发（避免频繁调用）
+    if ([cv visibleCells].count == 0) return;
+    mfLog(@"TF sort: layoutSubviews triggered, visibleCells=%lu", (unsigned long)[cv visibleCells].count);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         mfSortVisibleCells(cv);
     });
