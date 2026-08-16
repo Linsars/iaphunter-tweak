@@ -1396,26 +1396,29 @@ static NSInteger mfTFAppSortPriority(id app);
 static void mfSortSectionApps(id section) {
     NSArray *apps = [section valueForKey:@"apps"];
     if (![apps isKindOfClass:[NSArray class]] || apps.count <= 1) return;
-    // dump 第一个 app 的属性
+    // 一次性 dump：所有 section 的 sectionType + app 数量 + 前2个app的属性
     static BOOL dumped = NO;
     if (!dumped) {
         dumped = YES;
-        // dump section 属性
-        mfLog(@"TF sort: section class=%@ sectionType=%ld",
+        mfLog(@"TF sort: section class=%@ sectionType=%ld apps=%lu respondsToSelector:setApps=%d",
             NSStringFromClass([section class]),
-            (long)[[section valueForKey:@"sectionType"] integerValue]);
-        // dump 前 3 个 app
-        for (NSInteger i = 0; i < MIN(3, apps.count); i++) {
+            (long)[[section valueForKey:@"sectionType"] integerValue],
+            (unsigned long)apps.count,
+            [section respondsToSelector:@selector(setApps:)]);
+        for (NSInteger i = 0; i < MIN(2, apps.count); i++) {
             id app = apps[i];
-            mfLog(@"TF sort: [%ld] %@ inviteStatus=%ld installed=%d tracking=%d",
+            id cb = [app valueForKey:@"currentBuild"];
+            id builds = [app valueForKey:@"builds"];
+            mfLog(@"TF sort: [%ld] %@ invite=%ld build=%@ builds=%ld isPublic=%d",
                 (long)i,
                 [app valueForKey:@"name"] ?: @"?",
                 (long)[[app valueForKey:@"inviteStatus"] integerValue],
-                [app respondsToSelector:@selector(isInstalled)] ? ((BOOL(*)(id, SEL))objc_msgSend)(app, @selector(isInstalled)) : -1,
-                [app respondsToSelector:@selector(isInstalledAndTrackingBuildGroup)] ? ((BOOL(*)(id, SEL))objc_msgSend)(app, @selector(isInstalledAndTrackingBuildGroup)) : -1);
+                cb ? @"Y" : @"nil",
+                [builds isKindOfClass:[NSArray class]] ? (long)((NSArray *)builds).count : -1,
+                [app respondsToSelector:@selector(isPublicLinkUser)] ? ((BOOL(*)(id, SEL))objc_msgSend)(app, @selector(isPublicLinkUser)) : -1);
         }
     }
-    // 排序：检查 currentBuild 的属性
+    // 排序
     NSMutableArray *sorted = [apps mutableCopy];
     [sorted sortUsingComparator:^NSComparisonResult(id a, id b) {
         NSInteger pa = mfTFAppSortPriority(a);
@@ -1423,7 +1426,12 @@ static void mfSortSectionApps(id section) {
         if (pa != pb) return pa < pb ? NSOrderedAscending : NSOrderedDescending;
         return NSOrderedSame;
     }];
-    [section setValue:sorted forKey:@"apps"];
+    // 用 setApps: 或 KVC 写回
+    if ([section respondsToSelector:@selector(setApps:)]) {
+        [section performSelector:@selector(setApps:) withObject:sorted];
+    } else {
+        [section setValue:sorted forKey:@"apps"];
+    }
     mfLog(@"TF sort: section sorted, %lu apps", (unsigned long)sorted.count);
 }
 
