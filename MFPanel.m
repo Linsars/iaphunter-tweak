@@ -1343,6 +1343,7 @@ static void mfInstallAutoApply(void) {
         Method m = class_getInstanceMethod(ws, sel);
         if (!m) continue;
         IMP orig = method_getImplementation(m);
+        SEL hookedSel = sel;
         method_setImplementation(m, imp_implementationWithBlock(^(id self, id arg) {
             mfLog(@"autoApply: %@ called", selName);
             // arg 可能是 NSDictionary 或 LSApplicationProxy
@@ -1356,7 +1357,7 @@ static void mfInstallAutoApply(void) {
             }
             mfLog(@"autoApply: %@ bid=%@", selName, bid ?: @"nil");
             mfAutoApplyAdd(bid);
-            ((void(*)(id, SEL, id))orig)(self, _cmd, arg);
+            ((void(*)(id, SEL, id))orig)(self, hookedSel, arg);
         }));
         mfLog(@"autoApply: %@ hooked", selName);
     }
@@ -1365,7 +1366,7 @@ static void mfInstallAutoApply(void) {
     Method didInstallM = class_getInstanceMethod(ws, didInstallSel);
     if (didInstallM) {
         IMP didInstallOrig = method_getImplementation(didInstallM);
-        IMP didInstallOrigRef = didInstallOrig; // 避免变量名冲突
+        SEL didInstallSel = NSSelectorFromString(@"didInstallApplications:");
         method_setImplementation(didInstallM, imp_implementationWithBlock(^(id self, NSArray *apps) {
             mfLog(@"autoApply: didInstallApplications called, count=%lu", (unsigned long)apps.count);
             for (id app in apps) {
@@ -1378,7 +1379,7 @@ static void mfInstallAutoApply(void) {
                 mfLog(@"autoApply: didInstall bid=%@", bid ?: @"nil");
                 mfAutoApplyAdd(bid);
             }
-            ((void(*)(id, SEL, NSArray *))didInstallOrigRef)(self, _cmd, apps);
+            ((void(*)(id, SEL, NSArray *))didInstallOrig)(self, didInstallSel, apps);
         }));
         mfLog(@"autoApply: didInstallApplications hooked");
     }
