@@ -1209,6 +1209,18 @@ static NSString *mfFindButtonTitle(UIView *view) {
     return nil;
 }
 
+static NSString *mfFindLabelText(UIView *view) {
+    for (UIView *sub in view.subviews) {
+        if ([sub isKindOfClass:[UILabel class]]) {
+            NSString *text = ((UILabel *)sub).text;
+            if (text.length > 0) return text;
+        }
+        NSString *found = mfFindLabelText(sub);
+        if (found) return found;
+    }
+    return nil;
+}
+
 static void mfSortVisibleCells(UICollectionView *cv) {
     if (!cv) return;
     NSInteger sections = [cv numberOfSections];
@@ -1220,13 +1232,30 @@ static void mfSortVisibleCells(UICollectionView *cv) {
             NSIndexPath *ip = [NSIndexPath indexPathForItem:i inSection:s];
             UICollectionViewCell *cell = [cv cellForItemAtIndexPath:ip];
             if (!cell) continue;
+            // 方式1: 递归找按钮
             NSString *btnTitle = mfFindButtonTitle(cell.contentView);
+            // 方式2: accessibilityLabel
+            NSString *axLabel = cell.accessibilityLabel ?: @"";
+            // 方式3: 递归找所有 UILabel 文字
+            NSString *labelText = mfFindLabelText(cell.contentView);
             NSInteger priority = 3;
             if (btnTitle) {
                 mfLog(@"TF sort: cell[%ld] button='%@'", (long)i, btnTitle);
                 if ([btnTitle containsString:@"更新"] || [btnTitle caseInsensitiveCompare:@"Update"] == NSOrderedSame) priority = 0;
                 else if ([btnTitle containsString:@"打开"] || [btnTitle caseInsensitiveCompare:@"Open"] == NSOrderedSame) priority = 1;
                 else if ([btnTitle containsString:@"安装"] || [btnTitle caseInsensitiveCompare:@"Install"] == NSOrderedSame) priority = 2;
+            } else if (axLabel.length > 0) {
+                mfLog(@"TF sort: cell[%ld] ax='%@'", (long)i, axLabel);
+                if ([axLabel containsString:@"更新"] || [axLabel caseInsensitiveCompare:@"Update"] == NSOrderedSame) priority = 0;
+                else if ([axLabel containsString:@"打开"] || [axLabel caseInsensitiveCompare:@"Open"] == NSOrderedSame) priority = 1;
+                else if ([axLabel containsString:@"安装"] || [axLabel caseInsensitiveCompare:@"Install"] == NSOrderedSame) priority = 2;
+            } else if (labelText) {
+                mfLog(@"TF sort: cell[%ld] label='%@'", (long)i, labelText);
+                if ([labelText containsString:@"更新"]) priority = 0;
+                else if ([labelText containsString:@"打开"]) priority = 1;
+                else if ([labelText containsString:@"安装"]) priority = 2;
+            } else {
+                mfLog(@"TF sort: cell[%ld] no button/ax/label found", (long)i);
             }
             [entries addObject:@{@"p": @(priority), @"ip": ip}];
         }
