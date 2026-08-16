@@ -1197,6 +1197,7 @@ static void mfInstallTestFlightBypass(void) {
 static IMP orig_setDelegate;
 static IMP orig_appListDidReload;
 static Class g_tfDelegateClass = nil;
+static void hook_appListDidReload(id self, SEL _cmd, id appList); // 前向声明
 
 // hook setDelegate: 找到 delegate 类
 static void hook_oasSetDelegate(id self, SEL _cmd, id delegate) {
