@@ -1382,42 +1382,50 @@ static void mfFindPriorityInView(UIView *view, NSInteger *priority) {
 static IMP orig_updateAppsListCallback;
 
 static void hook_updateAppsListCallback(id self, SEL _cmd, BOOL changed, NSArray *fullSections, NSArray *finalSections, id changes) {
-    mfLog(@"TF sort: updateAppsListCallback called, changed=%d", changed);
+    mfLog(@"TF sort: updateAppsListCallback changed=%d full=%lu final=%lu", changed, (unsigned long)fullSections.count, (unsigned long)finalSections.count);
+    if (mfPrefBool(@"mfTFSortOptimize", NO)) {
+        for (id section in fullSections) mfSortSectionApps(section);
+        for (id section in finalSections) mfSortSectionApps(section);
+    }
     if (orig_updateAppsListCallback) ((void(*)(id, SEL, BOOL, NSArray *, NSArray *, id))orig_updateAppsListCallback)(self, _cmd, changed, fullSections, finalSections, changes);
 }
 
-// 尝试 hook _apps 属性 setter
-static IMP orig_setApps;
-static void hook_setApps(id self, SEL _cmd, NSArray *apps) {
-    mfLog(@"TF sort: setApps called, count=%lu", (unsigned long)apps.count);
-    // 检查 app 对象的属性
-    if (apps.count > 0) {
-        id firstApp = apps[0];
-        mfLog(@"TF sort: firstApp class=%@", NSStringFromClass([firstApp class]));
-        mfLog(@"TF sort: firstApp respondsToSelector:needsUpdate=%d", [firstApp respondsToSelector:@selector(needsUpdate)]);
-        mfLog(@"TF sort: firstApp respondsToSelector:isInstalled=%d", [firstApp respondsToSelector:@selector(isInstalled)]);
-        mfLog(@"TF sort: firstApp respondsToSelector:actionTitle=%d", [firstApp respondsToSelector:@selector(actionTitle)]);
-        if ([firstApp respondsToSelector:@selector(needsUpdate)]) {
-            mfLog(@"TF sort: firstApp.needsUpdate=%d", ((BOOL(*)(id, SEL))objc_msgSend)(firstApp, @selector(needsUpdate)));
-        }
-        if ([firstApp respondsToSelector:@selector(isInstalled)]) {
-            mfLog(@"TF sort: firstApp.isInstalled=%d", ((BOOL(*)(id, SEL))objc_msgSend)(firstApp, @selector(isInstalled)));
-        }
-        if ([firstApp respondsToSelector:@selector(actionTitle)]) {
-            NSString *title = [firstApp performSelector:@selector(actionTitle)];
-            mfLog(@"TF sort: firstApp.actionTitle=%@", title ?: @"nil");
-        }
-        // 列出所有属性
-        unsigned int count;
-        objc_property_t *props = class_copyPropertyList([firstApp class], &count);
-        mfLog(@"TF sort: firstApp has %u properties", count);
-        for (unsigned int i = 0; i < MIN(count, 20); i++) {
+// OASAppListSection 排序：重排 _apps 数组
+static void mfSortSectionApps(id section) {
+    NSArray *apps = [section valueForKey:@"apps"];
+    if (![apps isKindOfClass:[NSArray class]] || apps.count <= 1) return;
+    // dump 第一个 app 的属性
+    static BOOL dumped = NO;
+    if (!dumped) {
+        dumped = YES;
+        id first = apps[0];
+        mfLog(@"TF sort: firstApp class=%@", NSStringFromClass([first class]));
+        mfLog(@"TF sort: needsUpdate=%d isInstalled=%d actionTitle=%@",
+            [first respondsToSelector:@selector(needsUpdate)],
+            [first respondsToSelector:@selector(isInstalled)],
+            [first respondsToSelector:@selector(actionTitle)] ? [first performSelector:@selector(actionTitle)] : @"nil");
+        unsigned int pc;
+        objc_property_t *props = class_copyPropertyList([first class], &pc);
+        mfLog(@"TF sort: %u properties", pc);
+        for (unsigned int i = 0; i < MIN(pc, 30); i++) {
             const char *name = property_getName(props[i]);
-            mfLog(@"TF sort:   property: %s", name);
+            mfLog(@"TF sort:   %s", name);
         }
         free(props);
     }
-    if (orig_setApps) ((void(*)(id, SEL, NSArray *))orig_setApps)(self, _cmd, apps);
+    // 排序
+    NSMutableArray *sorted = [apps mutableCopy];
+    [sorted sortUsingComparator:^NSComparisonResult(id a, id b) {
+        NSInteger pa = 3, pb = 3;
+        if ([a respondsToSelector:@selector(needsUpdate)] && ((BOOL(*)(id, SEL))objc_msgSend)(a, @selector(needsUpdate))) pa = 0;
+        else if ([a respondsToSelector:@selector(isInstalled)] && ((BOOL(*)(id, SEL))objc_msgSend)(a, @selector(isInstalled))) pa = 1;
+        if ([b respondsToSelector:@selector(needsUpdate)] && ((BOOL(*)(id, SEL))objc_msgSend)(b, @selector(needsUpdate))) pb = 0;
+        else if ([b respondsToSelector:@selector(isInstalled)] && ((BOOL(*)(id, SEL))objc_msgSend)(b, @selector(isInstalled))) pb = 1;
+        if (pa != pb) return pa < pb ? NSOrderedAscending : NSOrderedDescending;
+        return NSOrderedSame;
+    }];
+    [section setValue:sorted forKey:@"apps"];
+    mfLog(@"TF sort: section sorted, %lu apps", (unsigned long)sorted.count);
 }
 
 static void mfDumpViewHierarchy(UIView *view, int depth) {
@@ -1495,17 +1503,10 @@ static void mfInstallTestFlightSorting(void) {
             break;
         }
     }
-    // 方案1b: hook _apps setter 和 _updateAppsListCallback
+    // 方案1b: hook _updateAppsListCallback（数据模型回调，在 UI 更新前重排）
     for (NSString *clsName in candidates) {
         Class cls = objc_getClass([clsName UTF8String]);
         if (!cls) continue;
-        Method setAppsM = class_getInstanceMethod(cls, @selector(setApps:));
-        mfLog(@"TF sort: %@ setApps: method=%@", clsName, setAppsM ? @"found" : @"nil");
-        if (setAppsM) {
-            orig_setApps = method_getImplementation(setAppsM);
-            method_setImplementation(setAppsM, (IMP)hook_setApps);
-            mfLog(@"TF sort: %@ setApps: hooked!", clsName);
-        }
         Method updateM = class_getInstanceMethod(cls, NSSelectorFromString(@"_updateAppsListCallbackAppsDidChange:withfullSections:finalSections:changeInfo:"));
         mfLog(@"TF sort: %@ _updateAppsListCallback method=%@", clsName, updateM ? @"found" : @"nil");
         if (updateM) {
