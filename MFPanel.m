@@ -1392,6 +1392,7 @@ static void hook_updateAppsListCallback(id self, SEL _cmd, BOOL changed, NSArray
 }
 
 // OASAppListSection 排序：重排 _apps 数组
+static NSInteger mfTFAppSortPriority(id app);
 static void mfSortSectionApps(id section) {
     NSArray *apps = [section valueForKey:@"apps"];
     if (![apps isKindOfClass:[NSArray class]] || apps.count <= 1) return;
