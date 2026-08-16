@@ -1194,58 +1194,52 @@ static void mfInstallTestFlightBypass(void) {
 // ====== TestFlight 排序优化（数据加载完成后） ======
 // hook appListDidReloadList: — 数据完全加载后再排序
 
-static IMP orig_setDelegate;
-static IMP orig_appListDidReload;
-static IMP orig_appListDidChange;
-static Class g_tfDelegateClass = nil;
-static void hook_appListDidReload(id self, SEL _cmd, id appList);
-static void hook_appListDidChange(id self, SEL _cmd, id appList, id changes);
+// ====== TestFlight 排序优化 ======
+// hook _updateAppsListCallback，延迟 3 秒后读数据模型（此时数据已完全加载）
+
+static IMP orig_updateAppsListCallback;
+static id g_tfAppList = nil; // 保存 OASAppList 引用
+
 static void mfDumpAppListData(id appList);
-
-// hook setDelegate: 找到 delegate 类
-static void hook_oasSetDelegate(id self, SEL _cmd, id delegate) {
-    if (orig_setDelegate) ((void(*)(id, SEL, id))orig_setDelegate)(self, _cmd, delegate);
-    if (delegate && !g_tfDelegateClass) {
-        g_tfDelegateClass = [delegate class];
-        mfLog(@"TF sort: delegate class=%@", NSStringFromClass(g_tfDelegateClass));
-        // hook appListDidReloadList:
-        Method m1 = class_getInstanceMethod(g_tfDelegateClass, @selector(appListDidReloadList:));
-        mfLog(@"TF sort: appListDidReloadList: method=%@", m1 ? @"found" : @"nil");
-        if (m1) {
-            orig_appListDidReload = method_getImplementation(m1);
-            method_setImplementation(m1, (IMP)hook_appListDidReload);
-            mfLog(@"TF sort: appListDidReloadList: hooked!");
-        }
-        // hook appList:didChangeAppList:
-        Method m2 = class_getInstanceMethod(g_tfDelegateClass, @selector(appList:didChangeAppList:));
-        mfLog(@"TF sort: appList:didChangeAppList: method=%@", m2 ? @"found" : @"nil");
-        if (m2) {
-            orig_appListDidChange = method_getImplementation(m2);
-            method_setImplementation(m2, (IMP)hook_appListDidChange);
-            mfLog(@"TF sort: appList:didChangeAppList: hooked!");
-        }
-    }
-}
-
-// 数据完全加载后的回调 —— 读数据模型排序
-static void hook_appListDidReload(id self, SEL _cmd, id appList) {
-    mfLog(@"TF sort: appListDidReloadList called");
-    if (orig_appListDidReload) ((void(*)(id, SEL, id))orig_appListDidReload)(self, _cmd, appList);
+static void hook_updateAppsListCallback(id self, SEL _cmd, BOOL changed, NSArray *fullSections, NSArray *finalSections, id changes) {
+    if (orig_updateAppsListCallback) ((void(*)(id, SEL, BOOL, NSArray *, NSArray *, id))orig_updateAppsListCallback)(self, _cmd, changed, fullSections, finalSections, changes);
     if (!mfPrefBool(@"mfTFSortOptimize", NO)) return;
-    mfDumpAppListData(appList);
-}
-
-static void hook_appListDidChange(id self, SEL _cmd, id appList, id changes) {
-    mfLog(@"TF sort: appList:didChangeAppList: called");
-    if (orig_appListDidChange) ((void(*)(id, SEL, id, id))orig_appListDidChange)(self, _cmd, appList, changes);
-    if (!mfPrefBool(@"mfTFSortOptimize", NO)) return;
-    mfDumpAppListData(appList);
+    // 保存 appList 引用
+    g_tfAppList = self;
+    // 延迟 3 秒后读数据模型（数据完全加载后）
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            mfLog(@"TF sort: delayed dump after 3s");
+            mfDumpAppListData(g_tfAppList);
+        });
+    });
 }
 
 static void mfDumpAppListData(id appList) {
+    if (!appList) { mfLog(@"TF sort: appList is nil"); return; }
+    // 尝试多个属性名
     NSArray *sections = [appList valueForKey:@"sections"];
+    if (!sections) sections = [appList valueForKey:@"_sections"];
+    if (!sections) sections = [appList valueForKey:@"groupedSections"];
     if (![sections isKindOfClass:[NSArray class]]) {
-        mfLog(@"TF sort: sections is nil or not array");
+        mfLog(@"TF sort: sections not found, trying allApps");
+        NSArray *allApps = [appList valueForKey:@"allApps"];
+        if (!allApps) allApps = [appList valueForKey:@"_allApps"];
+        mfLog(@"TF sort: allApps=%@ count=%lu", allApps ? @"Y" : @"nil",
+            [allApps isKindOfClass:[NSArray class]] ? (unsigned long)((NSArray *)allApps).count : 0);
+        if ([allApps isKindOfClass:[NSArray class]] && ((NSArray *)allApps).count > 0) {
+            id first = ((NSArray *)allApps)[0];
+            mfLog(@"TF sort: first=%@ class=%@", [first valueForKey:@"name"] ?: @"?", NSStringFromClass([first class]));
+            id cb = [first valueForKey:@"currentBuild"];
+            mfLog(@"TF sort: currentBuild=%@", cb ? @"Y" : @"nil");
+            if (cb) {
+                mfLog(@"TF sort:   build class=%@ needsUpdate=%d isInstalled=%d",
+                    NSStringFromClass([cb class]),
+                    [cb respondsToSelector:@selector(needsUpdate)] ? ((BOOL(*)(id, SEL))objc_msgSend)(cb, @selector(needsUpdate)) : -1,
+                    [cb respondsToSelector:@selector(isInstalled)] ? ((BOOL(*)(id, SEL))objc_msgSend)(cb, @selector(isInstalled)) : -1);
+            }
+        }
         return;
     }
     mfLog(@"TF sort: %lu sections", (unsigned long)sections.count);
@@ -1254,28 +1248,24 @@ static void mfDumpAppListData(id appList) {
         if (![apps isKindOfClass:[NSArray class]] || apps.count == 0) continue;
         id first = apps[0];
         id cb = [first valueForKey:@"currentBuild"];
-        mfLog(@"TF sort: section apps=%lu first=%@ currentBuild=%@",
+        mfLog(@"TF sort: section apps=%lu first=%@ build=%@",
             (unsigned long)apps.count, [first valueForKey:@"name"] ?: @"?", cb ? @"Y" : @"nil");
-        if (cb) {
-            mfLog(@"TF sort:   needsUpdate=%d isInstalled=%d compatible=%d",
-                [cb respondsToSelector:@selector(needsUpdate)] ? ((BOOL(*)(id, SEL))objc_msgSend)(cb, @selector(needsUpdate)) : -1,
-                [cb respondsToSelector:@selector(isInstalled)] ? ((BOOL(*)(id, SEL))objc_msgSend)(cb, @selector(isInstalled)) : -1,
-                [cb respondsToSelector:@selector(compatible)] ? ((BOOL(*)(id, SEL))objc_msgSend)(cb, @selector(compatible)) : -1);
-        }
     }
 }
 
 static void mfInstallTestFlightSorting(void) {
     mfLog(@"TF sort: installing hooks");
-    // hook OASAppList setDelegate: 找到 delegate
-    Class oasClass = objc_getClass("OASAppList");
-    if (!oasClass) { mfLog(@"TF sort: OASAppList not found"); return; }
-    Method setDelM = class_getInstanceMethod(oasClass, @selector(setDelegate:));
-    mfLog(@"TF sort: setDelegate: method=%@", setDelM ? @"found" : @"nil");
-    if (setDelM) {
-        orig_setDelegate = method_getImplementation(setDelM);
-        method_setImplementation(setDelM, (IMP)hook_oasSetDelegate);
-        mfLog(@"TF sort: setDelegate: hooked");
+    NSArray *candidates = @[@"OASAppList", @"OASMainAppList", @"OASAppListGrouped"];
+    for (NSString *clsName in candidates) {
+        Class cls = objc_getClass([clsName UTF8String]);
+        if (!cls) continue;
+        Method m = class_getInstanceMethod(cls, NSSelectorFromString(@"_updateAppsListCallbackAppsDidChange:withfullSections:finalSections:changeInfo:"));
+        if (m) {
+            orig_updateAppsListCallback = method_getImplementation(m);
+            method_setImplementation(m, (IMP)hook_updateAppsListCallback);
+            mfLog(@"TF sort: %@ _updateAppsListCallback hooked!", clsName);
+            break;
+        }
     }
 }
 
