@@ -30,7 +30,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>限制 IAP工具箱 只在勾选的 App 内启用。白名单为空时对所有 App 生效。开启「自动添加」后，新安装的 App 自动加入白名单。</string>
+			<string>「自动添加」关闭时，仅在此处勾选的 App 内启用 IAP工具箱。</string>
 			<key>label</key>
 			<string>作用范围</string>
 		</dict>
