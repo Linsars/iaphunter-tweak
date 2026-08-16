@@ -153,20 +153,7 @@
 			<key>PostNotification</key>
 			<string>com.linsars.minisfix/ReloadPrefs</string>
 		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>default</key>
-			<false/>
-			<key>defaults</key>
-			<string>com.linsars.minisfix</string>
-			<key>key</key>
-			<string>mfTFSortOptimize</string>
-			<key>label</key>
-			<string>排序优化</string>
-			<key>PostNotification</key>
-			<string>com.linsars.minisfix/ReloadPrefs</string>
-		</dict>
+	
 	</array>
 	<key>title</key>
 	<string>IAP工具箱</string>

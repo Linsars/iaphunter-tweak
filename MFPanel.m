@@ -1191,78 +1191,6 @@ static void mfInstallTestFlightBypass(void) {
     swizzle(TFAppBuild, @selector(setExpirationDate:), (IMP)hook_tfSetExpirationDate, (IMP *)&orig_tfSetExpirationDate);
 }
 
-// ====== TestFlight 排序优化（数据加载完成后） ======
-// hook appListDidReloadList: — 数据完全加载后再排序
-
-// ====== TestFlight 排序优化 ======
-// hook _updateAppsListCallback，延迟 3 秒后读数据模型（此时数据已完全加载）
-
-static IMP orig_updateAppsListCallback;
-static id g_tfAppList = nil; // 保存 OASAppList 引用
-
-static void mfDumpAppListData(id appList);
-static void hook_updateAppsListCallback(id self, SEL _cmd, BOOL changed, NSArray *fullSections, NSArray *finalSections, id changes) {
-    if (orig_updateAppsListCallback) ((void(*)(id, SEL, BOOL, NSArray *, NSArray *, id))orig_updateAppsListCallback)(self, _cmd, changed, fullSections, finalSections, changes);
-    if (!mfPrefBool(@"mfTFSortOptimize", NO)) return;
-    // 保存 appList 引用
-    g_tfAppList = self;
-    // 延迟 3 秒后读数据模型（数据完全加载后）
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            mfLog(@"TF sort: delayed dump after 3s");
-            mfDumpAppListData(g_tfAppList);
-        });
-    });
-}
-
-static void mfDumpAppListData(id appList) {
-    if (!appList) { mfLog(@"TF sort: appList is nil"); return; }
-    mfLog(@"TF sort: appList class=%@", NSStringFromClass([appList class]));
-    NSArray *sections = [appList valueForKey:@"sections"];
-    if (!sections) sections = [appList valueForKey:@"_sections"];
-    if (![sections isKindOfClass:[NSArray class]]) {
-        mfLog(@"TF sort: sections not found");
-        return;
-    }
-    mfLog(@"TF sort: %lu sections", (unsigned long)sections.count);
-    for (NSInteger s = 0; s < MIN(3, sections.count); s++) {
-        id section = sections[s];
-        NSArray *apps = [section valueForKey:@"apps"];
-        if (![apps isKindOfClass:[NSArray class]] || apps.count == 0) continue;
-        mfLog(@"TF sort: section[%ld] apps=%lu", (long)s, (unsigned long)apps.count);
-        // 简化 dump：只打印第一个 app 的基本信息
-        if (apps.count > 0) {
-            id app = apps[0];
-            NSString *name = [app valueForKey:@"name"];
-            NSInteger invite = [[app valueForKey:@"inviteStatus"] integerValue];
-            id cb = [app valueForKey:@"currentBuild"];
-            id builds = [app valueForKey:@"builds"];
-            id installed = [app valueForKey:@"installedBundleModel"];
-            mfLog(@"TF sort:   first=%@ invite=%ld build=%@ builds=%@ installed=%@",
-                name ?: @"?", (long)invite, cb ? @"Y" : @"nil",
-                [builds isKindOfClass:[NSArray class]] ? @((unsigned long)((NSArray *)builds).count) : @"nil",
-                installed ? @"Y" : @"nil");
-        }
-    }
-}
-
-static void mfInstallTestFlightSorting(void) {
-    mfLog(@"TF sort: installing hooks");
-    NSArray *candidates = @[@"OASAppList", @"OASMainAppList", @"OASAppListGrouped"];
-    for (NSString *clsName in candidates) {
-        Class cls = objc_getClass([clsName UTF8String]);
-        if (!cls) continue;
-        Method m = class_getInstanceMethod(cls, NSSelectorFromString(@"_updateAppsListCallbackAppsDidChange:withfullSections:finalSections:changeInfo:"));
-        if (m) {
-            orig_updateAppsListCallback = method_getImplementation(m);
-            method_setImplementation(m, (IMP)hook_updateAppsListCallback);
-            mfLog(@"TF sort: %@ _updateAppsListCallback hooked!", clsName);
-            break;
-        }
-    }
-}
-
 // ====== 自动添加新安装 App 到白名单 ======
 // 监听 SpringBoard 的应用安装/注册通知
 
@@ -1378,8 +1306,6 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
         }
         // 禁止跑路
         if (mfPrefBool(@"mfTFExpiration", YES)) {
-            // expirationDate 和 setExpirationDate 的 hook 在 mfInstallTestFlightBypass 里
-            // 如果兼容性增强已关，需要单独装
             if (!mfPrefBool(@"mfTFCompatible", YES)) {
                 Class TFAppBuild = objc_getClass("TFAppBuild");
                 if (TFAppBuild) {
@@ -1387,10 +1313,6 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
                     swizzle(TFAppBuild, @selector(setExpirationDate:), (IMP)hook_tfSetExpirationDate, (IMP *)&orig_tfSetExpirationDate);
                 }
             }
-        }
-        // 排序优化
-        if (mfPrefBool(@"mfTFSortOptimize", YES)) {
-            mfInstallTestFlightSorting();
         }
 
         // 自动添加新 App 到白名单（始终注册通知，运行时检查开关）
