@@ -1435,6 +1435,7 @@ static void mfSortSectionApps(id section) {
             id installedBundle = [app valueForKey:@"installedBundleModel"];
             mfLog(@"TF sort:   installedBundleModel=%@", installedBundle ? NSStringFromClass([installedBundle class]) : @"nil");
             // 检查所有 BOOL 方法
+            unsigned int count;
             Method *methods = class_copyMethodList([app class], &count);
             if (methods) {
                 for (unsigned int m = 0; m < count; m++) {
