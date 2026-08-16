@@ -1420,27 +1420,7 @@ static void hook_setApps(id self, SEL _cmd, NSArray *apps) {
     if (orig_setApps) ((void(*)(id, SEL, NSArray *))orig_setApps)(self, _cmd, apps);
 }
 
-static void mfInstallTestFlightSorting(void) {
 static void mfDumpViewHierarchy(UIView *view, int depth) {
-    NSMutableString *indent = [NSMutableString string];
-    for (int i = 0; i < depth; i++) [indent appendString:@"  "];
-    NSString *cls = NSStringFromClass([view class]);
-    NSString *title = @"";
-    if ([view isKindOfClass:[UIButton class]]) {
-        title = [((UIButton *)view) titleForState:UIControlStateNormal] ?: @"";
-    }
-    NSString *axLabel = [view respondsToSelector:@selector(accessibilityLabel)] ? [view accessibilityLabel] : @"";
-    NSString *axValue = [view respondsToSelector:@selector(accessibilityValue)] ? [view accessibilityValue] : @"";
-    NSString *axID = [view respondsToSelector:@selector(accessibilityIdentifier)] ? [view accessibilityIdentifier] : @"";
-    if ([view isKindOfClass:[UIButton class]] || axLabel.length > 0 || axValue.length > 0 || axID.length > 0 || [cls containsString:@"Button"] || [cls containsString:@"Label"] || [cls containsString:@"Text"]) {
-        mfLog(@"TF sort: %@<%@> title='%@' ax='%@' axVal='%@' axID='%@'", indent, cls, title, axLabel, axValue, axID);
-    }
-    for (UIView *sub in view.subviews) {
-        mfDumpViewHierarchy(sub, depth + 1);
-    }
-}
-
-static void mfTrySortCollectionView(UICollectionView *cv) {
     if (!cv) return;
     NSInteger sections = [cv numberOfSections];
     mfLog(@"TF sort: mfTrySortCollectionView sections=%ld", (long)sections);
