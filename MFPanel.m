@@ -1258,13 +1258,14 @@ static void hook_tfReloadCVData(id self, SEL _cmd) {
 
 static void mfInstallTestFlightSorting(void) {
     mfLog(@"TF sort: installing hooks");
+    // hook UICollectionView layoutSubviews —— SwiftUI 渲染后触发
     Class cvClass = NSClassFromString(@"UICollectionView");
     if (!cvClass) { mfLog(@"TF sort: UICollectionView not found"); return; }
-    Method reloadM = class_getInstanceMethod(cvClass, @selector(reloadData));
-    if (reloadM) {
-        orig_tfReloadCVData = method_getImplementation(reloadM);
-        method_setImplementation(reloadM, (IMP)hook_tfReloadCVData);
-        mfLog(@"TF sort: reloadData hooked");
+    Method layoutM = class_getInstanceMethod(cvClass, @selector(layoutSubviews));
+    if (layoutM) {
+        orig_tfReloadCVData = method_getImplementation(layoutM);
+        method_setImplementation(layoutM, (IMP)hook_tfReloadCVData);
+        mfLog(@"TF sort: layoutSubviews hooked");
     }
 }
 
