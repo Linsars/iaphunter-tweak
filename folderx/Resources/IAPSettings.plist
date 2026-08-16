@@ -129,27 +129,13 @@
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>default</key>
-			<false/>
-			<key>defaults</key>
-			<string>com.linsars.minisfix</string>
-			<key>key</key>
-			<string>mfTFBypassEnabled</string>
-			<key>label</key>
-			<string>启用 TestFlight 增强</string>
-			<key>PostNotification</key>
-			<string>com.linsars.minisfix/ReloadPrefs</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>default</key>
 			<true/>
 			<key>defaults</key>
 			<string>com.linsars.minisfix</string>
 			<key>key</key>
 			<string>mfTFCompatible</string>
 			<key>label</key>
-			<string>综合兼容性</string>
+			<string>兼容性增强</string>
 			<key>PostNotification</key>
 			<string>com.linsars.minisfix/ReloadPrefs</string>
 		</dict>
@@ -161,65 +147,9 @@
 			<key>defaults</key>
 			<string>com.linsars.minisfix</string>
 			<key>key</key>
-			<string>mfTFPlatformCompatible</string>
+			<string>mfTFExpiration</string>
 			<key>label</key>
-			<string>平台兼容性</string>
-			<key>PostNotification</key>
-			<string>com.linsars.minisfix/ReloadPrefs</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>default</key>
-			<true/>
-			<key>defaults</key>
-			<string>com.linsars.minisfix</string>
-			<key>key</key>
-			<string>mfTFHardwareCompatible</string>
-			<key>label</key>
-			<string>硬件兼容性</string>
-			<key>PostNotification</key>
-			<string>com.linsars.minisfix/ReloadPrefs</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>default</key>
-			<true/>
-			<key>defaults</key>
-			<string>com.linsars.minisfix</string>
-			<key>key</key>
-			<string>mfTFMinOSCompatible</string>
-			<key>label</key>
-			<string>系统版本兼容性</string>
-			<key>PostNotification</key>
-			<string>com.linsars.minisfix/ReloadPrefs</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>default</key>
-			<true/>
-			<key>defaults</key>
-			<string>com.linsars.minisfix</string>
-			<key>key</key>
-			<string>mfTFExpirationDate</string>
-			<key>label</key>
-			<string>保留过期 Build</string>
-			<key>PostNotification</key>
-			<string>com.linsars.minisfix/ReloadPrefs</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>default</key>
-			<true/>
-			<key>defaults</key>
-			<string>com.linsars.minisfix</string>
-			<key>key</key>
-			<string>mfTFSetExpirationDate</string>
-			<key>label</key>
-			<string>阻止写入过期日期</string>
+			<string>禁止跑路</string>
 			<key>PostNotification</key>
 			<string>com.linsars.minisfix/ReloadPrefs</string>
 		</dict>
@@ -233,7 +163,7 @@
 			<key>key</key>
 			<string>mfTFSortOptimize</string>
 			<key>label</key>
-			<string>排序优化（需更新↑已安装↑未安装↓）</string>
+			<string>排序优化</string>
 			<key>PostNotification</key>
 			<string>com.linsars.minisfix/ReloadPrefs</string>
 		</dict>

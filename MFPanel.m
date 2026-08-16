@@ -1148,8 +1148,8 @@ static void swizzle(Class cls, SEL sel, IMP newImp, IMP *origOut) {
 }
 
 // ====== TestFlight 增强 ======
-// hook TFAppBuild 的兼容性检查，每个开关独立控制
-// 排序：需更新↑已安装↑未安装↓
+// 兼容性增强（mfTFCompatible）：compatible/platformCompatible/hardwareCompatible/minOSCompatible
+// 禁止跑路（mfTFExpiration）：expirationDate/setExpirationDate
 
 static BOOL (*orig_tfCompatible)(id self, SEL _cmd);
 static BOOL (*orig_tfPlatformCompatible)(id self, SEL _cmd);
@@ -1162,19 +1162,19 @@ static BOOL hook_tfCompatible(id self, SEL _cmd) {
     return mfPrefBool(@"mfTFCompatible", YES) ? YES : orig_tfCompatible ? orig_tfCompatible(self, _cmd) : YES;
 }
 static BOOL hook_tfPlatformCompatible(id self, SEL _cmd) {
-    return mfPrefBool(@"mfTFPlatformCompatible", YES) ? YES : orig_tfPlatformCompatible ? orig_tfPlatformCompatible(self, _cmd) : YES;
+    return mfPrefBool(@"mfTFCompatible", YES) ? YES : orig_tfPlatformCompatible ? orig_tfPlatformCompatible(self, _cmd) : YES;
 }
 static BOOL hook_tfHardwareCompatible(id self, SEL _cmd) {
-    return mfPrefBool(@"mfTFHardwareCompatible", YES) ? YES : orig_tfHardwareCompatible ? orig_tfHardwareCompatible(self, _cmd) : YES;
+    return mfPrefBool(@"mfTFCompatible", YES) ? YES : orig_tfHardwareCompatible ? orig_tfHardwareCompatible(self, _cmd) : YES;
 }
 static BOOL hook_tfMinOSCompatible(id self, SEL _cmd) {
-    return mfPrefBool(@"mfTFMinOSCompatible", YES) ? YES : orig_tfMinOSCompatible ? orig_tfMinOSCompatible(self, _cmd) : YES;
+    return mfPrefBool(@"mfTFCompatible", YES) ? YES : orig_tfMinOSCompatible ? orig_tfMinOSCompatible(self, _cmd) : YES;
 }
 static NSDate *hook_tfExpirationDate(id self, SEL _cmd) {
-    return mfPrefBool(@"mfTFExpirationDate", YES) ? [NSDate distantFuture] : orig_tfExpirationDate ? orig_tfExpirationDate(self, _cmd) : [NSDate distantFuture];
+    return mfPrefBool(@"mfTFExpiration", YES) ? [NSDate distantFuture] : orig_tfExpirationDate ? orig_tfExpirationDate(self, _cmd) : [NSDate distantFuture];
 }
 static void hook_tfSetExpirationDate(id self, SEL _cmd, NSDate *date) {
-    if (mfPrefBool(@"mfTFSetExpirationDate", YES)) return; // 阻止写入过期
+    if (mfPrefBool(@"mfTFExpiration", YES)) return;
     if (orig_tfSetExpirationDate) orig_tfSetExpirationDate(self, _cmd, date);
 }
 
@@ -1192,40 +1192,77 @@ static void mfInstallTestFlightBypass(void) {
 }
 
 // ====== TestFlight 排序优化 ======
-// hook OASAppList 的 sortApp1:andApp2: 方法
-// 优先级：需更新(0) > 已安装(1) > 未安装(2)
+// hook UITableView reloadData，在 TestFlight 列表重载后按按钮状态排序
+// 优先级：更新(0) > 打开(1) > 安装(2)
 
 static IMP orig_tfReloadData;
-static NSInteger (*orig_sortApp)(id self, SEL _cmd, id app1, id app2);
-static NSInteger mfTFAppPriority(id app);
 
-static NSInteger hook_sortApp(id self, SEL _cmd, id app1, id app2) {
-    if (!mfPrefBool(@"mfTFSortOptimize", YES)) {
-        return orig_sortApp ? orig_sortApp(self, _cmd, app1, app2) : NSOrderedSame;
+static NSInteger mfTFCellPriority(UITableViewCell *cell) {
+    // 遍历 cell.contentView.subviews 找按钮，根据按钮标题判断状态
+    for (UIView *v in cell.contentView.subviews) {
+        if ([v isKindOfClass:[UIButton class]]) {
+            NSString *title = [((UIButton *)v) titleForState:UIControlStateNormal] ?: @"";
+            if ([title containsString:@"更新"] || [title caseInsensitiveCompare:@"Update"] == NSOrderedSame) return 0;
+            if ([title containsString:@"打开"] || [title caseInsensitiveCompare:@"Open"] == NSOrderedSame) return 1;
+            if ([title containsString:@"安装"] || [title caseInsensitiveCompare:@"Install"] == NSOrderedSame) return 2;
+        }
     }
-    NSInteger p1 = mfTFAppPriority(app1);
-    NSInteger p2 = mfTFAppPriority(app2);
-    if (p1 != p2) return p1 < p2 ? NSOrderedAscending : NSOrderedDescending;
-    // 同优先级用原始排序
-    return orig_sortApp ? orig_sortApp(self, _cmd, app1, app2) : NSOrderedSame;
+    // 也检查 accessoryView
+    if (cell.accessoryView && [cell.accessoryView isKindOfClass:[UIButton class]]) {
+        NSString *title = [((UIButton *)cell.accessoryView) titleForState:UIControlStateNormal] ?: @"";
+        if ([title containsString:@"更新"] || [title caseInsensitiveCompare:@"Update"] == NSOrderedSame) return 0;
+        if ([title containsString:@"打开"] || [title caseInsensitiveCompare:@"Open"] == NSOrderedSame) return 1;
+        if ([title containsString:@"安装"] || [title caseInsensitiveCompare:@"Install"] == NSOrderedSame) return 2;
+    }
+    return 3; // 未知状态放最后
+}
+
+static void hook_tfReloadData(id self, SEL _cmd) {
+    if (orig_tfReloadData) ((void(*)(id, SEL))orig_tfReloadData)(self, _cmd);
+    if (!mfPrefBool(@"mfTFSortOptimize", YES)) return;
+    UITableView *tv = (UITableView *)self;
+    if (![tv isKindOfClass:[UITableView class]]) return;
+    // 只在 TestFlight 进程内生效
+    if (!objc_getClass("OASAppList")) return;
+    // 获取所有 section 的可见 cells
+    NSInteger sections = [tv numberOfSections];
+    for (NSInteger s = 0; s < sections; s++) {
+        NSInteger rows = [tv numberOfRowsInSection:s];
+        if (rows <= 1) continue;
+        // 收集 (priority, indexPath, cell)
+        NSMutableArray *entries = [NSMutableArray array];
+        for (NSInteger r = 0; r < rows; r++) {
+            NSIndexPath *ip = [NSIndexPath indexPathForRow:r inSection:s];
+            UITableViewCell *cell = [tv cellForRowAtIndexPath:ip];
+            if (!cell) continue;
+            NSInteger priority = mfTFCellPriority(cell);
+            [entries addObject:@{@"p": @(priority), @"ip": ip, @"cell": cell}];
+        }
+        // 检查是否需要重排
+        BOOL needSort = NO;
+        for (NSInteger i = 1; i < entries.count; i++) {
+            if ([entries[i][@"p"] integerValue] < [entries[i-1][@"p"] integerValue]) {
+                needSort = YES;
+                break;
+            }
+        }
+        if (!needSort) continue;
+        // 按优先级排序
+        [entries sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+            return [a[@"p"] compare:b[@"p"]];
+        }];
+        // 重新加载 section 以应用排序
+        [tv reloadSections:[NSIndexSet indexSetWithIndex:s] withRowAnimation:UITableViewRowAnimationNone];
+    }
 }
 
 static void mfInstallTestFlightSorting(void) {
-    Class oasAppList = objc_getClass("OASAppList");
-    if (!oasAppList) return;
-    Method m = class_getInstanceMethod(oasAppList, NSSelectorFromString(@"sortApp1:andApp2:"));
+    Class tvClass = NSClassFromString(@"UITableView");
+    if (!tvClass) return;
+    Method m = class_getInstanceMethod(tvClass, @selector(reloadData));
     if (!m) return;
-    orig_sortApp = (void *)method_getImplementation(m);
-    method_setImplementation(m, (IMP)hook_sortApp);
-}
-
-static NSInteger mfTFAppPriority(id app) {
-    // 0=需更新, 1=已安装, 2=未安装
-    SEL updateSel = NSSelectorFromString(@"needsUpdate");
-    SEL installedSel = NSSelectorFromString(@"isInstalled");
-    if ([app respondsToSelector:updateSel] && ((BOOL(*)(id, SEL))objc_msgSend)(app, updateSel)) return 0;
-    if ([app respondsToSelector:installedSel] && ((BOOL(*)(id, SEL))objc_msgSend)(app, installedSel)) return 1;
-    return 2;
+    orig_tfReloadData = method_getImplementation(m);
+    method_setImplementation(m, (IMP)hook_tfReloadData);
 }
 
 // ====== 自动添加新安装 App 到白名单 ======
@@ -1295,10 +1332,23 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
         mfLog(@"=== MinisFix ctor ENTER pid=%d app=%@ ===", getpid(), bid);
 
         // TestFlight 增强（独立于 IAP工具箱，始终检查）
-        if (mfPrefBool(@"mfTFBypassEnabled", NO)) {
+        // 兼容性增强
+        if (mfPrefBool(@"mfTFCompatible", YES)) {
             mfInstallTestFlightBypass();
         }
-        // TestFlight 排序优化
+        // 禁止跑路
+        if (mfPrefBool(@"mfTFExpiration", YES)) {
+            // expirationDate 和 setExpirationDate 的 hook 在 mfInstallTestFlightBypass 里
+            // 如果兼容性增强已关，需要单独装
+            if (!mfPrefBool(@"mfTFCompatible", YES)) {
+                Class TFAppBuild = objc_getClass("TFAppBuild");
+                if (TFAppBuild) {
+                    swizzle(TFAppBuild, @selector(expirationDate), (IMP)hook_tfExpirationDate, (IMP *)&orig_tfExpirationDate);
+                    swizzle(TFAppBuild, @selector(setExpirationDate:), (IMP)hook_tfSetExpirationDate, (IMP *)&orig_tfSetExpirationDate);
+                }
+            }
+        }
+        // 排序优化
         if (mfPrefBool(@"mfTFSortOptimize", YES)) {
             mfInstallTestFlightSorting();
         }
