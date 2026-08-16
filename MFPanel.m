@@ -4,7 +4,6 @@
 #import "MFPanel.h"
 #import <CommonCrypto/CommonCrypto.h>
 #import <StoreKit/StoreKit.h>
-#import <Vision/Vision.h>
 
 // ====== 全局状态（定义在此，extern 在 MFPanel.h） ======
 UIView *g_mfPanelOverlay = nil;
@@ -1192,159 +1191,70 @@ static void mfInstallTestFlightBypass(void) {
     swizzle(TFAppBuild, @selector(setExpirationDate:), (IMP)hook_tfSetExpirationDate, (IMP *)&orig_tfSetExpirationDate);
 }
 
-// ====== TestFlight 排序优化（非侵入式） ======
-// 不干扰 TF 内部排序流程，只在 UICollectionView reloadData 之后
-// 通过递归查找 cell 中的按钮标题判断状态
+// ====== TestFlight 排序优化（数据加载完成后） ======
+// hook appListDidReloadList: — 数据完全加载后再排序
 
-static IMP orig_tfReloadCVData;
+static IMP orig_setDelegate;
+static IMP orig_appListDidReload;
+static Class g_tfDelegateClass = nil;
 
-// Vision OCR 识别文字
-static void mfRecognizeText(UIImage *image, void (^cb)(NSString *)) {
-    if (!image) { cb(nil); return; }
-    VNImageRequestHandler *handler = [[VNImageRequestHandler alloc] initWithCGImage:image.CGImage options:@{}];
-    VNRecognizeTextRequest *req = [[VNRecognizeTextRequest alloc] initWithCompletionHandler:^(VNRecognizeTextRequest *request, NSError *error) {
-        if (error) { cb(nil); return; }
-        NSArray *results = request.results;
-        if (results.count == 0) { cb(nil); return; }
-        VNRecognizedTextObservation *obs = results[0];
-        VNRecognizedText *top = [obs topCandidates:1].firstObject;
-        cb(top.string);
-    }];
-    req.recognitionLevel = VNRequestTextRecognitionLevelFast;
-    [handler performRequests:@[req] error:nil];
-}
-
-static NSString *mfFindButtonTitle(UIView *view) {
-    for (UIView *sub in view.subviews) {
-        if ([sub isKindOfClass:[UIButton class]]) {
-            NSString *title = [((UIButton *)sub) titleForState:UIControlStateNormal];
-            if (title.length > 0) return title;
+// hook setDelegate: 找到 delegate 类
+static void hook_oasSetDelegate(id self, SEL _cmd, id delegate) {
+    if (orig_setDelegate) ((void(*)(id, SEL, id))orig_setDelegate)(self, _cmd, delegate);
+    if (delegate && !g_tfDelegateClass) {
+        g_tfDelegateClass = [delegate class];
+        mfLog(@"TF sort: delegate class=%@", NSStringFromClass(g_tfDelegateClass));
+        // hook appListDidReloadList: 在 delegate 上
+        Method m = class_getInstanceMethod(g_tfDelegateClass, @selector(appListDidReloadList:));
+        mfLog(@"TF sort: appListDidReloadList: method=%@", m ? @"found" : @"nil");
+        if (m) {
+            orig_appListDidReload = method_getImplementation(m);
+            method_setImplementation(m, (IMP)hook_appListDidReload);
+            mfLog(@"TF sort: appListDidReloadList: hooked!");
         }
-        NSString *found = mfFindButtonTitle(sub);
-        if (found) return found;
-    }
-    return nil;
-}
-
-static NSString *mfFindLabelText(UIView *view) {
-    for (UIView *sub in view.subviews) {
-        if ([sub isKindOfClass:[UILabel class]]) {
-            NSString *text = ((UILabel *)sub).text;
-            if (text.length > 0) return text;
-        }
-        NSString *found = mfFindLabelText(sub);
-        if (found) return found;
-    }
-    return nil;
-}
-
-static void mfDumpViewHierarchy(UIView *view, int depth) {
-    if (depth > 5) return;
-    NSMutableString *indent = [NSMutableString string];
-    for (int i = 0; i < depth; i++) [indent appendString:@"  "];
-    NSString *cls = NSStringFromClass([view class]);
-    // 打印所有视图（不过滤）
-    NSString *text = @"";
-    if ([view isKindOfClass:[UILabel class]]) text = ((UILabel *)view).text ?: @"";
-    NSString *axLabel = [view respondsToSelector:@selector(accessibilityLabel)] ? [view accessibilityLabel] : @"";
-    mfLog(@"TF sort: %@<%@> text='%@' ax='%@' frame=%@", indent, cls, text, axLabel, NSStringFromCGRect(view.frame));
-    for (UIView *sub in view.subviews) {
-        mfDumpViewHierarchy(sub, depth + 1);
     }
 }
 
-static void mfSortVisibleCells(UICollectionView *cv) {
-    if (!cv) return;
-    NSInteger sections = [cv numberOfSections];
-    for (NSInteger s = 0; s < sections; s++) {
-        NSInteger items = [cv numberOfItemsInSection:s];
-        if (items <= 1) continue;
-        NSMutableArray *entries = [NSMutableArray array];
-        for (NSInteger i = 0; i < items; i++) {
-            NSIndexPath *ip = [NSIndexPath indexPathForItem:i inSection:s];
-            UICollectionViewCell *cell = [cv cellForItemAtIndexPath:ip];
-            if (!cell) continue;
-            // 方式1: 递归找按钮
-            NSString *btnTitle = mfFindButtonTitle(cell.contentView);
-            // 方式2: accessibilityLabel
-            NSString *axLabel = cell.accessibilityLabel ?: @"";
-            // 方式3: 递归找所有 UILabel 文字
-            NSString *labelText = mfFindLabelText(cell.contentView);
-            NSInteger priority = 3;
-            if (btnTitle) {
-                mfLog(@"TF sort: cell[%ld] button='%@'", (long)i, btnTitle);
-                if ([btnTitle containsString:@"更新"] || [btnTitle caseInsensitiveCompare:@"Update"] == NSOrderedSame) priority = 0;
-                else if ([btnTitle containsString:@"打开"] || [btnTitle caseInsensitiveCompare:@"Open"] == NSOrderedSame) priority = 1;
-                else if ([btnTitle containsString:@"安装"] || [btnTitle caseInsensitiveCompare:@"Install"] == NSOrderedSame) priority = 2;
-            } else if (axLabel.length > 0) {
-                mfLog(@"TF sort: cell[%ld] ax='%@'", (long)i, axLabel);
-                if ([axLabel containsString:@"更新"] || [axLabel caseInsensitiveCompare:@"Update"] == NSOrderedSame) priority = 0;
-                else if ([axLabel containsString:@"打开"] || [axLabel caseInsensitiveCompare:@"Open"] == NSOrderedSame) priority = 1;
-                else if ([axLabel containsString:@"安装"] || [axLabel caseInsensitiveCompare:@"Install"] == NSOrderedSame) priority = 2;
-            } else if (labelText) {
-                mfLog(@"TF sort: cell[%ld] label='%@'", (long)i, labelText);
-                if ([labelText containsString:@"更新"]) priority = 0;
-                else if ([labelText containsString:@"打开"]) priority = 1;
-                else if ([labelText containsString:@"安装"]) priority = 2;
-            } else {
-                // SwiftUI cell 没有标准子视图，用截图+OCR 读按钮文字
-                // 按钮在 cell 右侧 {319, 26}, {54, 30} 区域
-                UIGraphicsBeginImageContextWithOptions(cell.bounds.size, NO, 0);
-                [cell.layer renderInContext:UIGraphicsGetCurrentContext()];
-                UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
-                UIGraphicsEndImageContext();
-                // 裁剪按钮区域（右侧 60x40）
-                CGRect btnRect = CGRectMake(cell.bounds.size.width - 70, 20, 60, 40);
-                CGImageRef cropped = CGImageCreateWithImageInRect(img.CGImage, btnRect);
-                UIImage *btnImg = [UIImage imageWithCGImage:cropped];
-                CGImageRelease(cropped);
-                // 用 Vision OCR 读文字
-                mfRecognizeText(btnImg, ^(NSString *text) {
-                    mfLog(@"TF sort: cell[%ld] OCR='%@'", (long)i, text ?: @"nil");
-                });
-                priority = 3; // OCR 异步，先用默认优先级
-            }
-            [entries addObject:@{@"p": @(priority), @"ip": ip}];
-        }
-        BOOL needSort = NO;
-        for (NSInteger i = 1; i < entries.count; i++) {
-            if ([entries[i][@"p"] integerValue] < [entries[i-1][@"p"] integerValue]) {
-                needSort = YES; break;
-            }
-        }
-        if (!needSort) continue;
-        [entries sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
-            return [a[@"p"] compare:b[@"p"]];
-        }];
-        [cv reloadSections:[NSIndexSet indexSetWithIndex:s]];
-        mfLog(@"TF sort: section %ld sorted", (long)s);
-    }
-}
-
-static void hook_tfReloadCVData(id self, SEL _cmd) {
-    if (orig_tfReloadCVData) ((void(*)(id, SEL))orig_tfReloadCVData)(self, _cmd);
+// 数据完全加载后的回调 —— 读数据模型排序
+static void hook_appListDidReload(id self, SEL _cmd, id appList) {
+    mfLog(@"TF sort: appListDidReloadList called");
+    if (orig_appListDidReload) ((void(*)(id, SEL, id))orig_appListDidReload)(self, _cmd, appList);
     if (!mfPrefBool(@"mfTFSortOptimize", NO)) return;
-    if (!objc_getClass("OASAppList")) return;
-    UICollectionView *cv = (UICollectionView *)self;
-    if (![cv isKindOfClass:[UICollectionView class]]) return;
-    // 只在有可见 cell 时触发（避免频繁调用）
-    if ([cv visibleCells].count == 0) return;
-    mfLog(@"TF sort: layoutSubviews triggered, visibleCells=%lu", (unsigned long)[cv visibleCells].count);
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        mfSortVisibleCells(cv);
-    });
+    // 读取 OASAppList 的 sections
+    NSArray *sections = [appList valueForKey:@"sections"];
+    if (![sections isKindOfClass:[NSArray class]]) {
+        mfLog(@"TF sort: sections is nil or not array");
+        return;
+    }
+    mfLog(@"TF sort: %lu sections after reload", (unsigned long)sections.count);
+    for (id section in sections) {
+        NSArray *apps = [section valueForKey:@"apps"];
+        if (![apps isKindOfClass:[NSArray class]] || apps.count <= 1) continue;
+        // dump 第一个 app 的 currentBuild
+        id first = apps[0];
+        id cb = [first valueForKey:@"currentBuild"];
+        mfLog(@"TF sort: section apps=%lu first=%@ currentBuild=%@",
+            (unsigned long)apps.count, [first valueForKey:@"name"] ?: @"?", cb ? @"Y" : @"nil");
+        if (cb) {
+            mfLog(@"TF sort:   needsUpdate=%d isInstalled=%d compatible=%d",
+                [cb respondsToSelector:@selector(needsUpdate)] ? ((BOOL(*)(id, SEL))objc_msgSend)(cb, @selector(needsUpdate)) : -1,
+                [cb respondsToSelector:@selector(isInstalled)] ? ((BOOL(*)(id, SEL))objc_msgSend)(cb, @selector(isInstalled)) : -1,
+                [cb respondsToSelector:@selector(compatible)] ? ((BOOL(*)(id, SEL))objc_msgSend)(cb, @selector(compatible)) : -1);
+        }
+    }
 }
 
 static void mfInstallTestFlightSorting(void) {
     mfLog(@"TF sort: installing hooks");
-    // hook UICollectionView layoutSubviews —— SwiftUI 渲染后触发
-    Class cvClass = NSClassFromString(@"UICollectionView");
-    if (!cvClass) { mfLog(@"TF sort: UICollectionView not found"); return; }
-    Method layoutM = class_getInstanceMethod(cvClass, @selector(layoutSubviews));
-    if (layoutM) {
-        orig_tfReloadCVData = method_getImplementation(layoutM);
-        method_setImplementation(layoutM, (IMP)hook_tfReloadCVData);
-        mfLog(@"TF sort: layoutSubviews hooked");
+    // hook OASAppList setDelegate: 找到 delegate
+    Class oasClass = objc_getClass("OASAppList");
+    if (!oasClass) { mfLog(@"TF sort: OASAppList not found"); return; }
+    Method setDelM = class_getInstanceMethod(oasClass, @selector(setDelegate:));
+    mfLog(@"TF sort: setDelegate: method=%@", setDelM ? @"found" : @"nil");
+    if (setDelM) {
+        orig_setDelegate = method_getImplementation(setDelM);
+        method_setImplementation(setDelM, (IMP)hook_oasSetDelegate);
+        mfLog(@"TF sort: setDelegate: hooked");
     }
 }
 
