@@ -1401,10 +1401,7 @@ static void mfSortSectionApps(id section) {
         dumped = YES;
         id first = apps[0];
         mfLog(@"TF sort: firstApp class=%@", NSStringFromClass([first class]));
-        mfLog(@"TF sort: needsUpdate=%d isInstalled=%d actionTitle=%@",
-            [first respondsToSelector:@selector(needsUpdate)],
-            [first respondsToSelector:@selector(isInstalled)],
-            [first respondsToSelector:@selector(actionTitle)] ? [first performSelector:@selector(actionTitle)] : @"nil");
+        // TFApp 属性
         unsigned int pc;
         objc_property_t *props = class_copyPropertyList([first class], &pc);
         mfLog(@"TF sort: %u properties", pc);
@@ -1413,20 +1410,51 @@ static void mfSortSectionApps(id section) {
             mfLog(@"TF sort:   %s", name);
         }
         free(props);
+        // 检查 currentBuild
+        id currentBuild = [first valueForKey:@"currentBuild"];
+        if (currentBuild) {
+            mfLog(@"TF sort: currentBuild class=%@", NSStringFromClass([currentBuild class]));
+            objc_property_t *bprops = class_copyPropertyList([currentBuild class], &pc);
+            mfLog(@"TF sort: currentBuild %u properties", pc);
+            for (unsigned int i = 0; i < MIN(pc, 20); i++) {
+                const char *name = property_getName(bprops[i]);
+                mfLog(@"TF sort:   build.%s", name);
+            }
+            free(bprops);
+            // 检查 build 的方法
+            mfLog(@"TF sort: build.respondsToSelector:needsUpdate=%d", [currentBuild respondsToSelector:@selector(needsUpdate)]);
+            mfLog(@"TF sort: build.respondsToSelector:isInstalled=%d", [currentBuild respondsToSelector:@selector(isInstalled)]);
+            mfLog(@"TF sort: build.respondsToSelector:compatible=%d", [currentBuild respondsToSelector:@selector(compatible)]);
+        }
     }
-    // 排序
+    // 排序：检查 currentBuild 的属性
     NSMutableArray *sorted = [apps mutableCopy];
     [sorted sortUsingComparator:^NSComparisonResult(id a, id b) {
-        NSInteger pa = 3, pb = 3;
-        if ([a respondsToSelector:@selector(needsUpdate)] && ((BOOL(*)(id, SEL))objc_msgSend)(a, @selector(needsUpdate))) pa = 0;
-        else if ([a respondsToSelector:@selector(isInstalled)] && ((BOOL(*)(id, SEL))objc_msgSend)(a, @selector(isInstalled))) pa = 1;
-        if ([b respondsToSelector:@selector(needsUpdate)] && ((BOOL(*)(id, SEL))objc_msgSend)(b, @selector(needsUpdate))) pb = 0;
-        else if ([b respondsToSelector:@selector(isInstalled)] && ((BOOL(*)(id, SEL))objc_msgSend)(b, @selector(isInstalled))) pb = 1;
+        NSInteger pa = mfTFAppSortPriority(a);
+        NSInteger pb = mfTFAppSortPriority(b);
         if (pa != pb) return pa < pb ? NSOrderedAscending : NSOrderedDescending;
         return NSOrderedSame;
     }];
     [section setValue:sorted forKey:@"apps"];
     mfLog(@"TF sort: section sorted, %lu apps", (unsigned long)sorted.count);
+}
+
+static NSInteger mfTFAppSortPriority(id app) {
+    // 检查 currentBuild
+    id build = [app valueForKey:@"currentBuild"];
+    if (build) {
+        // TFAppBuild 属性
+        if ([build respondsToSelector:@selector(needsUpdate)] && ((BOOL(*)(id, SEL))objc_msgSend)(build, @selector(needsUpdate))) return 0;
+        if ([build respondsToSelector:@selector(isInstalled)] && ((BOOL(*)(id, SEL))objc_msgSend)(build, @selector(isInstalled))) return 1;
+    }
+    // 检查 app 本身的 installedBuildGroup
+    if ([app respondsToSelector:@selector(isInstalledAndTrackingBuildGroup)] && ((BOOL(*)(id, SEL))objc_msgSend)(app, @selector(isInstalledAndTrackingBuildGroup))) return 1;
+    // 检查 inviteStatus: 2=已安装, 1=可安装
+    if ([app respondsToSelector:@selector(inviteStatus)]) {
+        NSInteger status = ((NSInteger(*)(id, SEL))objc_msgSend)(app, @selector(inviteStatus));
+        if (status == 2) return 1; // 已安装
+    }
+    return 2; // 未安装
 }
 
 static void mfDumpViewHierarchy(UIView *view, int depth) {
