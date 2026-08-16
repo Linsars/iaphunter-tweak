@@ -30,9 +30,23 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>勾选要启用 IAP工具箱 的 App。未勾选的 App 不加载任何 MinisFix 功能。</string>
+			<string>勾选要启用 IAP工具箱 的 App。未勾选的 App 不加载任何 MinisFix 功能。开启「自动添加」后，新安装的 App 自动加入白名单。</string>
 			<key>label</key>
 			<string>作用范围</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+			<key>defaults</key>
+			<string>com.linsars.minisfix</string>
+			<key>key</key>
+			<string>mfIAPAutoApply</string>
+			<key>label</key>
+			<string>自动添加新安装 App</string>
+			<key>PostNotification</key>
+			<string>com.linsars.minisfix/ReloadPrefs</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -107,9 +121,9 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>绕过 TestFlight 内对高版本 App 的限制，让低版本设备也能安装需要更高 iOS 的 TF 应用。同时保留已过期的 Build，阻止本地缓存清理。需 respring 后生效。</string>
+			<string>增强 TestFlight：绕过高版本限制、保留过期 Build、智能排序。需 respring 后生效。</string>
 			<key>label</key>
-			<string>TestFlight 版本绕过</string>
+			<string>TestFlight 增强</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -121,7 +135,105 @@
 			<key>key</key>
 			<string>mfTFBypassEnabled</string>
 			<key>label</key>
-			<string>启用 TF 版本绕过</string>
+			<string>启用 TestFlight 增强</string>
+			<key>PostNotification</key>
+			<string>com.linsars.minisfix/ReloadPrefs</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.linsars.minisfix</string>
+			<key>key</key>
+			<string>mfTFCompatible</string>
+			<key>label</key>
+			<string>compatible</string>
+			<key>PostNotification</key>
+			<string>com.linsars.minisfix/ReloadPrefs</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.linsars.minisfix</string>
+			<key>key</key>
+			<string>mfTFPlatformCompatible</string>
+			<key>label</key>
+			<string>platformCompatible</string>
+			<key>PostNotification</key>
+			<string>com.linsars.minisfix/ReloadPrefs</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.linsars.minisfix</string>
+			<key>key</key>
+			<string>mfTFHardwareCompatible</string>
+			<key>label</key>
+			<string>hardwareCompatible</string>
+			<key>PostNotification</key>
+			<string>com.linsars.minisfix/ReloadPrefs</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.linsars.minisfix</string>
+			<key>key</key>
+			<string>mfTFMinOSCompatible</string>
+			<key>label</key>
+			<string>minOSCompatible</string>
+			<key>PostNotification</key>
+			<string>com.linsars.minisfix/ReloadPrefs</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.linsars.minisfix</string>
+			<key>key</key>
+			<string>mfTFExpirationDate</string>
+			<key>label</key>
+			<string>expirationDate（保留过期 Build）</string>
+			<key>PostNotification</key>
+			<string>com.linsars.minisfix/ReloadPrefs</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.linsars.minisfix</string>
+			<key>key</key>
+			<string>mfTFSetExpirationDate</string>
+			<key>label</key>
+			<string>setExpirationDate（阻止写入过期）</string>
+			<key>PostNotification</key>
+			<string>com.linsars.minisfix/ReloadPrefs</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.linsars.minisfix</string>
+			<key>key</key>
+			<string>mfTFSortOptimize</string>
+			<key>label</key>
+			<string>排序优化（需更新↑已安装↑未安装↓）</string>
 			<key>PostNotification</key>
 			<string>com.linsars.minisfix/ReloadPrefs</string>
 		</dict>

@@ -1147,9 +1147,9 @@ static void swizzle(Class cls, SEL sel, IMP newImp, IMP *origOut) {
     method_setImplementation(m, newImp);
 }
 
-// ====== TestFlight 版本绕过 ======
-// hook TFAppBuild 的兼容性检查，让高版本 App 在低版本设备上显示兼容
-// 同时 hook 过期日期，保留已过期的 Build
+// ====== TestFlight 增强 ======
+// hook TFAppBuild 的兼容性检查，每个开关独立控制
+// 排序：需更新↑已安装↑未安装↓
 
 static BOOL (*orig_tfCompatible)(id self, SEL _cmd);
 static BOOL (*orig_tfPlatformCompatible)(id self, SEL _cmd);
@@ -1158,28 +1158,130 @@ static BOOL (*orig_tfMinOSCompatible)(id self, SEL _cmd);
 static NSDate *(*orig_tfExpirationDate)(id self, SEL _cmd);
 static void (*orig_tfSetExpirationDate)(id self, SEL _cmd, NSDate *date);
 
-static BOOL hook_tfCompatible(id self, SEL _cmd) { return YES; }
-static BOOL hook_tfPlatformCompatible(id self, SEL _cmd) { return YES; }
-static BOOL hook_tfHardwareCompatible(id self, SEL _cmd) { return YES; }
-static BOOL hook_tfMinOSCompatible(id self, SEL _cmd) { return YES; }
-static NSDate *hook_tfExpirationDate(id self, SEL _cmd) { return [NSDate distantFuture]; }
-static void hook_tfSetExpirationDate(id self, SEL _cmd, NSDate *date) { /* 阻止设置过期日期 */ }
+static BOOL hook_tfCompatible(id self, SEL _cmd) {
+    return mfPrefBool(@"mfTFCompatible", YES) ? YES : orig_tfCompatible ? orig_tfCompatible(self, _cmd) : YES;
+}
+static BOOL hook_tfPlatformCompatible(id self, SEL _cmd) {
+    return mfPrefBool(@"mfTFPlatformCompatible", YES) ? YES : orig_tfPlatformCompatible ? orig_tfPlatformCompatible(self, _cmd) : YES;
+}
+static BOOL hook_tfHardwareCompatible(id self, SEL _cmd) {
+    return mfPrefBool(@"mfTFHardwareCompatible", YES) ? YES : orig_tfHardwareCompatible ? orig_tfHardwareCompatible(self, _cmd) : YES;
+}
+static BOOL hook_tfMinOSCompatible(id self, SEL _cmd) {
+    return mfPrefBool(@"mfTFMinOSCompatible", YES) ? YES : orig_tfMinOSCompatible ? orig_tfMinOSCompatible(self, _cmd) : YES;
+}
+static NSDate *hook_tfExpirationDate(id self, SEL _cmd) {
+    return mfPrefBool(@"mfTFExpirationDate", YES) ? [NSDate distantFuture] : orig_tfExpirationDate ? orig_tfExpirationDate(self, _cmd) : [NSDate distantFuture];
+}
+static void hook_tfSetExpirationDate(id self, SEL _cmd, NSDate *date) {
+    if (mfPrefBool(@"mfTFSetExpirationDate", YES)) return; // 阻止写入过期
+    if (orig_tfSetExpirationDate) orig_tfSetExpirationDate(self, _cmd, date);
+}
 
 static void mfInstallTestFlightBypass(void) {
     Class TFAppBuild = objc_getClass("TFAppBuild");
-    if (!TFAppBuild) return;  // 不在 TestFlight 进程里
-    
-    // 版本兼容绕过
+    if (!TFAppBuild) return;
+
     swizzle(TFAppBuild, @selector(compatible), (IMP)hook_tfCompatible, (IMP *)&orig_tfCompatible);
     swizzle(TFAppBuild, @selector(platformCompatible), (IMP)hook_tfPlatformCompatible, (IMP *)&orig_tfPlatformCompatible);
     swizzle(TFAppBuild, @selector(hardwareCompatible), (IMP)hook_tfHardwareCompatible, (IMP *)&orig_tfHardwareCompatible);
     swizzle(TFAppBuild, @selector(minOSCompatible), (IMP)hook_tfMinOSCompatible, (IMP *)&orig_tfMinOSCompatible);
-    
-    // Build 保留（阻止过期）
+
     swizzle(TFAppBuild, @selector(expirationDate), (IMP)hook_tfExpirationDate, (IMP *)&orig_tfExpirationDate);
     swizzle(TFAppBuild, @selector(setExpirationDate:), (IMP)hook_tfSetExpirationDate, (IMP *)&orig_tfSetExpirationDate);
-    
-    mfLog(@"TestFlight bypass installed");
+}
+
+// ====== TestFlight 排序优化 ======
+// hook UITableView reloadData，在 TestFlight 列表重载后按优先级排序
+// 优先级：需更新 > 已安装 > 未安装
+
+static IMP orig_tfReloadData;
+static void hook_tfReloadData(id self, SEL _cmd) {
+    if (orig_tfReloadData) ((void(*)(id, SEL))orig_tfReloadData)(self, _cmd);
+    if (!mfPrefBool(@"mfTFSortOptimize", YES)) return;
+    // 只在 TestFlight 进程内生效
+    Class TFAppListVC = objc_getClass("TFAppListViewController");
+    if (!TFAppListVC) return;
+    // 获取 tableView 的 dataSource
+    UITableView *tv = (UITableView *)self;
+    if (![tv isKindOfClass:[UITableView class]]) return;
+    id dataSource = tv.dataSource;
+    if (!dataSource) return;
+    // 检查 dataSource 是否是 TestFlight 的 VC
+    if (![dataSource isKindOfClass:TFAppListVC] &&
+        ![dataSource isKindOfClass:objc_getClass("TFMainViewController")]) return;
+    // TestFlight 的数据源通常有 apps 数组属性
+    // 尝试获取并排序
+    NSArray *keys = @[@"apps", @"_apps", @"allApps", @"_allApps", @"sortedApps", @"_sortedApps"];
+    for (NSString *key in keys) {
+        if ([dataSource respondsToSelector:NSSelectorFromString(key)]) {
+            NSMutableArray *apps = [dataSource valueForKey:key];
+            if ([apps isKindOfClass:[NSMutableArray class]] && apps.count > 1) {
+                [apps sortUsingComparator:^NSComparisonResult(id a, id b) {
+                    NSInteger pa = mfTFAppPriority(a);
+                    NSInteger pb = mfTFAppPriority(b);
+                    if (pa != pb) return pa < pb ? NSOrderedAscending : NSOrderedDescending;
+                    // 同优先级按加入时间倒序（新的在前）
+                    NSDate *da = [a respondsToSelector:@selector(dateAdded)] ? [a performSelector:@selector(dateAdded)] : nil;
+                    NSDate *db = [b respondsToSelector:@selector(dateAdded)] ? [b performSelector:@selector(dateAdded)] : nil;
+                    if (da && db) return [db compare:da];
+                    return NSOrderedSame;
+                }];
+                break;
+            }
+        }
+    }
+}
+
+static NSInteger mfTFAppPriority(id app) {
+    // 0=需更新, 1=已安装, 2=未安装
+    SEL updateSel = NSSelectorFromString(@"updateAvailable");
+    SEL installedSel = NSSelectorFromString(@"installedVersion");
+    SEL externalSel = NSSelectorFromString(@"isExternal");
+    if ([app respondsToSelector:updateSel] && ((BOOL(*)(id, SEL))objc_msgSend)(app, updateSel)) return 0;
+    if ([app respondsToSelector:installedSel]) {
+        id ver = [app performSelector:installedSel];
+        if (ver != nil) return 1;
+    }
+    return 2;
+}
+
+// ====== 自动添加新安装 App 到白名单 ======
+// hook LSApplicationWorkspace didInstallApplications: 自动勾选新 App
+
+static IMP orig_didInstall;
+static void hook_didInstall(id self, SEL _cmd, NSArray *apps) {
+    if (orig_didInstall) ((void(*)(id, SEL, NSArray *))orig_didInstall)(self, _cmd, apps);
+    if (!mfPrefBool(@"mfIAPAutoApply", NO)) return;
+    for (id app in apps) {
+        NSString *bid = nil;
+        if ([app isKindOfClass:[NSString class]]) {
+            bid = (NSString *)app;
+        } else if ([app respondsToSelector:@selector(bundleIdentifier)]) {
+            bid = [app performSelector:@selector(bundleIdentifier)];
+        }
+        if (bid.length > 0) {
+            @autoreleasepool {
+                NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+                NSMutableArray *list = [NSMutableArray arrayWithArray:([d objectForKey:@"mfIAPAppList"] ?: @[])];
+                if (![list containsObject:bid]) {
+                    [list addObject:bid];
+                    [d setObject:list forKey:@"mfIAPAppList"];
+                    [d synchronize];
+                }
+            }
+        }
+    }
+}
+
+static void mfInstallAutoApply(void) {
+    Class ws = objc_getClass("LSApplicationWorkspace");
+    if (!ws) return;
+    Method m = class_getInstanceMethod(ws, NSSelectorFromString(@"didInstallApplications:"));
+    if (m) {
+        orig_didInstall = method_getImplementation(m);
+        method_setImplementation(m, (IMP)hook_didInstall);
+    }
 }
 
 // 双指长按手势处理
@@ -1207,11 +1309,29 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
-        mfLog(@"=== MinisFix ctor ENTER pid=%d app=%@ ===", getpid(), [[NSBundle mainBundle] bundleIdentifier]);
+        NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
+        mfLog(@"=== MinisFix ctor ENTER pid=%d app=%@ ===", getpid(), bid);
 
-        // TestFlight 版本绕过（独立于 IAP工具箱，始终检查）
+        // TestFlight 增强（独立于 IAP工具箱，始终检查）
         if (mfPrefBool(@"mfTFBypassEnabled", NO)) {
             mfInstallTestFlightBypass();
+        }
+        // TestFlight 排序优化
+        if (mfPrefBool(@"mfTFSortOptimize", YES)) {
+            // hook UITableView reloadData（TestFlight 进程内才生效）
+            Class tvClass = NSClassFromString(@"UITableView");
+            if (tvClass) {
+                Method m = class_getInstanceMethod(tvClass, @selector(reloadData));
+                if (m) {
+                    orig_tfReloadData = method_getImplementation(m);
+                    method_setImplementation(m, (IMP)hook_tfReloadData);
+                }
+            }
+        }
+
+        // 自动添加新 App 到白名单（全局 hook，在所有进程注入）
+        if (mfPrefBool(@"mfIAPAutoApply", NO)) {
+            mfInstallAutoApply();
         }
 
         // 启用检查：设置页「启用 IAP工具箱」×「应用程序」白名单（不通过则不加载任何功能）
