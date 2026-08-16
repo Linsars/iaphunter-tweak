@@ -55,11 +55,11 @@ BOOL mfIsEnabledForCurrentApp(void) {
     NSDictionary *prefs = mfPrefsDict();
     NSNumber *en = prefs[@"mfIAPEnabled"];
     if (en && ![en boolValue]) return NO;
+    // 自动添加开启 = 所有 app 生效，不检查白名单
+    if (mfPrefBool(@"mfIAPAutoApply", YES)) return YES;
+    // 自动添加关闭 = 只对白名单内的 app 生效
     NSArray *wl = prefs[@"mfIAPAppList"];
-    // defaultApplicationSwitchValue=YES：AltList 默认所有 app 开启
-    // 白名单为空（用户未手动关闭任何 app）= 所有 app 生效
-    // 白名单非空 = 只有白名单内的 app 生效
-    if (![wl isKindOfClass:[NSArray class]] || wl.count == 0) return YES;
+    if (![wl isKindOfClass:[NSArray class]] || wl.count == 0) return NO;
     return [wl containsObject:[[NSBundle mainBundle] bundleIdentifier]];
 }
 void mfSetPrefs(NSDictionary *d) {
