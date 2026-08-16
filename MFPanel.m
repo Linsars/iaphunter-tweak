@@ -1236,21 +1236,21 @@ static NSInteger mfTFCellPriority(UITableViewCell *cell) {
 
 // 方案1: hook OASAppList sortApp1:andApp2:
 static IMP orig_sortApp;
+typedef NSInteger (*SortAppFunc)(id, SEL, id, id);
 static NSInteger hook_sortApp(id self, SEL _cmd, id app1, id app2) {
     mfLog(@"TF sort: sortApp1:andApp2: called");
     if (!mfPrefBool(@"mfTFSortOptimize", NO)) {
-        return orig_sortApp ? orig_sortApp(self, _cmd, app1, app2) : NSOrderedSame;
+        return orig_sortApp ? ((SortAppFunc)orig_sortApp)(self, _cmd, app1, app2) : NSOrderedSame;
     }
     // 尝试读取 app 的属性来判断优先级
     NSInteger p1 = 3, p2 = 3;
-    // 检查 needsUpdate
     if ([app1 respondsToSelector:@selector(needsUpdate)] && ((BOOL(*)(id, SEL))objc_msgSend)(app1, @selector(needsUpdate))) p1 = 0;
     else if ([app1 respondsToSelector:@selector(isInstalled)] && ((BOOL(*)(id, SEL))objc_msgSend)(app1, @selector(isInstalled))) p1 = 1;
     if ([app2 respondsToSelector:@selector(needsUpdate)] && ((BOOL(*)(id, SEL))objc_msgSend)(app2, @selector(needsUpdate))) p2 = 0;
     else if ([app2 respondsToSelector:@selector(isInstalled)] && ((BOOL(*)(id, SEL))objc_msgSend)(app2, @selector(isInstalled))) p2 = 1;
     mfLog(@"TF sort: p1=%ld p2=%ld", (long)p1, (long)p2);
     if (p1 != p2) return p1 < p2 ? NSOrderedAscending : NSOrderedDescending;
-    return orig_sortApp ? orig_sortApp(self, _cmd, app1, app2) : NSOrderedSame;
+    return orig_sortApp ? ((SortAppFunc)orig_sortApp)(self, _cmd, app1, app2) : NSOrderedSame;
 }
 
 // 方案2: 通用 UITableView 排序（reloadData/insertRows/reloadSections 后触发）
