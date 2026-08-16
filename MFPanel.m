@@ -1376,7 +1376,51 @@ static void mfFindPriorityInView(UIView *view, NSInteger *priority) {
     }
 }
 
-// UICollectionView 排序
+// UICollectionView 排序 - 数据模型方案
+// hook OASAppList 的 _updateAppsListCallback 方法，在数据传到 UI 之前重排
+
+static IMP orig_updateAppsListCallback;
+
+static void hook_updateAppsListCallback(id self, SEL _cmd, BOOL changed, NSArray *fullSections, NSArray *finalSections, id changes) {
+    mfLog(@"TF sort: updateAppsListCallback called, changed=%d", changed);
+    if (orig_updateAppsListCallback) ((void(*)(id, SEL, BOOL, NSArray *, NSArray *, id))orig_updateAppsListCallback)(self, _cmd, changed, fullSections, finalSections, changes);
+}
+
+// 尝试 hook _apps 属性 setter
+static IMP orig_setApps;
+static void hook_setApps(id self, SEL _cmd, NSArray *apps) {
+    mfLog(@"TF sort: setApps called, count=%lu", (unsigned long)apps.count);
+    // 检查 app 对象的属性
+    if (apps.count > 0) {
+        id firstApp = apps[0];
+        mfLog(@"TF sort: firstApp class=%@", NSStringFromClass([firstApp class]));
+        mfLog(@"TF sort: firstApp respondsToSelector:needsUpdate=%d", [firstApp respondsToSelector:@selector(needsUpdate)]);
+        mfLog(@"TF sort: firstApp respondsToSelector:isInstalled=%d", [firstApp respondsToSelector:@selector(isInstalled)]);
+        mfLog(@"TF sort: firstApp respondsToSelector:actionTitle=%d", [firstApp respondsToSelector:@selector(actionTitle)]);
+        if ([firstApp respondsToSelector:@selector(needsUpdate)]) {
+            mfLog(@"TF sort: firstApp.needsUpdate=%d", ((BOOL(*)(id, SEL))objc_msgSend)(firstApp, @selector(needsUpdate)));
+        }
+        if ([firstApp respondsToSelector:@selector(isInstalled)]) {
+            mfLog(@"TF sort: firstApp.isInstalled=%d", ((BOOL(*)(id, SEL))objc_msgSend)(firstApp, @selector(isInstalled)));
+        }
+        if ([firstApp respondsToSelector:@selector(actionTitle)]) {
+            NSString *title = [firstApp performSelector:@selector(actionTitle)];
+            mfLog(@"TF sort: firstApp.actionTitle=%@", title ?: @"nil");
+        }
+        // 列出所有属性
+        unsigned int count;
+        objc_property_t *props = class_copyPropertyList([firstApp class], &count);
+        mfLog(@"TF sort: firstApp has %u properties", count);
+        for (unsigned int i = 0; i < MIN(count, 20); i++) {
+            const char *name = property_getName(props[i]);
+            mfLog(@"TF sort:   property: %s", name);
+        }
+        free(props);
+    }
+    if (orig_setApps) ((void(*)(id, SEL, NSArray *))orig_setApps)(self, _cmd, apps);
+}
+
+static void mfInstallTestFlightSorting(void) {
 static void mfDumpViewHierarchy(UIView *view, int depth) {
     NSMutableString *indent = [NSMutableString string];
     for (int i = 0; i < depth; i++) [indent appendString:@"  "];
@@ -1453,6 +1497,25 @@ static void mfInstallTestFlightSorting(void) {
             method_setImplementation(sortM, (IMP)hook_sortApp);
             mfLog(@"TF sort: %@ sortApp1:andApp2: hooked!", clsName);
             break;
+        }
+    }
+    // 方案1b: hook _apps setter 和 _updateAppsListCallback
+    for (NSString *clsName in candidates) {
+        Class cls = objc_getClass([clsName UTF8String]);
+        if (!cls) continue;
+        Method setAppsM = class_getInstanceMethod(cls, @selector(setApps:));
+        mfLog(@"TF sort: %@ setApps: method=%@", clsName, setAppsM ? @"found" : @"nil");
+        if (setAppsM) {
+            orig_setApps = method_getImplementation(setAppsM);
+            method_setImplementation(setAppsM, (IMP)hook_setApps);
+            mfLog(@"TF sort: %@ setApps: hooked!", clsName);
+        }
+        Method updateM = class_getInstanceMethod(cls, NSSelectorFromString(@"_updateAppsListCallbackAppsDidChange:withfullSections:finalSections:changeInfo:"));
+        mfLog(@"TF sort: %@ _updateAppsListCallback method=%@", clsName, updateM ? @"found" : @"nil");
+        if (updateM) {
+            orig_updateAppsListCallback = method_getImplementation(updateM);
+            method_setImplementation(updateM, (IMP)hook_updateAppsListCallback);
+            mfLog(@"TF sort: %@ _updateAppsListCallback hooked!", clsName);
         }
     }
     // 方案2: hook UITableView 的多个更新方法
