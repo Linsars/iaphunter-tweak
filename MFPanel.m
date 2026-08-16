@@ -1400,53 +1400,19 @@ static void mfSortSectionApps(id section) {
     static BOOL dumped = NO;
     if (!dumped) {
         dumped = YES;
-        mfLog(@"TF sort: dumping first 5 apps...");
-        for (NSInteger i = 0; i < MIN(5, apps.count); i++) {
+        // dump section 属性
+        mfLog(@"TF sort: section class=%@ sectionType=%ld",
+            NSStringFromClass([section class]),
+            (long)[[section valueForKey:@"sectionType"] integerValue]);
+        // dump 前 3 个 app
+        for (NSInteger i = 0; i < MIN(3, apps.count); i++) {
             id app = apps[i];
-            mfLog(@"TF sort: app[%ld] name=%@ bundleID=%@ inviteStatus=%ld isPublicLinkUser=%d",
+            mfLog(@"TF sort: [%ld] %@ inviteStatus=%ld installed=%d tracking=%d",
                 (long)i,
-                [app valueForKey:@"name"] ?: @"nil",
-                [app valueForKey:@"bundleID"] ?: @"nil",
+                [app valueForKey:@"name"] ?: @"?",
                 (long)[[app valueForKey:@"inviteStatus"] integerValue],
-                [app respondsToSelector:@selector(isPublicLinkUser)] ? ((BOOL(*)(id, SEL))objc_msgSend)(app, @selector(isPublicLinkUser)) : -1);
-            id cb = [app valueForKey:@"currentBuild"];
-            mfLog(@"TF sort:   currentBuild=%@", cb ? NSStringFromClass([cb class]) : @"nil");
-            if (cb) {
-                mfLog(@"TF sort:   needsUpdate=%d isInstalled=%d compatible=%d",
-                    [cb respondsToSelector:@selector(needsUpdate)] ? ((BOOL(*)(id, SEL))objc_msgSend)(cb, @selector(needsUpdate)) : -1,
-                    [cb respondsToSelector:@selector(isInstalled)] ? ((BOOL(*)(id, SEL))objc_msgSend)(cb, @selector(isInstalled)) : -1,
-                    [cb respondsToSelector:@selector(compatible)] ? ((BOOL(*)(id, SEL))objc_msgSend)(cb, @selector(compatible)) : -1);
-                unsigned int pc;
-                objc_property_t *bprops = class_copyPropertyList([cb class], &pc);
-                for (unsigned int j = 0; j < MIN(pc, 20); j++) mfLog(@"TF sort:     %s", property_getName(bprops[j]));
-                free(bprops);
-            }
-            id builds = [app valueForKey:@"builds"];
-            mfLog(@"TF sort:   builds=%@ count=%lu", builds ? NSStringFromClass([builds class]) : @"nil",
-                [builds isKindOfClass:[NSArray class]] ? (unsigned long)((NSArray *)builds).count : 0);
-            if ([builds isKindOfClass:[NSArray class]] && ((NSArray *)builds).count > 0) {
-                id firstBuild = ((NSArray *)builds)[0];
-                mfLog(@"TF sort:   builds[0] class=%@ needsUpdate=%d isInstalled=%d",
-                    NSStringFromClass([firstBuild class]),
-                    [firstBuild respondsToSelector:@selector(needsUpdate)] ? ((BOOL(*)(id, SEL))objc_msgSend)(firstBuild, @selector(needsUpdate)) : -1,
-                    [firstBuild respondsToSelector:@selector(isInstalled)] ? ((BOOL(*)(id, SEL))objc_msgSend)(firstBuild, @selector(isInstalled)) : -1);
-            }
-            // 也检查 installedBundleModel (TFBundleInstallation 属性)
-            id installedBundle = [app valueForKey:@"installedBundleModel"];
-            mfLog(@"TF sort:   installedBundleModel=%@", installedBundle ? NSStringFromClass([installedBundle class]) : @"nil");
-            // 检查所有 BOOL 方法
-            unsigned int count;
-            Method *methods = class_copyMethodList([app class], &count);
-            if (methods) {
-                for (unsigned int m = 0; m < count; m++) {
-                    SEL sel = method_getName(methods[m]);
-                    NSString *selName = NSStringFromSelector(sel);
-                    if ([selName hasPrefix:@"is"] || [selName hasSuffix:@"ed"]) {
-                        mfLog(@"TF sort:   method: %@", selName);
-                    }
-                }
-                free(methods);
-            }
+                [app respondsToSelector:@selector(isInstalled)] ? ((BOOL(*)(id, SEL))objc_msgSend)(app, @selector(isInstalled)) : -1,
+                [app respondsToSelector:@selector(isInstalledAndTrackingBuildGroup)] ? ((BOOL(*)(id, SEL))objc_msgSend)(app, @selector(isInstalledAndTrackingBuildGroup)) : -1);
         }
     }
     // 排序：检查 currentBuild 的属性
