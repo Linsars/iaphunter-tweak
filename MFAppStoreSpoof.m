@@ -15,7 +15,9 @@ static NSString *g_currentIOSVersion = nil;
 
 // 获取当前系统版本
 static NSString *mfGetCurrentIOSVersion(void) {
-    return [[UIDevice currentDevice] systemVersion] ?: @"17.0";
+    // UIDevice 不在 appstored 进程中可用，从 SystemVersion.plist 读取
+    NSDictionary *sysVer = [NSDictionary dictionaryWithContentsOfFile:@"/System/Library/CoreServices/SystemVersion.plist"];
+    return sysVer[@"ProductVersion"] ?: @"17.0";
 }
 
 // 读取配置
