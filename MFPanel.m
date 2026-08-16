@@ -1192,59 +1192,39 @@ static void mfInstallTestFlightBypass(void) {
 }
 
 // ====== TestFlight 排序优化 ======
-// hook UITableView reloadData，在 TestFlight 列表重载后按优先级排序
-// 优先级：需更新 > 已安装 > 未安装
+// hook OASAppList 的 sortApp1:andApp2: 方法
+// 优先级：需更新(0) > 已安装(1) > 未安装(2)
 
 static IMP orig_tfReloadData;
+static NSInteger (*orig_sortApp)(id self, SEL _cmd, id app1, id app2);
 static NSInteger mfTFAppPriority(id app);
 
-static void hook_tfReloadData(id self, SEL _cmd) {
-    if (orig_tfReloadData) ((void(*)(id, SEL))orig_tfReloadData)(self, _cmd);
-    if (!mfPrefBool(@"mfTFSortOptimize", YES)) return;
-    // 只在 TestFlight 进程内生效
-    Class TFAppListVC = objc_getClass("TFAppListViewController");
-    if (!TFAppListVC) return;
-    // 获取 tableView 的 dataSource
-    UITableView *tv = (UITableView *)self;
-    if (![tv isKindOfClass:[UITableView class]]) return;
-    id dataSource = tv.dataSource;
-    if (!dataSource) return;
-    // 检查 dataSource 是否是 TestFlight 的 VC
-    if (![dataSource isKindOfClass:TFAppListVC] &&
-        ![dataSource isKindOfClass:objc_getClass("TFMainViewController")]) return;
-    // TestFlight 的数据源通常有 apps 数组属性
-    // 尝试获取并排序
-    NSArray *keys = @[@"apps", @"_apps", @"allApps", @"_allApps", @"sortedApps", @"_sortedApps"];
-    for (NSString *key in keys) {
-        if ([dataSource respondsToSelector:NSSelectorFromString(key)]) {
-            NSMutableArray *apps = [dataSource valueForKey:key];
-            if ([apps isKindOfClass:[NSMutableArray class]] && apps.count > 1) {
-                [apps sortUsingComparator:^NSComparisonResult(id a, id b) {
-                    NSInteger pa = mfTFAppPriority(a);
-                    NSInteger pb = mfTFAppPriority(b);
-                    if (pa != pb) return pa < pb ? NSOrderedAscending : NSOrderedDescending;
-                    // 同优先级按加入时间倒序（新的在前）
-                    NSDate *da = [a respondsToSelector:@selector(dateAdded)] ? [a performSelector:@selector(dateAdded)] : nil;
-                    NSDate *db = [b respondsToSelector:@selector(dateAdded)] ? [b performSelector:@selector(dateAdded)] : nil;
-                    if (da && db) return [db compare:da];
-                    return NSOrderedSame;
-                }];
-                break;
-            }
-        }
+static NSInteger hook_sortApp(id self, SEL _cmd, id app1, id app2) {
+    if (!mfPrefBool(@"mfTFSortOptimize", YES)) {
+        return orig_sortApp ? orig_sortApp(self, _cmd, app1, app2) : NSOrderedSame;
     }
+    NSInteger p1 = mfTFAppPriority(app1);
+    NSInteger p2 = mfTFAppPriority(app2);
+    if (p1 != p2) return p1 < p2 ? NSOrderedAscending : NSOrderedDescending;
+    // 同优先级用原始排序
+    return orig_sortApp ? orig_sortApp(self, _cmd, app1, app2) : NSOrderedSame;
+}
+
+static void mfInstallTestFlightSorting(void) {
+    Class oasAppList = objc_getClass("OASAppList");
+    if (!oasAppList) return;
+    Method m = class_getInstanceMethod(oasAppList, NSSelectorFromString(@"sortApp1:andApp2:"));
+    if (!m) return;
+    orig_sortApp = (void *)method_getImplementation(m);
+    method_setImplementation(m, (IMP)hook_sortApp);
 }
 
 static NSInteger mfTFAppPriority(id app) {
     // 0=需更新, 1=已安装, 2=未安装
-    SEL updateSel = NSSelectorFromString(@"updateAvailable");
-    SEL installedSel = NSSelectorFromString(@"installedVersion");
-    SEL externalSel = NSSelectorFromString(@"isExternal");
+    SEL updateSel = NSSelectorFromString(@"needsUpdate");
+    SEL installedSel = NSSelectorFromString(@"isInstalled");
     if ([app respondsToSelector:updateSel] && ((BOOL(*)(id, SEL))objc_msgSend)(app, updateSel)) return 0;
-    if ([app respondsToSelector:installedSel]) {
-        id ver = [app performSelector:installedSel];
-        if (ver != nil) return 1;
-    }
+    if ([app respondsToSelector:installedSel] && ((BOOL(*)(id, SEL))objc_msgSend)(app, installedSel)) return 1;
     return 2;
 }
 
@@ -1320,15 +1300,7 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
         }
         // TestFlight 排序优化
         if (mfPrefBool(@"mfTFSortOptimize", YES)) {
-            // hook UITableView reloadData（TestFlight 进程内才生效）
-            Class tvClass = NSClassFromString(@"UITableView");
-            if (tvClass) {
-                Method m = class_getInstanceMethod(tvClass, @selector(reloadData));
-                if (m) {
-                    orig_tfReloadData = method_getImplementation(m);
-                    method_setImplementation(m, (IMP)hook_tfReloadData);
-                }
-            }
+            mfInstallTestFlightSorting();
         }
 
         // 自动添加新 App 到白名单（全局 hook，在所有进程注入）
