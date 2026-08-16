@@ -1365,6 +1365,7 @@ static void mfInstallAutoApply(void) {
     Method didInstallM = class_getInstanceMethod(ws, didInstallSel);
     if (didInstallM) {
         IMP didInstallOrig = method_getImplementation(didInstallM);
+        IMP didInstallOrigRef = didInstallOrig; // 避免变量名冲突
         method_setImplementation(didInstallM, imp_implementationWithBlock(^(id self, NSArray *apps) {
             mfLog(@"autoApply: didInstallApplications called, count=%lu", (unsigned long)apps.count);
             for (id app in apps) {
@@ -1377,7 +1378,7 @@ static void mfInstallAutoApply(void) {
                 mfLog(@"autoApply: didInstall bid=%@", bid ?: @"nil");
                 mfAutoApplyAdd(bid);
             }
-            ((void(*)(id, SEL, NSArray *))didInstallOrig)(self, _cmd, apps);
+            ((void(*)(id, SEL, NSArray *))didInstallOrigRef)(self, _cmd, apps);
         }));
         mfLog(@"autoApply: didInstallApplications hooked");
     }
