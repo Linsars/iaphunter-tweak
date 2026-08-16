@@ -1400,32 +1400,39 @@ static void mfSortSectionApps(id section) {
     static BOOL dumped = NO;
     if (!dumped) {
         dumped = YES;
-        id first = apps[0];
-        mfLog(@"TF sort: firstApp class=%@", NSStringFromClass([first class]));
-        // TFApp 属性
-        unsigned int pc;
-        objc_property_t *props = class_copyPropertyList([first class], &pc);
-        mfLog(@"TF sort: %u properties", pc);
-        for (unsigned int i = 0; i < MIN(pc, 30); i++) {
-            const char *name = property_getName(props[i]);
-            mfLog(@"TF sort:   %s", name);
-        }
-        free(props);
-        // 检查 currentBuild
-        id currentBuild = [first valueForKey:@"currentBuild"];
-        if (currentBuild) {
-            mfLog(@"TF sort: currentBuild class=%@", NSStringFromClass([currentBuild class]));
-            objc_property_t *bprops = class_copyPropertyList([currentBuild class], &pc);
-            mfLog(@"TF sort: currentBuild %u properties", pc);
-            for (unsigned int i = 0; i < MIN(pc, 20); i++) {
-                const char *name = property_getName(bprops[i]);
-                mfLog(@"TF sort:   build.%s", name);
+        mfLog(@"TF sort: dumping first 5 apps...");
+        for (NSInteger i = 0; i < MIN(5, apps.count); i++) {
+            id app = apps[i];
+            mfLog(@"TF sort: app[%ld] class=%@ name=%@ bundleID=%@ inviteStatus=%ld",
+                (long)i, NSStringFromClass([app class]),
+                [app valueForKey:@"name"] ?: @"nil",
+                [app valueForKey:@"bundleID"] ?: @"nil",
+                (long)[[app valueForKey:@"inviteStatus"] integerValue]);
+            id cb = [app valueForKey:@"currentBuild"];
+            mfLog(@"TF sort:   currentBuild=%@ (%@)", cb ?: @"nil", cb ? NSStringFromClass([cb class]) : @"nil");
+            if (cb) {
+                mfLog(@"TF sort:   needsUpdate=%d isInstalled=%d compatible=%d",
+                    [cb respondsToSelector:@selector(needsUpdate)] ? ((BOOL(*)(id, SEL))objc_msgSend)(cb, @selector(needsUpdate)) : -1,
+                    [cb respondsToSelector:@selector(isInstalled)] ? ((BOOL(*)(id, SEL))objc_msgSend)(cb, @selector(isInstalled)) : -1,
+                    [cb respondsToSelector:@selector(compatible)] ? ((BOOL(*)(id, SEL))objc_msgSend)(cb, @selector(compatible)) : -1);
+                // dump build 属性
+                unsigned int pc;
+                objc_property_t *bprops = class_copyPropertyList([cb class], &pc);
+                mfLog(@"TF sort:   build %u properties:", pc);
+                for (unsigned int j = 0; j < MIN(pc, 20); j++) {
+                    mfLog(@"TF sort:     %s", property_getName(bprops[j]));
+                }
+                free(bprops);
             }
-            free(bprops);
-            // 检查 build 的方法
-            mfLog(@"TF sort: build.respondsToSelector:needsUpdate=%d", [currentBuild respondsToSelector:@selector(needsUpdate)]);
-            mfLog(@"TF sort: build.respondsToSelector:isInstalled=%d", [currentBuild respondsToSelector:@selector(isInstalled)]);
-            mfLog(@"TF sort: build.respondsToSelector:compatible=%d", [currentBuild respondsToSelector:@selector(compatible)]);
+            // 也检查 builds 数组
+            id builds = [app valueForKey:@"builds"];
+            if ([builds isKindOfClass:[NSArray class]] && ((NSArray *)builds).count > 0) {
+                id firstBuild = ((NSArray *)builds)[0];
+                mfLog(@"TF sort:   builds[0] class=%@ needsUpdate=%d isInstalled=%d",
+                    NSStringFromClass([firstBuild class]),
+                    [firstBuild respondsToSelector:@selector(needsUpdate)] ? ((BOOL(*)(id, SEL))objc_msgSend)(firstBuild, @selector(needsUpdate)) : -1,
+                    [firstBuild respondsToSelector:@selector(isInstalled)] ? ((BOOL(*)(id, SEL))objc_msgSend)(firstBuild, @selector(isInstalled)) : -1);
+            }
         }
     }
     // 排序：检查 currentBuild 的属性
