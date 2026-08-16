@@ -1338,6 +1338,7 @@ static void hook_tfReloadCVData(id self, SEL _cmd) {
     });
 }
 
+static void mfFindPriorityInView(UIView *view, NSInteger *priority);
 static NSInteger mfTFCellPriorityCV(UICollectionViewCell *cell) {
     // 递归查找所有子视图，找按钮/文字中的"更新"/"打开"/"安装"
     NSInteger priority = 3;
