@@ -6,7 +6,16 @@
 #import <objc/runtime.h>
 #import <mach-o/dyld.h>
 
-#define SPOOF_LOG(fmt, ...) NSLog(@"[AppStoreSpoof] " fmt, ##__VA_ARGS__)
+#define SPOOF_LOG_FILE "/var/mobile/Library/Caches/appstore_spoof.log"
+#define SPOOF_LOG(fmt, ...) do { \
+    NSString *_msg = [NSString stringWithFormat:fmt, ##__VA_ARGS__]; \
+    NSString *_line = [NSString stringWithFormat:@"[%@] %@\n", \
+        [NSDateFormatter localizedStringFromDate:[NSDate date] \
+            dateStyle:NSDateFormatterNoStyle timeStyle:NSDateFormatterMediumStyle], _msg]; \
+    NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:@SPOOF_LOG_FILE]; \
+    if (fh) { [fh seekToEndOfFile]; [fh writeData:[_line dataUsingEncoding:NSUTF8StringEncoding]]; [fh closeFile]; } \
+    else { [_line writeToFile:@SPOOF_LOG_FILE atomically:YES encoding:NSUTF8StringEncoding error:nil]; } \
+} while(0)
 
 static NSString *g_spoofVersion = nil;
 static BOOL g_spoofEnabled = NO;
