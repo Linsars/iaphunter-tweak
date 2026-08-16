@@ -1218,38 +1218,45 @@ static void hook_updateAppsListCallback(id self, SEL _cmd, BOOL changed, NSArray
 
 static void mfDumpAppListData(id appList) {
     if (!appList) { mfLog(@"TF sort: appList is nil"); return; }
-    // 尝试多个属性名
+    mfLog(@"TF sort: appList class=%@", NSStringFromClass([appList class]));
     NSArray *sections = [appList valueForKey:@"sections"];
     if (!sections) sections = [appList valueForKey:@"_sections"];
-    if (!sections) sections = [appList valueForKey:@"groupedSections"];
     if (![sections isKindOfClass:[NSArray class]]) {
-        mfLog(@"TF sort: sections not found, trying allApps");
-        NSArray *allApps = [appList valueForKey:@"allApps"];
-        if (!allApps) allApps = [appList valueForKey:@"_allApps"];
-        mfLog(@"TF sort: allApps=%@ count=%lu", allApps ? @"Y" : @"nil",
-            [allApps isKindOfClass:[NSArray class]] ? (unsigned long)((NSArray *)allApps).count : 0);
-        if ([allApps isKindOfClass:[NSArray class]] && ((NSArray *)allApps).count > 0) {
-            id first = ((NSArray *)allApps)[0];
-            mfLog(@"TF sort: first=%@ class=%@", [first valueForKey:@"name"] ?: @"?", NSStringFromClass([first class]));
-            id cb = [first valueForKey:@"currentBuild"];
-            mfLog(@"TF sort: currentBuild=%@", cb ? @"Y" : @"nil");
-            if (cb) {
-                mfLog(@"TF sort:   build class=%@ needsUpdate=%d isInstalled=%d",
-                    NSStringFromClass([cb class]),
-                    [cb respondsToSelector:@selector(needsUpdate)] ? ((BOOL(*)(id, SEL))objc_msgSend)(cb, @selector(needsUpdate)) : -1,
-                    [cb respondsToSelector:@selector(isInstalled)] ? ((BOOL(*)(id, SEL))objc_msgSend)(cb, @selector(isInstalled)) : -1);
-            }
-        }
+        mfLog(@"TF sort: sections not found");
         return;
     }
     mfLog(@"TF sort: %lu sections", (unsigned long)sections.count);
-    for (id section in sections) {
+    for (NSInteger s = 0; s < MIN(3, sections.count); s++) {
+        id section = sections[s];
         NSArray *apps = [section valueForKey:@"apps"];
         if (![apps isKindOfClass:[NSArray class]] || apps.count == 0) continue;
-        id first = apps[0];
-        id cb = [first valueForKey:@"currentBuild"];
-        mfLog(@"TF sort: section apps=%lu first=%@ build=%@",
-            (unsigned long)apps.count, [first valueForKey:@"name"] ?: @"?", cb ? @"Y" : @"nil");
+        mfLog(@"TF sort: section[%ld] apps=%lu", (long)s, (unsigned long)apps.count);
+        for (NSInteger i = 0; i < MIN(2, apps.count); i++) {
+            id app = apps[i];
+            id cb = [app valueForKey:@"currentBuild"];
+            id builds = [app valueForKey:@"builds"];
+            id installedBundle = [app valueForKey:@"installedBundleModel"];
+            mfLog(@"TF sort:   [%ld] %@ invite=%ld build=%@ builds=%@ installed=%@",
+                (long)i,
+                [app valueForKey:@"name"] ?: @"?",
+                (long)[[app valueForKey:@"inviteStatus"] integerValue],
+                cb ? NSStringFromClass([cb class]) : @"nil",
+                [builds isKindOfClass:[NSArray class]] ? @((unsigned long)((NSArray *)builds).count) : @"nil",
+                installedBundle ? @"Y" : @"nil");
+            if (cb) {
+                unsigned int pc;
+                objc_property_t *props = class_copyPropertyList([cb class], &pc);
+                for (unsigned int j = 0; j < MIN(pc, 15); j++) {
+                    const char *name = property_getName(props[j]);
+                    id val = [cb valueForKey:[NSString stringWithUTF8String:name]];
+                    mfLog(@"TF sort:     %s = %@", name, val ?: @"nil");
+                }
+                free(props);
+            }
+            if (installedBundle) {
+                mfLog(@"TF sort:   installedBundle class=%@", NSStringFromClass([installedBundle class]));
+            }
+        }
     }
 }
 
