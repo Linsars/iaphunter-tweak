@@ -1338,7 +1338,63 @@ static void hook_tfReloadCVData(id self, SEL _cmd) {
     });
 }
 
+static NSInteger mfTFCellPriorityCV(UICollectionViewCell *cell) {
+    // 递归查找所有子视图，找按钮/文字中的"更新"/"打开"/"安装"
+    NSInteger priority = 3;
+    mfFindPriorityInView(cell.contentView, &priority);
+    return priority;
+}
+
+static void mfFindPriorityInView(UIView *view, NSInteger *priority) {
+    if (*priority == 0) return; // 已经找到最高优先级
+    // 检查按钮标题
+    if ([view isKindOfClass:[UIButton class]]) {
+        NSString *title = [((UIButton *)view) titleForState:UIControlStateNormal] ?: @"";
+        if ([title containsString:@"更新"] || [title caseInsensitiveCompare:@"Update"] == NSOrderedSame) { *priority = 0; return; }
+        if ([title containsString:@"打开"] || [title caseInsensitiveCompare:@"Open"] == NSOrderedSame) { *priority = MIN(*priority, 1); }
+        if ([title containsString:@"安装"] || [title caseInsensitiveCompare:@"Install"] == NSOrderedSame) { *priority = MIN(*priority, 2); }
+    }
+    // 检查 UILabel
+    if ([view isKindOfClass:[UILabel class]]) {
+        NSString *text = ((UILabel *)view).text ?: @"";
+        if ([text containsString:@"更新"] || [text caseInsensitiveCompare:@"Update"] == NSOrderedSame) { *priority = 0; return; }
+        if ([text containsString:@"打开"] || [text caseInsensitiveCompare:@"Open"] == NSOrderedSame) { *priority = MIN(*priority, 1); }
+        if ([text containsString:@"安装"] || [text caseInsensitiveCompare:@"Install"] == NSOrderedSame) { *priority = MIN(*priority, 2); }
+    }
+    // 检查 accessibility
+    if ([view respondsToSelector:@selector(accessibilityLabel)]) {
+        NSString *ax = [view accessibilityLabel] ?: @"";
+        if ([ax containsString:@"更新"] || [ax caseInsensitiveCompare:@"Update"] == NSOrderedSame) { *priority = 0; return; }
+        if ([ax containsString:@"打开"] || [ax caseInsensitiveCompare:@"Open"] == NSOrderedSame) { *priority = MIN(*priority, 1); }
+        if ([ax containsString:@"安装"] || [ax caseInsensitiveCompare:@"Install"] == NSOrderedSame) { *priority = MIN(*priority, 2); }
+    }
+    // 递归子视图
+    for (UIView *sub in view.subviews) {
+        mfFindPriorityInView(sub, priority);
+        if (*priority == 0) return;
+    }
+}
+
 // UICollectionView 排序
+static void mfDumpViewHierarchy(UIView *view, int depth) {
+    NSMutableString *indent = [NSMutableString string];
+    for (int i = 0; i < depth; i++) [indent appendString:@"  "];
+    NSString *cls = NSStringFromClass([view class]);
+    NSString *title = @"";
+    if ([view isKindOfClass:[UIButton class]]) {
+        title = [((UIButton *)view) titleForState:UIControlStateNormal] ?: @"";
+    }
+    NSString *axLabel = [view respondsToSelector:@selector(accessibilityLabel)] ? [view accessibilityLabel] : @"";
+    NSString *axValue = [view respondsToSelector:@selector(accessibilityValue)] ? [view accessibilityValue] : @"";
+    NSString *axID = [view respondsToSelector:@selector(accessibilityIdentifier)] ? [view accessibilityIdentifier] : @"";
+    if ([view isKindOfClass:[UIButton class]] || axLabel.length > 0 || axValue.length > 0 || axID.length > 0 || [cls containsString:@"Button"] || [cls containsString:@"Label"] || [cls containsString:@"Text"]) {
+        mfLog(@"TF sort: %@<%@> title='%@' ax='%@' axVal='%@' axID='%@'", indent, cls, title, axLabel, axValue, axID);
+    }
+    for (UIView *sub in view.subviews) {
+        mfDumpViewHierarchy(sub, depth + 1);
+    }
+}
+
 static void mfTrySortCollectionView(UICollectionView *cv) {
     if (!cv) return;
     NSInteger sections = [cv numberOfSections];
@@ -1347,31 +1403,21 @@ static void mfTrySortCollectionView(UICollectionView *cv) {
         NSInteger items = [cv numberOfItemsInSection:s];
         if (items <= 1) continue;
         mfLog(@"TF sort: cv section %ld items=%ld", (long)s, (long)items);
+        // 只 dump 前 2 个 cell 的视图层级来分析结构
+        for (NSInteger i = 0; i < MIN(2, items); i++) {
+            NSIndexPath *ip = [NSIndexPath indexPathForItem:i inSection:s];
+            UICollectionViewCell *cell = [cv cellForItemAtIndexPath:ip];
+            if (!cell) continue;
+            mfLog(@"TF sort: === cell %ld view hierarchy ===", (long)i);
+            mfDumpViewHierarchy(cell.contentView, 0);
+        }
         // 收集所有可见 cell 的优先级
         NSMutableArray *entries = [NSMutableArray array];
         for (NSInteger i = 0; i < items; i++) {
             NSIndexPath *ip = [NSIndexPath indexPathForItem:i inSection:s];
             UICollectionViewCell *cell = [cv cellForItemAtIndexPath:ip];
             if (!cell) continue;
-            // UICollectionView 的 cell 通常是 SwiftUI cell
-            // 递归查找按钮
-            NSString *buttonTitle = mfFindButtonTitle(cell.contentView);
-            NSInteger priority = 3;
-            if (buttonTitle) {
-                mfLog(@"TF sort: cv cell %ld button='%@'", (long)i, buttonTitle);
-                if ([buttonTitle containsString:@"更新"] || [buttonTitle caseInsensitiveCompare:@"Update"] == NSOrderedSame) priority = 0;
-                else if ([buttonTitle containsString:@"打开"] || [buttonTitle caseInsensitiveCompare:@"Open"] == NSOrderedSame) priority = 1;
-                else if ([buttonTitle containsString:@"安装"] || [buttonTitle caseInsensitiveCompare:@"Install"] == NSOrderedSame) priority = 2;
-            }
-            // 也检查 cell 的 accessibilityLabel/accessibilityValue
-            if (priority == 3) {
-                NSString *label = cell.accessibilityLabel ?: @"";
-                NSString *value = cell.accessibilityValue ?: @"";
-                mfLog(@"TF sort: cv cell %ld accessibility='%@' '%@'", (long)i, label, value);
-                if ([label containsString:@"更新"] || [value containsString:@"更新"]) priority = 0;
-                else if ([label containsString:@"打开"] || [value containsString:@"打开"]) priority = 1;
-                else if ([label containsString:@"安装"] || [value containsString:@"安装"]) priority = 2;
-            }
+            NSInteger priority = mfTFCellPriorityCV(cell);
             [entries addObject:@{@"p": @(priority), @"ip": ip}];
         }
         // 检查是否需要重排
@@ -1383,7 +1429,6 @@ static void mfTrySortCollectionView(UICollectionView *cv) {
         }
         mfLog(@"TF sort: cv section %ld needSort=%d entries=%lu", (long)s, needSort, (unsigned long)entries.count);
         if (!needSort) continue;
-        // 排序后重新加载 section
         [entries sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
             return [a[@"p"] compare:b[@"p"]];
         }];
