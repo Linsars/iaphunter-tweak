@@ -1199,7 +1199,7 @@ static void mfAutoApplyAdd(NSString *bid) {
     if (bid.length == 0) return;
     mfLog(@"autoApply: adding %@ to whitelist", bid);
     @autoreleasepool {
-        NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+        NSUserDefaults *d = [[NSUserDefaults alloc] initWithSuiteName:@"com.linsars.minisfix"];
         NSMutableArray *list = [NSMutableArray arrayWithArray:([d objectForKey:@"mfIAPAppList"] ?: @[])];
         if (![list containsObject:bid]) {
             [list addObject:bid];
