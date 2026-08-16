@@ -1191,18 +1191,12 @@ static void mfInstallTestFlightBypass(void) {
     swizzle(TFAppBuild, @selector(setExpirationDate:), (IMP)hook_tfSetExpirationDate, (IMP *)&orig_tfSetExpirationDate);
 }
 
-// ====== TestFlight 排序优化 ======
-// 方案1: hook OASAppList 的 sortApp1:andApp2: (数据模型层排序)
-// 方案2: hook UITableView 的 insertRowsAtIndexPaths (SwiftUI 批量更新)
-// 优先级：更新(0) > 打开(1) > 安装(2)
+// ====== TestFlight 排序优化（非侵入式） ======
+// 不干扰 TF 内部排序流程，只在 UICollectionView reloadData 之后
+// 通过递归查找 cell 中的按钮标题判断状态
 
-static IMP orig_tfReloadData;
-static IMP orig_tfInsertRows;
-static IMP orig_tfReloadSections;
-static IMP orig_tfInsertItems;
-static IMP orig_tfReloadCollectionViewSections;
+static IMP orig_tfReloadCVData;
 
-// 递归查找 cell 中的按钮标题
 static NSString *mfFindButtonTitle(UIView *view) {
     for (UIView *sub in view.subviews) {
         if ([sub isKindOfClass:[UIButton class]]) {
@@ -1215,285 +1209,25 @@ static NSString *mfFindButtonTitle(UIView *view) {
     return nil;
 }
 
-static NSInteger mfTFCellPriority(UITableViewCell *cell) {
-    // 先检查 accessoryView
-    if (cell.accessoryView && [cell.accessoryView isKindOfClass:[UIButton class]]) {
-        NSString *title = [((UIButton *)cell.accessoryView) titleForState:UIControlStateNormal] ?: @"";
-        mfLog(@"TF sort: accessory button title='%@'", title);
-        if ([title containsString:@"更新"] || [title caseInsensitiveCompare:@"Update"] == NSOrderedSame) return 0;
-        if ([title containsString:@"打开"] || [title caseInsensitiveCompare:@"Open"] == NSOrderedSame) return 1;
-        if ([title containsString:@"安装"] || [title caseInsensitiveCompare:@"Install"] == NSOrderedSame) return 2;
-    }
-    // 递归查找 contentView 中的按钮
-    NSString *title = mfFindButtonTitle(cell.contentView);
-    if (title) {
-        mfLog(@"TF sort: found button title='%@'", title);
-        if ([title containsString:@"更新"] || [title caseInsensitiveCompare:@"Update"] == NSOrderedSame) return 0;
-        if ([title containsString:@"打开"] || [title caseInsensitiveCompare:@"Open"] == NSOrderedSame) return 1;
-        if ([title containsString:@"安装"] || [title caseInsensitiveCompare:@"Install"] == NSOrderedSame) return 2;
-    }
-    mfLog(@"TF sort: no button found in cell=%p", cell);
-    return 3;
-}
-
-// 方案1: hook OASAppList sortApp1:andApp2:
-static IMP orig_sortApp;
-typedef NSInteger (*SortAppFunc)(id, SEL, id, id);
-static NSInteger hook_sortApp(id self, SEL _cmd, id app1, id app2) {
-    mfLog(@"TF sort: sortApp1:andApp2: called");
-    if (!mfPrefBool(@"mfTFSortOptimize", NO)) {
-        return orig_sortApp ? ((SortAppFunc)orig_sortApp)(self, _cmd, app1, app2) : NSOrderedSame;
-    }
-    // 尝试读取 app 的属性来判断优先级
-    NSInteger p1 = 3, p2 = 3;
-    if ([app1 respondsToSelector:@selector(needsUpdate)] && ((BOOL(*)(id, SEL))objc_msgSend)(app1, @selector(needsUpdate))) p1 = 0;
-    else if ([app1 respondsToSelector:@selector(isInstalled)] && ((BOOL(*)(id, SEL))objc_msgSend)(app1, @selector(isInstalled))) p1 = 1;
-    if ([app2 respondsToSelector:@selector(needsUpdate)] && ((BOOL(*)(id, SEL))objc_msgSend)(app2, @selector(needsUpdate))) p2 = 0;
-    else if ([app2 respondsToSelector:@selector(isInstalled)] && ((BOOL(*)(id, SEL))objc_msgSend)(app2, @selector(isInstalled))) p2 = 1;
-    mfLog(@"TF sort: p1=%ld p2=%ld", (long)p1, (long)p2);
-    if (p1 != p2) return p1 < p2 ? NSOrderedAscending : NSOrderedDescending;
-    return orig_sortApp ? ((SortAppFunc)orig_sortApp)(self, _cmd, app1, app2) : NSOrderedSame;
-}
-
-// 方案2: 通用 UITableView 排序（reloadData/insertRows/reloadSections 后触发）
-static void mfTrySortTableView(UITableView *tv) {
-    if (!mfPrefBool(@"mfTFSortOptimize", NO)) return;
-    if (!tv || ![tv isKindOfClass:[UITableView class]]) return;
-    if (!objc_getClass("OASAppList")) return; // 只在 TestFlight 进程
-    NSInteger sections = [tv numberOfSections];
-    mfLog(@"TF sort: mfTrySortTableView sections=%ld", (long)sections);
-    for (NSInteger s = 0; s < sections; s++) {
-        NSInteger rows = [tv numberOfRowsInSection:s];
-        if (rows <= 1) continue;
-        NSMutableArray *entries = [NSMutableArray array];
-        for (NSInteger r = 0; r < rows; r++) {
-            NSIndexPath *ip = [NSIndexPath indexPathForRow:r inSection:s];
-            UITableViewCell *cell = [tv cellForRowAtIndexPath:ip];
-            if (!cell) continue;
-            NSInteger priority = mfTFCellPriority(cell);
-            [entries addObject:@{@"p": @(priority), @"r": @(r)}];
-        }
-        // 检查是否需要重排
-        BOOL needSort = NO;
-        for (NSInteger i = 1; i < entries.count; i++) {
-            if ([entries[i][@"p"] integerValue] < [entries[i-1][@"p"] integerValue]) {
-                needSort = YES; break;
-            }
-        }
-        mfLog(@"TF sort: section %ld rows=%ld needSort=%d", (long)s, (long)rows, needSort);
-        if (!needSort) continue;
-        // 排序：按优先级重排 cell
-        [entries sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
-            return [a[@"p"] compare:b[@"p"]];
-        }];
-        mfLog(@"TF sort: section %ld sorted, reloading", (long)s);
-        [tv reloadSections:[NSIndexSet indexSetWithIndex:s] withRowAnimation:UITableViewRowAnimationNone];
-    }
-}
-
-static void hook_tfReloadData(id self, SEL _cmd) {
-    mfLog(@"TF sort: reloadData called class=%@", NSStringFromClass([self class]));
-    if (orig_tfReloadData) ((void(*)(id, SEL))orig_tfReloadData)(self, _cmd);
-    mfTrySortTableView((UITableView *)self);
-}
-
-static void hook_tfInsertRows(id self, SEL _cmd, NSArray *paths, NSInteger anim) {
-    mfLog(@"TF sort: insertRows called class=%@ count=%lu", NSStringFromClass([self class]), (unsigned long)paths.count);
-    if (orig_tfInsertRows) ((void(*)(id, SEL, NSArray *, NSInteger))orig_tfInsertRows)(self, _cmd, paths, anim);
-    mfTrySortTableView((UITableView *)self);
-}
-
-static void hook_tfReloadSections(id self, SEL _cmd, NSIndexSet *sections, NSInteger anim) {
-    mfLog(@"TF sort: reloadSections called class=%@", NSStringFromClass([self class]));
-    if (orig_tfReloadSections) ((void(*)(id, SEL, NSIndexSet *, NSInteger))orig_tfReloadSections)(self, _cmd, sections, anim);
-    mfTrySortTableView((UITableView *)self);
-}
-
-// UICollectionView hooks (SwiftUI List 用 UICollectionView)
-static IMP orig_tfInsertItems;
-static IMP orig_tfReloadCVSections;
-static IMP orig_tfReloadCVData;
-static void mfTrySortCollectionView(UICollectionView *cv);
-
-static void hook_tfInsertItems(id self, SEL _cmd, NSArray *paths) {
-    mfLog(@"TF sort: insertItems called class=%@ count=%lu", NSStringFromClass([self class]), (unsigned long)paths.count);
-    if (orig_tfInsertItems) ((void(*)(id, SEL, NSArray *))orig_tfInsertItems)(self, _cmd, paths);
-}
-
-static void hook_tfReloadCVSections(id self, SEL _cmd, NSIndexSet *sections) {
-    mfLog(@"TF sort: reloadCVSections called class=%@", NSStringFromClass([self class]));
-    if (orig_tfReloadCVSections) ((void(*)(id, SEL, NSIndexSet *))orig_tfReloadCVSections)(self, _cmd, sections);
-}
-
-static void hook_tfReloadCVData(id self, SEL _cmd) {
-    mfLog(@"TF sort: collectionView reloadData called class=%@", NSStringFromClass([self class]));
-    if (orig_tfReloadCVData) ((void(*)(id, SEL))orig_tfReloadCVData)(self, _cmd);
-    // 排序：在 reloadData 之后对可见 cell 进行排序
-    if (!mfPrefBool(@"mfTFSortOptimize", NO)) return;
-    if (!objc_getClass("OASAppList")) return; // 只在 TestFlight 进程
-    UICollectionView *cv = (UICollectionView *)self;
-    if (![cv isKindOfClass:[UICollectionView class]]) return;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        mfTrySortCollectionView(cv);
-    });
-}
-
-static void mfFindPriorityInView(UIView *view, NSInteger *priority);
-static NSInteger mfTFCellPriorityCV(UICollectionViewCell *cell) {
-    // 递归查找所有子视图，找按钮/文字中的"更新"/"打开"/"安装"
-    NSInteger priority = 3;
-    mfFindPriorityInView(cell.contentView, &priority);
-    return priority;
-}
-
-static void mfFindPriorityInView(UIView *view, NSInteger *priority) {
-    if (*priority == 0) return; // 已经找到最高优先级
-    // 检查按钮标题
-    if ([view isKindOfClass:[UIButton class]]) {
-        NSString *title = [((UIButton *)view) titleForState:UIControlStateNormal] ?: @"";
-        if ([title containsString:@"更新"] || [title caseInsensitiveCompare:@"Update"] == NSOrderedSame) { *priority = 0; return; }
-        if ([title containsString:@"打开"] || [title caseInsensitiveCompare:@"Open"] == NSOrderedSame) { *priority = MIN(*priority, 1); }
-        if ([title containsString:@"安装"] || [title caseInsensitiveCompare:@"Install"] == NSOrderedSame) { *priority = MIN(*priority, 2); }
-    }
-    // 检查 UILabel
-    if ([view isKindOfClass:[UILabel class]]) {
-        NSString *text = ((UILabel *)view).text ?: @"";
-        if ([text containsString:@"更新"] || [text caseInsensitiveCompare:@"Update"] == NSOrderedSame) { *priority = 0; return; }
-        if ([text containsString:@"打开"] || [text caseInsensitiveCompare:@"Open"] == NSOrderedSame) { *priority = MIN(*priority, 1); }
-        if ([text containsString:@"安装"] || [text caseInsensitiveCompare:@"Install"] == NSOrderedSame) { *priority = MIN(*priority, 2); }
-    }
-    // 检查 accessibility
-    if ([view respondsToSelector:@selector(accessibilityLabel)]) {
-        NSString *ax = [view accessibilityLabel] ?: @"";
-        if ([ax containsString:@"更新"] || [ax caseInsensitiveCompare:@"Update"] == NSOrderedSame) { *priority = 0; return; }
-        if ([ax containsString:@"打开"] || [ax caseInsensitiveCompare:@"Open"] == NSOrderedSame) { *priority = MIN(*priority, 1); }
-        if ([ax containsString:@"安装"] || [ax caseInsensitiveCompare:@"Install"] == NSOrderedSame) { *priority = MIN(*priority, 2); }
-    }
-    // 递归子视图
-    for (UIView *sub in view.subviews) {
-        mfFindPriorityInView(sub, priority);
-        if (*priority == 0) return;
-    }
-}
-
-// UICollectionView 排序 - 数据模型方案
-// hook OASAppList 的 _updateAppsListCallback 方法，在数据传到 UI 之前重排
-
-static IMP orig_updateAppsListCallback;
-static void mfSortSectionApps(id section); // 前向声明
-
-static void hook_updateAppsListCallback(id self, SEL _cmd, BOOL changed, NSArray *fullSections, NSArray *finalSections, id changes) {
-    mfLog(@"TF sort: updateAppsListCallback changed=%d full=%lu final=%lu", changed, (unsigned long)fullSections.count, (unsigned long)finalSections.count);
-    if (mfPrefBool(@"mfTFSortOptimize", NO)) {
-        for (id section in fullSections) mfSortSectionApps(section);
-        for (id section in finalSections) mfSortSectionApps(section);
-    }
-    if (orig_updateAppsListCallback) ((void(*)(id, SEL, BOOL, NSArray *, NSArray *, id))orig_updateAppsListCallback)(self, _cmd, changed, fullSections, finalSections, changes);
-}
-
-// OASAppListSection 排序：重排 _apps 数组
-static NSInteger mfTFAppSortPriority(id app);
-static void mfSortSectionApps(id section) {
-    NSArray *apps = [section valueForKey:@"apps"];
-    if (![apps isKindOfClass:[NSArray class]] || apps.count <= 1) return;
-    // dump：每个 section 只 dump 第一次
-    static NSMutableSet *dumpedSections = nil;
-    if (!dumpedSections) dumpedSections = [NSMutableSet set];
-    NSString *secKey = [NSString stringWithFormat:@"%p", section];
-    if (![dumpedSections containsObject:secKey]) {
-        [dumpedSections addObject:secKey];
-        mfLog(@"TF sort: section=%p class=%@ type=%ld apps=%lu setApps=%d",
-            section, NSStringFromClass([section class]),
-            (long)[[section valueForKey:@"sectionType"] integerValue],
-            (unsigned long)apps.count,
-            [section respondsToSelector:@selector(setApps:)]);
-        if (apps.count > 0) {
-            id app = apps[0];
-            id cb = [app valueForKey:@"currentBuild"];
-            id builds = [app valueForKey:@"builds"];
-            mfLog(@"TF sort:   [%@] invite=%ld build=%@ builds=%@ isPublic=%d",
-                [app valueForKey:@"name"] ?: @"?",
-                (long)[[app valueForKey:@"inviteStatus"] integerValue],
-                cb ? @"Y" : @"nil",
-                [builds isKindOfClass:[NSArray class]] ? @((unsigned long)((NSArray *)builds).count) : @"nil",
-                [app respondsToSelector:@selector(isPublicLinkUser)] ? ((BOOL(*)(id, SEL))objc_msgSend)(app, @selector(isPublicLinkUser)) : -1);
-        }
-    }
-    // 排序
-    NSMutableArray *sorted = [apps mutableCopy];
-    [sorted sortUsingComparator:^NSComparisonResult(id a, id b) {
-        NSInteger pa = mfTFAppSortPriority(a);
-        NSInteger pb = mfTFAppSortPriority(b);
-        if (pa != pb) return pa < pb ? NSOrderedAscending : NSOrderedDescending;
-        return NSOrderedSame;
-    }];
-    // 用 setApps: 或 KVC 写回
-    if ([section respondsToSelector:@selector(setApps:)]) {
-        [section performSelector:@selector(setApps:) withObject:sorted];
-    } else {
-        [section setValue:sorted forKey:@"apps"];
-    }
-    mfLog(@"TF sort: section sorted, %lu apps", (unsigned long)sorted.count);
-}
-
-static NSInteger mfTFAppSortPriority(id app) {
-    // 检查 currentBuild
-    id build = [app valueForKey:@"currentBuild"];
-    if (build) {
-        // TFAppBuild 属性
-        if ([build respondsToSelector:@selector(needsUpdate)] && ((BOOL(*)(id, SEL))objc_msgSend)(build, @selector(needsUpdate))) return 0;
-        if ([build respondsToSelector:@selector(isInstalled)] && ((BOOL(*)(id, SEL))objc_msgSend)(build, @selector(isInstalled))) return 1;
-    }
-    // 检查 app 本身的 installedBuildGroup
-    if ([app respondsToSelector:@selector(isInstalledAndTrackingBuildGroup)] && ((BOOL(*)(id, SEL))objc_msgSend)(app, @selector(isInstalledAndTrackingBuildGroup))) return 1;
-    // 检查 inviteStatus: 2=已安装, 1=可安装
-    if ([app respondsToSelector:@selector(inviteStatus)]) {
-        NSInteger status = ((NSInteger(*)(id, SEL))objc_msgSend)(app, @selector(inviteStatus));
-        if (status == 2) return 1; // 已安装
-    }
-    return 2; // 未安装
-}
-
-static void mfDumpViewHierarchy(UIView *view, int depth) {
-    NSMutableString *indent = [NSMutableString string];
-    for (int i = 0; i < depth; i++) [indent appendString:@"  "];
-    NSString *cls = NSStringFromClass([view class]);
-    NSString *title = @"";
-    if ([view isKindOfClass:[UIButton class]]) {
-        title = [((UIButton *)view) titleForState:UIControlStateNormal] ?: @"";
-    }
-    NSString *axLabel = [view respondsToSelector:@selector(accessibilityLabel)] ? [view accessibilityLabel] : @"";
-    NSString *axValue = [view respondsToSelector:@selector(accessibilityValue)] ? [view accessibilityValue] : @"";
-    NSString *axID = [view respondsToSelector:@selector(accessibilityIdentifier)] ? [view accessibilityIdentifier] : @"";
-    if ([view isKindOfClass:[UIButton class]] || axLabel.length > 0 || axValue.length > 0 || axID.length > 0 || [cls containsString:@"Button"] || [cls containsString:@"Label"] || [cls containsString:@"Text"]) {
-        mfLog(@"TF sort: %@<%@> title='%@' ax='%@' axVal='%@' axID='%@'", indent, cls, title, axLabel, axValue, axID);
-    }
-    for (UIView *sub in view.subviews) {
-        mfDumpViewHierarchy(sub, depth + 1);
-    }
-}
-
-static void mfTrySortCollectionView(UICollectionView *cv) {
+static void mfSortVisibleCells(UICollectionView *cv) {
     if (!cv) return;
     NSInteger sections = [cv numberOfSections];
-    mfLog(@"TF sort: mfTrySortCollectionView sections=%ld", (long)sections);
     for (NSInteger s = 0; s < sections; s++) {
         NSInteger items = [cv numberOfItemsInSection:s];
         if (items <= 1) continue;
-        mfLog(@"TF sort: cv section %ld items=%ld", (long)s, (long)items);
-        for (NSInteger i = 0; i < MIN(2, items); i++) {
-            NSIndexPath *ip = [NSIndexPath indexPathForItem:i inSection:s];
-            UICollectionViewCell *cell = [cv cellForItemAtIndexPath:ip];
-            if (!cell) continue;
-            mfLog(@"TF sort: === cell %ld view hierarchy ===", (long)i);
-            mfDumpViewHierarchy(cell.contentView, 0);
-        }
         NSMutableArray *entries = [NSMutableArray array];
         for (NSInteger i = 0; i < items; i++) {
             NSIndexPath *ip = [NSIndexPath indexPathForItem:i inSection:s];
             UICollectionViewCell *cell = [cv cellForItemAtIndexPath:ip];
             if (!cell) continue;
-            NSInteger priority = mfTFCellPriorityCV(cell);
+            NSString *btnTitle = mfFindButtonTitle(cell.contentView);
+            NSInteger priority = 3;
+            if (btnTitle) {
+                mfLog(@"TF sort: cell[%ld] button='%@'", (long)i, btnTitle);
+                if ([btnTitle containsString:@"更新"] || [btnTitle caseInsensitiveCompare:@"Update"] == NSOrderedSame) priority = 0;
+                else if ([btnTitle containsString:@"打开"] || [btnTitle caseInsensitiveCompare:@"Open"] == NSOrderedSame) priority = 1;
+                else if ([btnTitle containsString:@"安装"] || [btnTitle caseInsensitiveCompare:@"Install"] == NSOrderedSame) priority = 2;
+            }
             [entries addObject:@{@"p": @(priority), @"ip": ip}];
         }
         BOOL needSort = NO;
@@ -1502,90 +1236,36 @@ static void mfTrySortCollectionView(UICollectionView *cv) {
                 needSort = YES; break;
             }
         }
-        mfLog(@"TF sort: cv section %ld needSort=%d entries=%lu", (long)s, needSort, (unsigned long)entries.count);
         if (!needSort) continue;
         [entries sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
             return [a[@"p"] compare:b[@"p"]];
         }];
-        mfLog(@"TF sort: cv section %ld sorted, reloading", (long)s);
         [cv reloadSections:[NSIndexSet indexSetWithIndex:s]];
+        mfLog(@"TF sort: section %ld sorted", (long)s);
     }
+}
+
+static void hook_tfReloadCVData(id self, SEL _cmd) {
+    if (orig_tfReloadCVData) ((void(*)(id, SEL))orig_tfReloadCVData)(self, _cmd);
+    if (!mfPrefBool(@"mfTFSortOptimize", NO)) return;
+    if (!objc_getClass("OASAppList")) return;
+    UICollectionView *cv = (UICollectionView *)self;
+    if (![cv isKindOfClass:[UICollectionView class]]) return;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        mfSortVisibleCells(cv);
+    });
 }
 
 static void mfInstallTestFlightSorting(void) {
     mfLog(@"TF sort: installing hooks");
-    // 方案1: hook sortApp1:andApp2: (尝试多个类)
-    NSArray *candidates = @[@"OASAppList", @"OASMainAppList", @"OASAppListGrouped"];
-    for (NSString *clsName in candidates) {
-        Class cls = objc_getClass([clsName UTF8String]);
-        mfLog(@"TF sort: %@=%@", clsName, cls ? @"found" : @"nil");
-        if (!cls) continue;
-        Method sortM = class_getInstanceMethod(cls, NSSelectorFromString(@"sortApp1:andApp2:"));
-        mfLog(@"TF sort: %@ sortApp1:andApp2: method=%@", clsName, sortM ? @"found" : @"nil");
-        if (sortM) {
-            orig_sortApp = method_getImplementation(sortM);
-            method_setImplementation(sortM, (IMP)hook_sortApp);
-            mfLog(@"TF sort: %@ sortApp1:andApp2: hooked!", clsName);
-            break;
-        }
-    }
-    // 方案1b: hook _updateAppsListCallback（数据模型回调，在 UI 更新前重排）
-    for (NSString *clsName in candidates) {
-        Class cls = objc_getClass([clsName UTF8String]);
-        if (!cls) continue;
-        Method updateM = class_getInstanceMethod(cls, NSSelectorFromString(@"_updateAppsListCallbackAppsDidChange:withfullSections:finalSections:changeInfo:"));
-        mfLog(@"TF sort: %@ _updateAppsListCallback method=%@", clsName, updateM ? @"found" : @"nil");
-        if (updateM) {
-            orig_updateAppsListCallback = method_getImplementation(updateM);
-            method_setImplementation(updateM, (IMP)hook_updateAppsListCallback);
-            mfLog(@"TF sort: %@ _updateAppsListCallback hooked!", clsName);
-        }
-    }
-    // 方案2: hook UITableView 的多个更新方法
-    Class tvClass = NSClassFromString(@"UITableView");
-    if (tvClass) {
-        Method reloadM = class_getInstanceMethod(tvClass, @selector(reloadData));
-        if (reloadM) {
-            orig_tfReloadData = method_getImplementation(reloadM);
-            method_setImplementation(reloadM, (IMP)hook_tfReloadData);
-            mfLog(@"TF sort: reloadData hooked");
-        }
-        Method insertM = class_getInstanceMethod(tvClass, @selector(insertRowsAtIndexPaths:withRowAnimation:));
-        if (insertM) {
-            orig_tfInsertRows = method_getImplementation(insertM);
-            method_setImplementation(insertM, (IMP)hook_tfInsertRows);
-            mfLog(@"TF sort: insertRowsAtIndexPaths hooked");
-        }
-        Method reloadSecM = class_getInstanceMethod(tvClass, @selector(reloadSections:withRowAnimation:));
-        if (reloadSecM) {
-            orig_tfReloadSections = method_getImplementation(reloadSecM);
-            method_setImplementation(reloadSecM, (IMP)hook_tfReloadSections);
-            mfLog(@"TF sort: reloadSections hooked");
-        }
-    }
-    // UICollectionView hooks (SwiftUI List 可能用 UICollectionView)
     Class cvClass = NSClassFromString(@"UICollectionView");
-    if (cvClass) {
-        Method insertItemsM = class_getInstanceMethod(cvClass, @selector(insertItemsAtIndexPaths:));
-        if (insertItemsM) {
-            orig_tfInsertItems = method_getImplementation(insertItemsM);
-            method_setImplementation(insertItemsM, (IMP)hook_tfInsertItems);
-            mfLog(@"TF sort: insertItemsAtIndexPaths hooked");
-        }
-        Method reloadCVM = class_getInstanceMethod(cvClass, @selector(reloadData));
-        if (reloadCVM) {
-            orig_tfReloadCVData = method_getImplementation(reloadCVM);
-            method_setImplementation(reloadCVM, (IMP)hook_tfReloadCVData);
-            mfLog(@"TF sort: collectionView reloadData hooked");
-        }
-        Method reloadCVSecM = class_getInstanceMethod(cvClass, @selector(reloadSections:));
-        if (reloadCVSecM) {
-            orig_tfReloadCVSections = method_getImplementation(reloadCVSecM);
-            method_setImplementation(reloadCVSecM, (IMP)hook_tfReloadCVSections);
-            mfLog(@"TF sort: collectionView reloadSections hooked");
-        }
+    if (!cvClass) { mfLog(@"TF sort: UICollectionView not found"); return; }
+    Method reloadM = class_getInstanceMethod(cvClass, @selector(reloadData));
+    if (reloadM) {
+        orig_tfReloadCVData = method_getImplementation(reloadM);
+        method_setImplementation(reloadM, (IMP)hook_tfReloadCVData);
+        mfLog(@"TF sort: reloadData hooked");
     }
-    mfLog(@"TF sort: all hooks installed");
 }
 
 // ====== 自动添加新安装 App 到白名单 ======
