@@ -1192,125 +1192,167 @@ static void mfInstallTestFlightBypass(void) {
 }
 
 // ====== TestFlight 排序优化 ======
-// hook UITableView reloadData，在 TestFlight 列表重载后按按钮状态排序
+// 方案1: hook OASAppList 的 sortApp1:andApp2: (数据模型层排序)
+// 方案2: hook UITableView 的 insertRowsAtIndexPaths (SwiftUI 批量更新)
 // 优先级：更新(0) > 打开(1) > 安装(2)
 
 static IMP orig_tfReloadData;
+static IMP orig_tfInsertRows;
+static IMP orig_tfReloadSections;
+
+// 递归查找 cell 中的按钮标题
+static NSString *mfFindButtonTitle(UIView *view) {
+    for (UIView *sub in view.subviews) {
+        if ([sub isKindOfClass:[UIButton class]]) {
+            NSString *title = [((UIButton *)sub) titleForState:UIControlStateNormal];
+            if (title.length > 0) return title;
+        }
+        NSString *found = mfFindButtonTitle(sub);
+        if (found) return found;
+    }
+    return nil;
+}
 
 static NSInteger mfTFCellPriority(UITableViewCell *cell) {
-    // 遍历 cell.contentView.subviews 找按钮，根据按钮标题判断状态
-    for (UIView *v in cell.contentView.subviews) {
-        if ([v isKindOfClass:[UIButton class]]) {
-            NSString *title = [((UIButton *)v) titleForState:UIControlStateNormal] ?: @"";
-            mfLog(@"TF sort: found button title='%@' in cell=%p", title, cell);
-            if ([title containsString:@"更新"] || [title caseInsensitiveCompare:@"Update"] == NSOrderedSame) return 0;
-            if ([title containsString:@"打开"] || [title caseInsensitiveCompare:@"Open"] == NSOrderedSame) return 1;
-            if ([title containsString:@"安装"] || [title caseInsensitiveCompare:@"Install"] == NSOrderedSame) return 2;
-        }
-        // 递归查找子视图
-        for (UIView *sub in v.subviews) {
-            if ([sub isKindOfClass:[UIButton class]]) {
-                NSString *title = [((UIButton *)sub) titleForState:UIControlStateNormal] ?: @"";
-                mfLog(@"TF sort: found nested button title='%@' in cell=%p", title, cell);
-                if ([title containsString:@"更新"] || [title caseInsensitiveCompare:@"Update"] == NSOrderedSame) return 0;
-                if ([title containsString:@"打开"] || [title caseInsensitiveCompare:@"Open"] == NSOrderedSame) return 1;
-                if ([title containsString:@"安装"] || [title caseInsensitiveCompare:@"Install"] == NSOrderedSame) return 2;
-            }
-        }
-    }
-    // 也检查 accessoryView
+    // 先检查 accessoryView
     if (cell.accessoryView && [cell.accessoryView isKindOfClass:[UIButton class]]) {
         NSString *title = [((UIButton *)cell.accessoryView) titleForState:UIControlStateNormal] ?: @"";
-        mfLog(@"TF sort: found accessory button title='%@' in cell=%p", title, cell);
+        mfLog(@"TF sort: accessory button title='%@'", title);
+        if ([title containsString:@"更新"] || [title caseInsensitiveCompare:@"Update"] == NSOrderedSame) return 0;
+        if ([title containsString:@"打开"] || [title caseInsensitiveCompare:@"Open"] == NSOrderedSame) return 1;
+        if ([title containsString:@"安装"] || [title caseInsensitiveCompare:@"Install"] == NSOrderedSame) return 2;
+    }
+    // 递归查找 contentView 中的按钮
+    NSString *title = mfFindButtonTitle(cell.contentView);
+    if (title) {
+        mfLog(@"TF sort: found button title='%@'", title);
         if ([title containsString:@"更新"] || [title caseInsensitiveCompare:@"Update"] == NSOrderedSame) return 0;
         if ([title containsString:@"打开"] || [title caseInsensitiveCompare:@"Open"] == NSOrderedSame) return 1;
         if ([title containsString:@"安装"] || [title caseInsensitiveCompare:@"Install"] == NSOrderedSame) return 2;
     }
     mfLog(@"TF sort: no button found in cell=%p", cell);
-    return 3; // 未知状态放最后
+    return 3;
 }
 
-static void hook_tfReloadData(id self, SEL _cmd) {
-    mfLog(@"TF sort: reloadData called, self=%@", NSStringFromClass([self class]));
-    if (orig_tfReloadData) ((void(*)(id, SEL))orig_tfReloadData)(self, _cmd);
+// 方案1: hook OASAppList sortApp1:andApp2:
+static IMP orig_sortApp;
+static NSInteger hook_sortApp(id self, SEL _cmd, id app1, id app2) {
+    mfLog(@"TF sort: sortApp1:andApp2: called");
     if (!mfPrefBool(@"mfTFSortOptimize", NO)) {
-        mfLog(@"TF sort: disabled by pref");
-        return;
+        return orig_sortApp ? orig_sortApp(self, _cmd, app1, app2) : NSOrderedSame;
     }
-    UITableView *tv = (UITableView *)self;
-    if (![tv isKindOfClass:[UITableView class]]) {
-        mfLog(@"TF sort: not UITableView, class=%@", NSStringFromClass([self class]));
-        return;
-    }
-    // 只在 TestFlight 进程内生效
-    if (!objc_getClass("OASAppList")) {
-        mfLog(@"TF sort: OASAppList not found, not in TestFlight");
-        return;
-    }
-    mfLog(@"TF sort: OASAppList found, proceeding");
-    // 获取所有 section 的可见 cells
+    // 尝试读取 app 的属性来判断优先级
+    NSInteger p1 = 3, p2 = 3;
+    // 检查 needsUpdate
+    if ([app1 respondsToSelector:@selector(needsUpdate)] && ((BOOL(*)(id, SEL))objc_msgSend)(app1, @selector(needsUpdate))) p1 = 0;
+    else if ([app1 respondsToSelector:@selector(isInstalled)] && ((BOOL(*)(id, SEL))objc_msgSend)(app1, @selector(isInstalled))) p1 = 1;
+    if ([app2 respondsToSelector:@selector(needsUpdate)] && ((BOOL(*)(id, SEL))objc_msgSend)(app2, @selector(needsUpdate))) p2 = 0;
+    else if ([app2 respondsToSelector:@selector(isInstalled)] && ((BOOL(*)(id, SEL))objc_msgSend)(app2, @selector(isInstalled))) p2 = 1;
+    mfLog(@"TF sort: p1=%ld p2=%ld", (long)p1, (long)p2);
+    if (p1 != p2) return p1 < p2 ? NSOrderedAscending : NSOrderedDescending;
+    return orig_sortApp ? orig_sortApp(self, _cmd, app1, app2) : NSOrderedSame;
+}
+
+// 方案2: 通用 UITableView 排序（reloadData/insertRows/reloadSections 后触发）
+static void mfTrySortTableView(UITableView *tv) {
+    if (!mfPrefBool(@"mfTFSortOptimize", NO)) return;
+    if (!tv || ![tv isKindOfClass:[UITableView class]]) return;
+    if (!objc_getClass("OASAppList")) return; // 只在 TestFlight 进程
     NSInteger sections = [tv numberOfSections];
-    mfLog(@"TF sort: %ld sections", (long)sections);
+    mfLog(@"TF sort: mfTrySortTableView sections=%ld", (long)sections);
     for (NSInteger s = 0; s < sections; s++) {
         NSInteger rows = [tv numberOfRowsInSection:s];
-        mfLog(@"TF sort: section %ld has %ld rows", (long)s, (long)rows);
         if (rows <= 1) continue;
-        // 收集 (priority, indexPath)
         NSMutableArray *entries = [NSMutableArray array];
         for (NSInteger r = 0; r < rows; r++) {
             NSIndexPath *ip = [NSIndexPath indexPathForRow:r inSection:s];
             UITableViewCell *cell = [tv cellForRowAtIndexPath:ip];
-            if (!cell) {
-                mfLog(@"TF sort: cell is nil at section=%ld row=%ld", (long)s, (long)r);
-                continue;
-            }
+            if (!cell) continue;
             NSInteger priority = mfTFCellPriority(cell);
-            [entries addObject:@{@"p": @(priority), @"ip": ip}];
-            mfLog(@"TF sort: section=%ld row=%ld priority=%ld", (long)s, (long)r, (long)priority);
+            [entries addObject:@{@"p": @(priority), @"r": @(r)}];
         }
         // 检查是否需要重排
         BOOL needSort = NO;
         for (NSInteger i = 1; i < entries.count; i++) {
             if ([entries[i][@"p"] integerValue] < [entries[i-1][@"p"] integerValue]) {
-                needSort = YES;
-                break;
+                needSort = YES; break;
             }
         }
-        mfLog(@"TF sort: section %ld needSort=%d", (long)s, needSort);
+        mfLog(@"TF sort: section %ld rows=%ld needSort=%d", (long)s, (long)rows, needSort);
         if (!needSort) continue;
-        // 按优先级排序
+        // 排序：按优先级重排 cell
         [entries sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
             return [a[@"p"] compare:b[@"p"]];
         }];
         mfLog(@"TF sort: section %ld sorted, reloading", (long)s);
-        // 重新加载 section 以应用排序
         [tv reloadSections:[NSIndexSet indexSetWithIndex:s] withRowAnimation:UITableViewRowAnimationNone];
     }
 }
 
+static void hook_tfReloadData(id self, SEL _cmd) {
+    mfLog(@"TF sort: reloadData called class=%@", NSStringFromClass([self class]));
+    if (orig_tfReloadData) ((void(*)(id, SEL))orig_tfReloadData)(self, _cmd);
+    mfTrySortTableView((UITableView *)self);
+}
+
+static void hook_tfInsertRows(id self, SEL _cmd, NSArray *paths, NSInteger anim) {
+    mfLog(@"TF sort: insertRows called class=%@ count=%lu", NSStringFromClass([self class]), (unsigned long)paths.count);
+    if (orig_tfInsertRows) ((void(*)(id, SEL, NSArray *, NSInteger))orig_tfInsertRows)(self, _cmd, paths, anim);
+    mfTrySortTableView((UITableView *)self);
+}
+
+static void hook_tfReloadSections(id self, SEL _cmd, NSIndexSet *sections, NSInteger anim) {
+    mfLog(@"TF sort: reloadSections called class=%@", NSStringFromClass([self class]));
+    if (orig_tfReloadSections) ((void(*)(id, SEL, NSIndexSet *, NSInteger))orig_tfReloadSections)(self, _cmd, sections, anim);
+    mfTrySortTableView((UITableView *)self);
+}
+
 static void mfInstallTestFlightSorting(void) {
-    mfLog(@"TF sort: installing hook");
+    mfLog(@"TF sort: installing hooks");
+    // 方案1: hook OASAppList sortApp1:andApp2:
+    Class oasAppList = objc_getClass("OASAppList");
+    mfLog(@"TF sort: OASAppList=%@", oasAppList ? @"found" : @"nil");
+    if (oasAppList) {
+        Method sortM = class_getInstanceMethod(oasAppList, NSSelectorFromString(@"sortApp1:andApp2:"));
+        mfLog(@"TF sort: sortApp1:andApp2: method=%@", sortM ? @"found" : @"nil");
+        if (sortM) {
+            orig_sortApp = method_getImplementation(sortM);
+            method_setImplementation(sortM, (IMP)hook_sortApp);
+            mfLog(@"TF sort: OASAppList sortApp1:andApp2: hooked");
+        }
+    }
+    // 方案2: hook UITableView 的多个更新方法
     Class tvClass = NSClassFromString(@"UITableView");
-    if (!tvClass) {
-        mfLog(@"TF sort: UITableView not found");
-        return;
+    if (tvClass) {
+        Method reloadM = class_getInstanceMethod(tvClass, @selector(reloadData));
+        if (reloadM) {
+            orig_tfReloadData = method_getImplementation(reloadM);
+            method_setImplementation(reloadM, (IMP)hook_tfReloadData);
+            mfLog(@"TF sort: reloadData hooked");
+        }
+        Method insertM = class_getInstanceMethod(tvClass, @selector(insertRowsAtIndexPaths:withRowAnimation:));
+        if (insertM) {
+            orig_tfInsertRows = method_getImplementation(insertM);
+            method_setImplementation(insertM, (IMP)hook_tfInsertRows);
+            mfLog(@"TF sort: insertRowsAtIndexPaths hooked");
+        }
+        Method reloadSecM = class_getInstanceMethod(tvClass, @selector(reloadSections:withRowAnimation:));
+        if (reloadSecM) {
+            orig_tfReloadSections = method_getImplementation(reloadSecM);
+            method_setImplementation(reloadSecM, (IMP)hook_tfReloadSections);
+            mfLog(@"TF sort: reloadSections hooked");
+        }
     }
-    Method m = class_getInstanceMethod(tvClass, @selector(reloadData));
-    if (!m) {
-        mfLog(@"TF sort: reloadData method not found");
-        return;
-    }
-    orig_tfReloadData = method_getImplementation(m);
-    method_setImplementation(m, (IMP)hook_tfReloadData);
-    mfLog(@"TF sort: hook installed successfully");
+    mfLog(@"TF sort: all hooks installed");
 }
 
 // ====== 自动添加新安装 App 到白名单 ======
-// hook LSApplicationWorkspace 的注册方法，在 app 注册到系统时添加 bundleId
+// 监听 SpringBoard 的应用安装/注册通知
 
 static void mfAutoApplyAdd(NSString *bid) {
     if (!mfPrefBool(@"mfIAPAutoApply", NO)) return;
     if (bid.length == 0) return;
+    mfLog(@"autoApply: adding %@ to whitelist", bid);
     @autoreleasepool {
         NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
         NSMutableArray *list = [NSMutableArray arrayWithArray:([d objectForKey:@"mfIAPAppList"] ?: @[])];
@@ -1318,72 +1360,70 @@ static void mfAutoApplyAdd(NSString *bid) {
             [list addObject:bid];
             [d setObject:list forKey:@"mfIAPAppList"];
             [d synchronize];
-            mfLog(@"autoApply: added %@ to whitelist", bid);
+            mfLog(@"autoApply: %@ added successfully", bid);
+        } else {
+            mfLog(@"autoApply: %@ already in list", bid);
+        }
+    }
+}
+
+// 监听应用安装相关通知
+static void mfObserveAppInstallNotifications(void) {
+    mfLog(@"autoApply: observing notifications");
+    // 通知名列表（SpringBoard/installd 会发送这些通知）
+    NSArray *notifNames = @[
+        @"com.apple.LaunchServices.applicationRegistered",
+        @"com.apple.LaunchServices.applicationStateChanged",
+        @"SBInstalledApplicationsDidChangeNotification",
+        @"com.apple.mobile.application_installed",
+        @"com.apple.mobile.installation.changed",
+    ];
+    for (NSString *name in notifNames) {
+        [[NSNotificationCenter defaultCenter] addObserverForName:name
+            object:nil queue:nil usingBlock:^(NSNotification *note) {
+                mfLog(@"autoApply: notification %@ received", name);
+                if (!mfPrefBool(@"mfIAPAutoApply", NO)) return;
+                // 尝试从通知获取 bundleId
+                NSString *bid = nil;
+                // 方式1: userInfo 中的 bundleId
+                bid = note.userInfo[@"bundleIdentifier"] ?: note.userInfo[@"bundleId"] ?: note.userInfo[@"SBApplicationBundleIdentifier"];
+                // 方式2: 从 LSApplicationProxy 获取
+                if (!bid && note.object) {
+                    if ([note.object respondsToSelector:@selector(bundleIdentifier)]) {
+                        bid = [note.object performSelector:@selector(bundleIdentifier)];
+                    } else if ([note.object isKindOfClass:[NSDictionary class]]) {
+                        bid = ((NSDictionary *)note.object)[@"MCMMetadataIdentifier"] ?: ((NSDictionary *)note.object)[@"CFBundleIdentifier"];
+                    }
+                }
+                mfLog(@"autoApply: notification bid=%@", bid ?: @"nil");
+                if (bid) mfAutoApplyAdd(bid);
+            }];
+        mfLog(@"autoApply: observing %@", name);
+    }
+    // 额外: hook LSApplicationWorkspace 的 registerApplicationDictionary:
+    Class ws = objc_getClass("LSApplicationWorkspace");
+    if (ws) {
+        SEL sel = NSSelectorFromString(@"registerApplicationDictionary:");
+        Method m = class_getInstanceMethod(ws, sel);
+        if (m) {
+            IMP orig = method_getImplementation(m);
+            method_setImplementation(m, imp_implementationWithBlock(^(id self, NSDictionary *dict) {
+                mfLog(@"autoApply: registerApplicationDictionary called");
+                if (mfPrefBool(@"mfIAPAutoApply", NO)) {
+                    NSString *bid = dict[@"MCMMetadataIdentifier"] ?: dict[@"CFBundleIdentifier"];
+                    mfLog(@"autoApply: registerApp bid=%@", bid ?: @"nil");
+                    if (bid) mfAutoApplyAdd(bid);
+                }
+                ((void(*)(id, SEL, NSDictionary *))orig)(self, sel, dict);
+            }));
+            mfLog(@"autoApply: registerApplicationDictionary hooked");
         }
     }
 }
 
 static void mfInstallAutoApply(void) {
-    mfLog(@"autoApply: installing hooks, pid=%d", getpid());
-    // hook LSApplicationWorkspace registerInstalledApp: (app 注册到系统时调用)
-    Class ws = objc_getClass("LSApplicationWorkspace");
-    if (!ws) {
-        mfLog(@"autoApply: LSApplicationWorkspace not found");
-        return;
-    }
-    // 尝试多个可能的注册方法
-    NSArray *selNames = @[
-        @"registerApplicationDictionary:",
-        @"registerApplication:",
-        @"_registerApplicationDictionary:",
-        @"_registerApplication:"
-    ];
-    for (NSString *selName in selNames) {
-        SEL sel = NSSelectorFromString(selName);
-        Method m = class_getInstanceMethod(ws, sel);
-        if (!m) continue;
-        IMP orig = method_getImplementation(m);
-        SEL hookedSel = sel;
-        method_setImplementation(m, imp_implementationWithBlock(^(id self, id arg) {
-            mfLog(@"autoApply: %@ called", selName);
-            // arg 可能是 NSDictionary 或 LSApplicationProxy
-            NSString *bid = nil;
-            if ([arg isKindOfClass:[NSDictionary class]]) {
-                bid = arg[@"MCMMetadataIdentifier"] ?: arg[@"CFBundleIdentifier"] ?: arg[@"bundleIdentifier"];
-            } else if ([arg respondsToSelector:@selector(bundleIdentifier)]) {
-                bid = [arg performSelector:@selector(bundleIdentifier)];
-            } else if ([arg isKindOfClass:[NSString class]]) {
-                bid = (NSString *)arg;
-            }
-            mfLog(@"autoApply: %@ bid=%@", selName, bid ?: @"nil");
-            mfAutoApplyAdd(bid);
-            ((void(*)(id, SEL, id))orig)(self, hookedSel, arg);
-        }));
-        mfLog(@"autoApply: %@ hooked", selName);
-    }
-    // hook didInstallApplications: (安装完成后调用)
-    SEL didInstallSel = NSSelectorFromString(@"didInstallApplications:");
-    Method didInstallM = class_getInstanceMethod(ws, didInstallSel);
-    if (didInstallM) {
-        IMP didInstallOrig = method_getImplementation(didInstallM);
-        SEL didInstallSel = NSSelectorFromString(@"didInstallApplications:");
-        method_setImplementation(didInstallM, imp_implementationWithBlock(^(id self, NSArray *apps) {
-            mfLog(@"autoApply: didInstallApplications called, count=%lu", (unsigned long)apps.count);
-            for (id app in apps) {
-                NSString *bid = nil;
-                if ([app isKindOfClass:[NSString class]]) {
-                    bid = (NSString *)app;
-                } else if ([app respondsToSelector:@selector(bundleIdentifier)]) {
-                    bid = [app performSelector:@selector(bundleIdentifier)];
-                }
-                mfLog(@"autoApply: didInstall bid=%@", bid ?: @"nil");
-                mfAutoApplyAdd(bid);
-            }
-            ((void(*)(id, SEL, NSArray *))didInstallOrig)(self, didInstallSel, apps);
-        }));
-        mfLog(@"autoApply: didInstallApplications hooked");
-    }
-    mfLog(@"autoApply: hooks installed");
+    mfLog(@"autoApply: installing, pid=%d app=%@", getpid(), [[NSBundle mainBundle] bundleIdentifier]);
+    mfObserveAppInstallNotifications();
 }
 
 // 双指长按手势处理
@@ -1436,13 +1476,9 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
             mfInstallTestFlightSorting();
         }
 
-        // 自动添加新 App 到白名单（全局 hook，在 SpringBoard 进程注入）
-        mfLog(@"autoApply: checking pref mfIAPAutoApply=%d", mfPrefBool(@"mfIAPAutoApply", NO));
-        if (mfPrefBool(@"mfIAPAutoApply", NO)) {
-            mfInstallAutoApply();
-        } else {
-            mfLog(@"autoApply: disabled by pref");
-        }
+        // 自动添加新 App 到白名单（始终注册通知，运行时检查开关）
+        mfLog(@"autoApply: installing observers");
+        mfInstallAutoApply();
 
         // 启用检查：设置页「启用 IAP工具箱」×「应用程序」白名单（不通过则不加载任何功能）
         if (!mfIsEnabledForCurrentApp()) {
