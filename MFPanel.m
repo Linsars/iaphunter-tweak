@@ -1199,6 +1199,8 @@ static void mfInstallTestFlightBypass(void) {
 static IMP orig_tfReloadData;
 static IMP orig_tfInsertRows;
 static IMP orig_tfReloadSections;
+static IMP orig_tfInsertItems;
+static IMP orig_tfReloadCollectionViewSections;
 
 // 递归查找 cell 中的按钮标题
 static NSString *mfFindButtonTitle(UIView *view) {
@@ -1307,18 +1309,41 @@ static void hook_tfReloadSections(id self, SEL _cmd, NSIndexSet *sections, NSInt
     mfTrySortTableView((UITableView *)self);
 }
 
+// UICollectionView hooks (SwiftUI List 可能用 UICollectionView)
+static IMP orig_tfInsertItems;
+static IMP orig_tfReloadCVSections;
+static IMP orig_tfReloadCVData;
+
+static void hook_tfInsertItems(id self, SEL _cmd, NSArray *paths) {
+    mfLog(@"TF sort: insertItems called class=%@ count=%lu", NSStringFromClass([self class]), (unsigned long)paths.count);
+    if (orig_tfInsertItems) ((void(*)(id, SEL, NSArray *))orig_tfInsertItems)(self, _cmd, paths);
+}
+
+static void hook_tfReloadCVSections(id self, SEL _cmd, NSIndexSet *sections) {
+    mfLog(@"TF sort: reloadCVSections called class=%@", NSStringFromClass([self class]));
+    if (orig_tfReloadCVSections) ((void(*)(id, SEL, NSIndexSet *))orig_tfReloadCVSections)(self, _cmd, sections);
+}
+
+static void hook_tfReloadCVData(id self, SEL _cmd) {
+    mfLog(@"TF sort: collectionView reloadData called class=%@", NSStringFromClass([self class]));
+    if (orig_tfReloadCVData) ((void(*)(id, SEL))orig_tfReloadCVData)(self, _cmd);
+}
+
 static void mfInstallTestFlightSorting(void) {
     mfLog(@"TF sort: installing hooks");
-    // 方案1: hook OASAppList sortApp1:andApp2:
-    Class oasAppList = objc_getClass("OASAppList");
-    mfLog(@"TF sort: OASAppList=%@", oasAppList ? @"found" : @"nil");
-    if (oasAppList) {
-        Method sortM = class_getInstanceMethod(oasAppList, NSSelectorFromString(@"sortApp1:andApp2:"));
-        mfLog(@"TF sort: sortApp1:andApp2: method=%@", sortM ? @"found" : @"nil");
+    // 方案1: hook sortApp1:andApp2: (尝试多个类)
+    NSArray *candidates = @[@"OASAppList", @"OASMainAppList", @"OASAppListGrouped"];
+    for (NSString *clsName in candidates) {
+        Class cls = objc_getClass([clsName UTF8String]);
+        mfLog(@"TF sort: %@=%@", clsName, cls ? @"found" : @"nil");
+        if (!cls) continue;
+        Method sortM = class_getInstanceMethod(cls, NSSelectorFromString(@"sortApp1:andApp2:"));
+        mfLog(@"TF sort: %@ sortApp1:andApp2: method=%@", clsName, sortM ? @"found" : @"nil");
         if (sortM) {
             orig_sortApp = method_getImplementation(sortM);
             method_setImplementation(sortM, (IMP)hook_sortApp);
-            mfLog(@"TF sort: OASAppList sortApp1:andApp2: hooked");
+            mfLog(@"TF sort: %@ sortApp1:andApp2: hooked!", clsName);
+            break;
         }
     }
     // 方案2: hook UITableView 的多个更新方法
@@ -1341,6 +1366,28 @@ static void mfInstallTestFlightSorting(void) {
             orig_tfReloadSections = method_getImplementation(reloadSecM);
             method_setImplementation(reloadSecM, (IMP)hook_tfReloadSections);
             mfLog(@"TF sort: reloadSections hooked");
+        }
+    }
+    // UICollectionView hooks (SwiftUI List 可能用 UICollectionView)
+    Class cvClass = NSClassFromString(@"UICollectionView");
+    if (cvClass) {
+        Method insertItemsM = class_getInstanceMethod(cvClass, @selector(insertItemsAtIndexPaths:));
+        if (insertItemsM) {
+            orig_tfInsertItems = method_getImplementation(insertItemsM);
+            method_setImplementation(insertItemsM, (IMP)hook_tfInsertItems);
+            mfLog(@"TF sort: insertItemsAtIndexPaths hooked");
+        }
+        Method reloadCVM = class_getInstanceMethod(cvClass, @selector(reloadData));
+        if (reloadCVM) {
+            orig_tfReloadCVData = method_getImplementation(reloadCVM);
+            method_setImplementation(reloadCVM, (IMP)hook_tfReloadCVData);
+            mfLog(@"TF sort: collectionView reloadData hooked");
+        }
+        Method reloadCVSecM = class_getInstanceMethod(cvClass, @selector(reloadSections:));
+        if (reloadCVSecM) {
+            orig_tfReloadCVSections = method_getImplementation(reloadCVSecM);
+            method_setImplementation(reloadCVSecM, (IMP)hook_tfReloadCVSections);
+            mfLog(@"TF sort: collectionView reloadSections hooked");
         }
     }
     mfLog(@"TF sort: all hooks installed");
