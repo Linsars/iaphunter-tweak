@@ -1309,7 +1309,7 @@ static void hook_tfReloadSections(id self, SEL _cmd, NSIndexSet *sections, NSInt
     mfTrySortTableView((UITableView *)self);
 }
 
-// UICollectionView hooks (SwiftUI List 可能用 UICollectionView)
+// UICollectionView hooks (SwiftUI List 用 UICollectionView)
 static IMP orig_tfInsertItems;
 static IMP orig_tfReloadCVSections;
 static IMP orig_tfReloadCVData;
@@ -1327,6 +1327,68 @@ static void hook_tfReloadCVSections(id self, SEL _cmd, NSIndexSet *sections) {
 static void hook_tfReloadCVData(id self, SEL _cmd) {
     mfLog(@"TF sort: collectionView reloadData called class=%@", NSStringFromClass([self class]));
     if (orig_tfReloadCVData) ((void(*)(id, SEL))orig_tfReloadCVData)(self, _cmd);
+    // 排序：在 reloadData 之后对可见 cell 进行排序
+    if (!mfPrefBool(@"mfTFSortOptimize", NO)) return;
+    if (!objc_getClass("OASAppList")) return; // 只在 TestFlight 进程
+    UICollectionView *cv = (UICollectionView *)self;
+    if (![cv isKindOfClass:[UICollectionView class]]) return;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        mfTrySortCollectionView(cv);
+    });
+}
+
+// UICollectionView 排序
+static void mfTrySortCollectionView(UICollectionView *cv) {
+    if (!cv) return;
+    NSInteger sections = [cv numberOfSections];
+    mfLog(@"TF sort: mfTrySortCollectionView sections=%ld", (long)sections);
+    for (NSInteger s = 0; s < sections; s++) {
+        NSInteger items = [cv numberOfItemsInSection:s];
+        if (items <= 1) continue;
+        mfLog(@"TF sort: cv section %ld items=%ld", (long)s, (long)items);
+        // 收集所有可见 cell 的优先级
+        NSMutableArray *entries = [NSMutableArray array];
+        for (NSInteger i = 0; i < items; i++) {
+            NSIndexPath *ip = [NSIndexPath indexPathForItem:i inSection:s];
+            UICollectionViewCell *cell = [cv cellForItemAtIndexPath:ip];
+            if (!cell) continue;
+            // UICollectionView 的 cell 通常是 SwiftUI cell
+            // 递归查找按钮
+            NSString *buttonTitle = mfFindButtonTitle(cell.contentView);
+            NSInteger priority = 3;
+            if (buttonTitle) {
+                mfLog(@"TF sort: cv cell %ld button='%@'", (long)i, buttonTitle);
+                if ([buttonTitle containsString:@"更新"] || [buttonTitle caseInsensitiveCompare:@"Update"] == NSOrderedSame) priority = 0;
+                else if ([buttonTitle containsString:@"打开"] || [buttonTitle caseInsensitiveCompare:@"Open"] == NSOrderedSame) priority = 1;
+                else if ([buttonTitle containsString:@"安装"] || [buttonTitle caseInsensitiveCompare:@"Install"] == NSOrderedSame) priority = 2;
+            }
+            // 也检查 cell 的 accessibilityLabel/accessibilityValue
+            if (priority == 3) {
+                NSString *label = cell.accessibilityLabel ?: @"";
+                NSString *value = cell.accessibilityValue ?: @"";
+                mfLog(@"TF sort: cv cell %ld accessibility='%@' '%@'", (long)i, label, value);
+                if ([label containsString:@"更新"] || [value containsString:@"更新"]) priority = 0;
+                else if ([label containsString:@"打开"] || [value containsString:@"打开"]) priority = 1;
+                else if ([label containsString:@"安装"] || [value containsString:@"安装"]) priority = 2;
+            }
+            [entries addObject:@{@"p": @(priority), @"ip": ip}];
+        }
+        // 检查是否需要重排
+        BOOL needSort = NO;
+        for (NSInteger i = 1; i < entries.count; i++) {
+            if ([entries[i][@"p"] integerValue] < [entries[i-1][@"p"] integerValue]) {
+                needSort = YES; break;
+            }
+        }
+        mfLog(@"TF sort: cv section %ld needSort=%d entries=%lu", (long)s, needSort, (unsigned long)entries.count);
+        if (!needSort) continue;
+        // 排序后重新加载 section
+        [entries sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+            return [a[@"p"] compare:b[@"p"]];
+        }];
+        mfLog(@"TF sort: cv section %ld sorted, reloading", (long)s);
+        [cv reloadSections:[NSIndexSet indexSetWithIndex:s]];
+    }
 }
 
 static void mfInstallTestFlightSorting(void) {
