@@ -1396,25 +1396,26 @@ static NSInteger mfTFAppSortPriority(id app);
 static void mfSortSectionApps(id section) {
     NSArray *apps = [section valueForKey:@"apps"];
     if (![apps isKindOfClass:[NSArray class]] || apps.count <= 1) return;
-    // 一次性 dump：所有 section 的 sectionType + app 数量 + 前2个app的属性
-    static BOOL dumped = NO;
-    if (!dumped) {
-        dumped = YES;
-        mfLog(@"TF sort: section class=%@ sectionType=%ld apps=%lu respondsToSelector:setApps=%d",
-            NSStringFromClass([section class]),
+    // dump：每个 section 只 dump 第一次
+    static NSMutableSet *dumpedSections = nil;
+    if (!dumpedSections) dumpedSections = [NSMutableSet set];
+    NSString *secKey = [NSString stringWithFormat:@"%p", section];
+    if (![dumpedSections containsObject:secKey]) {
+        [dumpedSections addObject:secKey];
+        mfLog(@"TF sort: section=%p class=%@ type=%ld apps=%lu setApps=%d",
+            section, NSStringFromClass([section class]),
             (long)[[section valueForKey:@"sectionType"] integerValue],
             (unsigned long)apps.count,
             [section respondsToSelector:@selector(setApps:)]);
-        for (NSInteger i = 0; i < MIN(2, apps.count); i++) {
-            id app = apps[i];
+        if (apps.count > 0) {
+            id app = apps[0];
             id cb = [app valueForKey:@"currentBuild"];
             id builds = [app valueForKey:@"builds"];
-            mfLog(@"TF sort: [%ld] %@ invite=%ld build=%@ builds=%ld isPublic=%d",
-                (long)i,
+            mfLog(@"TF sort:   [%@] invite=%ld build=%@ builds=%@ isPublic=%d",
                 [app valueForKey:@"name"] ?: @"?",
                 (long)[[app valueForKey:@"inviteStatus"] integerValue],
                 cb ? @"Y" : @"nil",
-                [builds isKindOfClass:[NSArray class]] ? (long)((NSArray *)builds).count : -1,
+                [builds isKindOfClass:[NSArray class]] ? @((unsigned long)((NSArray *)builds).count) : @"nil",
                 [app respondsToSelector:@selector(isPublicLinkUser)] ? ((BOOL(*)(id, SEL))objc_msgSend)(app, @selector(isPublicLinkUser)) : -1);
         }
     }
