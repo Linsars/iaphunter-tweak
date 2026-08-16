@@ -1313,6 +1313,7 @@ static void hook_tfReloadSections(id self, SEL _cmd, NSIndexSet *sections, NSInt
 static IMP orig_tfInsertItems;
 static IMP orig_tfReloadCVSections;
 static IMP orig_tfReloadCVData;
+static void mfTrySortCollectionView(UICollectionView *cv);
 
 static void hook_tfInsertItems(id self, SEL _cmd, NSArray *paths) {
     mfLog(@"TF sort: insertItems called class=%@ count=%lu", NSStringFromClass([self class]), (unsigned long)paths.count);
