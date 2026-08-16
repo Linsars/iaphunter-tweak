@@ -1200,6 +1200,7 @@ static IMP orig_appListDidChange;
 static Class g_tfDelegateClass = nil;
 static void hook_appListDidReload(id self, SEL _cmd, id appList);
 static void hook_appListDidChange(id self, SEL _cmd, id appList, id changes);
+static void mfDumpAppListData(id appList);
 
 // hook setDelegate: 找到 delegate 类
 static void hook_oasSetDelegate(id self, SEL _cmd, id delegate) {
