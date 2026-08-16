@@ -1196,6 +1196,8 @@ static void mfInstallTestFlightBypass(void) {
 // 优先级：需更新 > 已安装 > 未安装
 
 static IMP orig_tfReloadData;
+static NSInteger mfTFAppPriority(id app);
+
 static void hook_tfReloadData(id self, SEL _cmd) {
     if (orig_tfReloadData) ((void(*)(id, SEL))orig_tfReloadData)(self, _cmd);
     if (!mfPrefBool(@"mfTFSortOptimize", YES)) return;
