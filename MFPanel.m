@@ -4,6 +4,7 @@
 #import "MFPanel.h"
 #import <CommonCrypto/CommonCrypto.h>
 #import <StoreKit/StoreKit.h>
+#import <Vision/Vision.h>
 
 // ====== 全局状态（定义在此，extern 在 MFPanel.h） ======
 UIView *g_mfPanelOverlay = nil;
@@ -1197,6 +1198,22 @@ static void mfInstallTestFlightBypass(void) {
 
 static IMP orig_tfReloadCVData;
 
+// Vision OCR 识别文字
+static void mfRecognizeText(UIImage *image, void (^cb)(NSString *)) {
+    if (!image) { cb(nil); return; }
+    VNImageRequestHandler *handler = [[VNImageRequestHandler alloc] initWithCGImage:image.CGImage options:@{}];
+    VNRecognizeTextRequest *req = [[VNRecognizeTextRequest alloc] initWithCompletionHandler:^(VNRecognizeTextRequest *request, NSError *error) {
+        if (error) { cb(nil); return; }
+        NSArray *results = request.results;
+        if (results.count == 0) { cb(nil); return; }
+        VNRecognizedTextObservation *obs = results[0];
+        VNRecognizedText *top = [obs topCandidates:1].firstObject;
+        cb(top.string);
+    }];
+    req.recognitionLevel = VNRequestTextRecognitionLevelFast;
+    [handler performRequests:@[req] error:nil];
+}
+
 static NSString *mfFindButtonTitle(UIView *view) {
     for (UIView *sub in view.subviews) {
         if ([sub isKindOfClass:[UIButton class]]) {
@@ -1270,9 +1287,22 @@ static void mfSortVisibleCells(UICollectionView *cv) {
                 else if ([labelText containsString:@"打开"]) priority = 1;
                 else if ([labelText containsString:@"安装"]) priority = 2;
             } else {
-                // dump 完整视图层级
-                mfLog(@"TF sort: cell[%ld] dumping view hierarchy:", (long)i);
-                mfDumpViewHierarchy(cell.contentView, 0);
+                // SwiftUI cell 没有标准子视图，用截图+OCR 读按钮文字
+                // 按钮在 cell 右侧 {319, 26}, {54, 30} 区域
+                UIGraphicsBeginImageContextWithOptions(cell.bounds.size, NO, 0);
+                [cell.layer renderInContext:UIGraphicsGetCurrentContext()];
+                UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
+                UIGraphicsEndImageContext();
+                // 裁剪按钮区域（右侧 60x40）
+                CGRect btnRect = CGRectMake(cell.bounds.size.width - 70, 20, 60, 40);
+                CGImageRef cropped = CGImageCreateWithImageInRect(img.CGImage, btnRect);
+                UIImage *btnImg = [UIImage imageWithCGImage:cropped];
+                CGImageRelease(cropped);
+                // 用 Vision OCR 读文字
+                mfRecognizeText(btnImg, ^(NSString *text) {
+                    mfLog(@"TF sort: cell[%ld] OCR='%@'", (long)i, text ?: @"nil");
+                });
+                priority = 3; // OCR 异步，先用默认优先级
             }
             [entries addObject:@{@"p": @(priority), @"ip": ip}];
         }
