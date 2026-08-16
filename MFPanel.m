@@ -56,9 +56,9 @@ BOOL mfIsEnabledForCurrentApp(void) {
     NSNumber *en = prefs[@"mfIAPEnabled"];
     if (en && ![en boolValue]) return NO;
     NSArray *wl = prefs[@"mfIAPAppList"];
-    if (![wl isKindOfClass:[NSArray class]]) return NO;
+    // 白名单为空 = 对所有 app 生效；非空 = 只对白名单内的 app 生效
+    if (![wl isKindOfClass:[NSArray class]] || wl.count == 0) return YES;
     NSString *bid = [[NSBundle mainBundle] bundleIdentifier] ?: @"";
-    if (wl.count == 0) return NO;
     return [wl containsObject:bid];
 }
 void mfSetPrefs(NSDictionary *d) {

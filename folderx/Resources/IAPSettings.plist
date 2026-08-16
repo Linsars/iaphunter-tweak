@@ -8,7 +8,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>开启后仅在下方「应用程序」勾选的 App 内启用 IAP工具箱（面板/捕获/规则全部功能）。所有更改需 respring 后生效。</string>
+			<string>开启后在所有 App 内启用 IAP工具箱。如需限制范围，可在下方「应用程序」勾选特定 App（白名单为空时对所有 App 生效）。</string>
 			<key>label</key>
 			<string>IAP工具箱</string>
 		</dict>
@@ -30,7 +30,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>勾选要启用 IAP工具箱 的 App。未勾选的 App 不加载任何 MinisFix 功能。开启「自动添加」后，新安装的 App 自动加入白名单。</string>
+			<string>限制 IAP工具箱 只在勾选的 App 内启用。白名单为空时对所有 App 生效。开启「自动添加」后，新安装的 App 自动加入白名单。</string>
 			<key>label</key>
 			<string>作用范围</string>
 		</dict>
