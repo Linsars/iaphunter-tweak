@@ -1421,6 +1421,25 @@ static void hook_setApps(id self, SEL _cmd, NSArray *apps) {
 }
 
 static void mfDumpViewHierarchy(UIView *view, int depth) {
+    NSMutableString *indent = [NSMutableString string];
+    for (int i = 0; i < depth; i++) [indent appendString:@"  "];
+    NSString *cls = NSStringFromClass([view class]);
+    NSString *title = @"";
+    if ([view isKindOfClass:[UIButton class]]) {
+        title = [((UIButton *)view) titleForState:UIControlStateNormal] ?: @"";
+    }
+    NSString *axLabel = [view respondsToSelector:@selector(accessibilityLabel)] ? [view accessibilityLabel] : @"";
+    NSString *axValue = [view respondsToSelector:@selector(accessibilityValue)] ? [view accessibilityValue] : @"";
+    NSString *axID = [view respondsToSelector:@selector(accessibilityIdentifier)] ? [view accessibilityIdentifier] : @"";
+    if ([view isKindOfClass:[UIButton class]] || axLabel.length > 0 || axValue.length > 0 || axID.length > 0 || [cls containsString:@"Button"] || [cls containsString:@"Label"] || [cls containsString:@"Text"]) {
+        mfLog(@"TF sort: %@<%@> title='%@' ax='%@' axVal='%@' axID='%@'", indent, cls, title, axLabel, axValue, axID);
+    }
+    for (UIView *sub in view.subviews) {
+        mfDumpViewHierarchy(sub, depth + 1);
+    }
+}
+
+static void mfTrySortCollectionView(UICollectionView *cv) {
     if (!cv) return;
     NSInteger sections = [cv numberOfSections];
     mfLog(@"TF sort: mfTrySortCollectionView sections=%ld", (long)sections);
@@ -1428,7 +1447,6 @@ static void mfDumpViewHierarchy(UIView *view, int depth) {
         NSInteger items = [cv numberOfItemsInSection:s];
         if (items <= 1) continue;
         mfLog(@"TF sort: cv section %ld items=%ld", (long)s, (long)items);
-        // 只 dump 前 2 个 cell 的视图层级来分析结构
         for (NSInteger i = 0; i < MIN(2, items); i++) {
             NSIndexPath *ip = [NSIndexPath indexPathForItem:i inSection:s];
             UICollectionViewCell *cell = [cv cellForItemAtIndexPath:ip];
@@ -1436,7 +1454,6 @@ static void mfDumpViewHierarchy(UIView *view, int depth) {
             mfLog(@"TF sort: === cell %ld view hierarchy ===", (long)i);
             mfDumpViewHierarchy(cell.contentView, 0);
         }
-        // 收集所有可见 cell 的优先级
         NSMutableArray *entries = [NSMutableArray array];
         for (NSInteger i = 0; i < items; i++) {
             NSIndexPath *ip = [NSIndexPath indexPathForItem:i inSection:s];
@@ -1445,7 +1462,6 @@ static void mfDumpViewHierarchy(UIView *view, int depth) {
             NSInteger priority = mfTFCellPriorityCV(cell);
             [entries addObject:@{@"p": @(priority), @"ip": ip}];
         }
-        // 检查是否需要重排
         BOOL needSort = NO;
         for (NSInteger i = 1; i < entries.count; i++) {
             if ([entries[i][@"p"] integerValue] < [entries[i-1][@"p"] integerValue]) {
