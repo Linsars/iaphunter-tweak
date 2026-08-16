@@ -8,7 +8,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>开启后在所有 App 内启用 IAP工具箱。如需限制范围，可在下方「应用程序」勾选特定 App（白名单为空时对所有 App 生效）。</string>
+			<string>开启后在所有 App 内启用 IAP工具箱。如需排除特定 App，可在下方关闭对应开关。</string>
 			<key>label</key>
 			<string>IAP工具箱</string>
 		</dict>
@@ -52,7 +52,7 @@
 			<key>cell</key>
 			<string>PSLinkListCell</string>
 			<key>defaultApplicationSwitchValue</key>
-			<false/>
+			<true/>
 			<key>defaults</key>
 			<string>com.linsars.minisfix</string>
 			<key>detail</key>

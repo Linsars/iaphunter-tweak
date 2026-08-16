@@ -56,10 +56,11 @@ BOOL mfIsEnabledForCurrentApp(void) {
     NSNumber *en = prefs[@"mfIAPEnabled"];
     if (en && ![en boolValue]) return NO;
     NSArray *wl = prefs[@"mfIAPAppList"];
-    // 白名单为空 = 对所有 app 生效；非空 = 只对白名单内的 app 生效
+    // defaultApplicationSwitchValue=YES：AltList 默认所有 app 开启
+    // 白名单为空（用户未手动关闭任何 app）= 所有 app 生效
+    // 白名单非空 = 只有白名单内的 app 生效
     if (![wl isKindOfClass:[NSArray class]] || wl.count == 0) return YES;
-    NSString *bid = [[NSBundle mainBundle] bundleIdentifier] ?: @"";
-    return [wl containsObject:bid];
+    return [wl containsObject:[[NSBundle mainBundle] bundleIdentifier]];
 }
 void mfSetPrefs(NSDictionary *d) {
     [d writeToFile:@"/var/jb/var/mobile/Library/Preferences/com.linsars.minisfix.plist" atomically:YES];
