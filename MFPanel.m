@@ -1231,31 +1231,18 @@ static void mfDumpAppListData(id appList) {
         NSArray *apps = [section valueForKey:@"apps"];
         if (![apps isKindOfClass:[NSArray class]] || apps.count == 0) continue;
         mfLog(@"TF sort: section[%ld] apps=%lu", (long)s, (unsigned long)apps.count);
-        for (NSInteger i = 0; i < MIN(2, apps.count); i++) {
-            id app = apps[i];
+        // 简化 dump：只打印第一个 app 的基本信息
+        if (apps.count > 0) {
+            id app = apps[0];
+            NSString *name = [app valueForKey:@"name"];
+            NSInteger invite = [[app valueForKey:@"inviteStatus"] integerValue];
             id cb = [app valueForKey:@"currentBuild"];
             id builds = [app valueForKey:@"builds"];
-            id installedBundle = [app valueForKey:@"installedBundleModel"];
-            mfLog(@"TF sort:   [%ld] %@ invite=%ld build=%@ builds=%@ installed=%@",
-                (long)i,
-                [app valueForKey:@"name"] ?: @"?",
-                (long)[[app valueForKey:@"inviteStatus"] integerValue],
-                cb ? NSStringFromClass([cb class]) : @"nil",
+            id installed = [app valueForKey:@"installedBundleModel"];
+            mfLog(@"TF sort:   first=%@ invite=%ld build=%@ builds=%@ installed=%@",
+                name ?: @"?", (long)invite, cb ? @"Y" : @"nil",
                 [builds isKindOfClass:[NSArray class]] ? @((unsigned long)((NSArray *)builds).count) : @"nil",
-                installedBundle ? @"Y" : @"nil");
-            if (cb) {
-                unsigned int pc;
-                objc_property_t *props = class_copyPropertyList([cb class], &pc);
-                for (unsigned int j = 0; j < MIN(pc, 15); j++) {
-                    const char *name = property_getName(props[j]);
-                    id val = [cb valueForKey:[NSString stringWithUTF8String:name]];
-                    mfLog(@"TF sort:     %s = %@", name, val ?: @"nil");
-                }
-                free(props);
-            }
-            if (installedBundle) {
-                mfLog(@"TF sort:   installedBundle class=%@", NSStringFromClass([installedBundle class]));
-            }
+                installed ? @"Y" : @"nil");
         }
     }
 }
