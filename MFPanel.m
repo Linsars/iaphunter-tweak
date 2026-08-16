@@ -1380,6 +1380,7 @@ static void mfFindPriorityInView(UIView *view, NSInteger *priority) {
 // hook OASAppList 的 _updateAppsListCallback 方法，在数据传到 UI 之前重排
 
 static IMP orig_updateAppsListCallback;
+static void mfSortSectionApps(id section); // 前向声明
 
 static void hook_updateAppsListCallback(id self, SEL _cmd, BOOL changed, NSArray *fullSections, NSArray *finalSections, id changes) {
     mfLog(@"TF sort: updateAppsListCallback changed=%d full=%lu final=%lu", changed, (unsigned long)fullSections.count, (unsigned long)finalSections.count);
