@@ -1222,21 +1222,15 @@ static NSString *mfFindLabelText(UIView *view) {
 }
 
 static void mfDumpViewHierarchy(UIView *view, int depth) {
-    if (depth > 5) return; // 防止太深
+    if (depth > 5) return;
     NSMutableString *indent = [NSMutableString string];
     for (int i = 0; i < depth; i++) [indent appendString:@"  "];
     NSString *cls = NSStringFromClass([view class]);
-    NSString *title = @"";
-    if ([view isKindOfClass:[UIButton class]]) {
-        title = [((UIButton *)view) titleForState:UIControlStateNormal] ?: @"";
-    }
-    NSString *axLabel = [view respondsToSelector:@selector(accessibilityLabel)] ? [view accessibilityLabel] : @"";
-    NSString *axValue = [view respondsToSelector:@selector(accessibilityValue)] ? [view accessibilityValue] : @"";
+    // 打印所有视图（不过滤）
     NSString *text = @"";
     if ([view isKindOfClass:[UILabel class]]) text = ((UILabel *)view).text ?: @"";
-    if ([view isKindOfClass:[UIButton class]] || axLabel.length > 0 || axValue.length > 0 || text.length > 0 || [cls containsString:@"Button"] || [cls containsString:@"Label"] || [cls containsString:@"Text"]) {
-        mfLog(@"TF sort: %@<%@> text='%@' title='%@' ax='%@' axVal='%@'", indent, cls, text, title, axLabel, axValue);
-    }
+    NSString *axLabel = [view respondsToSelector:@selector(accessibilityLabel)] ? [view accessibilityLabel] : @"";
+    mfLog(@"TF sort: %@<%@> text='%@' ax='%@' frame=%@", indent, cls, text, axLabel, NSStringFromCGRect(view.frame));
     for (UIView *sub in view.subviews) {
         mfDumpViewHierarchy(sub, depth + 1);
     }
