@@ -127,7 +127,8 @@ static const char *g_diagPaths[] = {
         
         dispatch_async(dispatch_get_main_queue(), ^{
             [loading dismissViewControllerAnimated:YES completion:^{
-                UIAlertController *result = [UIAlertController alertControllerWithTitle:failedCount == 0 ? @"完成" : @"完成 (有失败)"
+                NSString *resultTitle = (failedCount == 0) ? @"完成" : @"完成 (有失败)";
+                UIAlertController *result = [UIAlertController alertControllerWithTitle:resultTitle
                                                                                  message:msg
                                                                           preferredStyle:UIAlertControllerStyleAlert];
                 [result addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
