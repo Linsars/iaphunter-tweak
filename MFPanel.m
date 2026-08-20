@@ -593,10 +593,21 @@ void mfShowProductPage(void) {
 }
 
 // ====== MFPanelCtrl（所有 action 方法） ======
-@interface MFPanelCtrl : NSObject @end
+@interface MFPanelCtrl : NSObject <UITextFieldDelegate> @end
 @implementation MFPanelCtrl
 - (void)mfPopPage { mfPopPage(); }
 - (void)mfClosePanel { mfClosePanel(); }
+
+// UITextFieldDelegate - 处理手动购买页的 Return 键
+- (BOOL)textFieldShouldReturn:(UITextField *)textField {
+    [textField resignFirstResponder];
+    return YES;
+}
+- (BOOL)textFieldShouldBeginEditing:(UITextField *)textField {
+    return YES;
+}
+- (void)textFieldDidBeginEditing:(UITextField *)textField { }
+- (void)textFieldDidEndEditing:(UITextField *)textField { }
 
 // 页面入口
 - (void)mfShowDataAnalysisPage { mfShowDataAnalysisPage(); }
