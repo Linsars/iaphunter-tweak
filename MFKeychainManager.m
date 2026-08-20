@@ -9,12 +9,15 @@
 extern UIViewController *g_mfPanelRootVC;
 
 // ====== 工具函数 ======
+// 版本号 (与 control 同步)
+#define MFKEYCHAIN_VERSION @"1.3.0"
+
 static void mfKLog(NSString *fmt, ...) {
     va_list args;
     va_start(args, fmt);
     NSString *msg = [[NSString alloc] initWithFormat:fmt arguments:args];
     va_end(args);
-    NSLog(@"[MFKeychain] %@", msg);
+    NSLog(@"[MFKeychain v%@] %@", MFKEYCHAIN_VERSION, msg);
 }
 
 static NSArray *mfGetKeychainItems(void) {

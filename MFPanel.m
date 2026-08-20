@@ -1190,10 +1190,12 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
+#define MINISFIX_VERSION @"1.3.0"
+
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
         NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
-        mfLog(@"=== MinisFix ctor ENTER pid=%d app=%@ ===", getpid(), bid);
+        mfLog(@"=== MinisFix ctor ENTER pid=%d app=%@ version=%@ ===", getpid(), bid, MINISFIX_VERSION);
 
         // TestFlight 增强（独立于 IAP工具箱，始终检查）
         // 兼容性增强
