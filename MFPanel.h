@@ -59,6 +59,7 @@ void mfShowKeychainManagerPage(void);       // Keychain 主页
 void mfShowKeychainListPageAction(void);    // 查看列表
 void mfCopyKeychainAction(void);            // 导出到剪贴板
 void mfShowRestorePromptAction(void);       // 从剪贴板恢复
+void mfShowKeychainDetail(NSDictionary *item); // 详情 (由 MFPanelCtrl 转发)
 
 // ====== JS 规则引擎（MFJSRules.m） ======
 BOOL mfJSLoadScript(NSString *script);

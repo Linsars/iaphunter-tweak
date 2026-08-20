@@ -614,6 +614,13 @@ void mfShowProductPage(void) {
 - (void)mfShowManualBuyPage { mfShowManualBuyPage(); }
 - (void)mfShowIconPage { mfShowIconPage(); }
 
+// Keychain 详情
+- (void)mfShowKeychainDetail:(UIButton *)btn {
+    NSDictionary *item = objc_getAssociatedObject(btn, "item");
+    if (!item) return;
+    mfShowKeychainDetail(item);
+}
+
 // 捕获详情
 - (void)mfShowCaptureDetail:(UITapGestureRecognizer *)g {
     MFNetRecord *rec = objc_getAssociatedObject(g, "rec");
