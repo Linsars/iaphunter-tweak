@@ -12,6 +12,7 @@ static NSString *mfFormatKeychainItem(NSDictionary *item);
 static NSString *mfFormatKeychainSummary(NSDictionary *item);
 static void mfShowKeychainDetail(NSDictionary *item);
 static void mfShowRestorePrompt(void);
+static void mfShowKeychainList(void);
 
 // ====== 工具函数 ======
 static void mfKLog(NSString *fmt, ...) {
@@ -41,7 +42,7 @@ static NSArray *mfGetKeychainItems(void) {
         return @[];
     }
     
-    NSArray *items = (__bridge_transfer NSArray *)result;
+    NSArray *items = (__bridge NSArray *)result;
     return items ?: @[];
 }
 
@@ -218,7 +219,7 @@ void mfShowKeychainMainMenu(void) {
 }
 
 // 显示 Keychain 列表
-void mfShowKeychainList(void) {
+static void mfShowKeychainList(void) {
     NSArray *items = mfGetKeychainItems();
     
     dispatch_async(dispatch_get_main_queue(), ^{
