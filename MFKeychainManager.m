@@ -193,7 +193,7 @@ static void mfShowKeychainListPage(void) {
 }
 
 // 显示详情
-static void mfShowKeychainDetail(NSDictionary *item) {
+void mfShowKeychainDetail(NSDictionary *item) {
     NSString *account = item[(__bridge id)kSecAttrAccount] ?: @"(无账号)";
     NSString *service = item[(__bridge id)kSecAttrService] ?: @"(无服务)";
     NSData *data = item[(__bridge id)kSecValueData];
