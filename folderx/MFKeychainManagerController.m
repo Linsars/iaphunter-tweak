@@ -37,6 +37,12 @@ static NSString *mfFormatDetail(NSDictionary *item) {
     return [NSString stringWithFormat:@"账号: %@\n服务: %@\n数据(Base64): %@", account, service, dataStr];
 }
 
+@interface MFKeychainManagerController ()
+@property (nonatomic, strong) UIAlertController *loadingAlert;
+@property (nonatomic, copy) NSString *restoreResultMessage;
+@property (nonatomic, assign) BOOL restoreSuccess;
+@end
+
 @implementation MFKeychainManagerController
 
 - (void)viewDidLoad {
@@ -174,83 +180,82 @@ static NSString *mfFormatDetail(NSDictionary *item) {
     [alert addAction:[UIAlertAction actionWithTitle:@"恢复" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         UITextField *tf = alert.textFields.firstObject;
         if (tf && tf.text.length > 0) {
-            [self restoreFromBase64:tf.text];
+            [self startRestoreFromBase64:tf.text];
         }
     }]];
     
     [self presentViewController:alert animated:YES completion:nil];
 }
 
-- (void)restoreFromBase64:(NSString *)base64 {
-    UIAlertController *loading = [UIAlertController alertControllerWithTitle:nil message:@"正在恢复…" preferredStyle:UIAlertControllerStyleAlert];
-    [self presentViewController:loading animated:YES completion:nil];
+- (void)startRestoreFromBase64:(NSString *)base64 {
+    self.loadingAlert = [UIAlertController alertControllerWithTitle:nil message:@"正在恢复…" preferredStyle:UIAlertControllerStyleAlert];
+    [self presentViewController:self.loadingAlert animated:YES completion:nil];
     
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        NSData *jsonData = [[NSData alloc] initWithBase64EncodedString:base64 options:0];
-        if (!jsonData) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [loading dismissViewControllerAnimated:YES completion:^{
-                    UIAlertController *errAlert = [UIAlertController alertControllerWithTitle:@"失败" message:@"Base64 解码失败" preferredStyle:UIAlertControllerStyleAlert];
-                    [errAlert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
-                    [self presentViewController:errAlert animated:YES completion:nil];
-                });
-            });
-            return;
+    [self performSelectorInBackground:@selector(doRestoreInBackground:) withObject:base64];
+}
+
+- (void)doRestoreInBackground:(NSString *)base64 {
+    NSData *jsonData = [[NSData alloc] initWithBase64EncodedString:base64 options:0];
+    if (!jsonData) {
+        self.restoreSuccess = NO;
+        self.restoreResultMessage = @"Base64 解码失败";
+        [self performSelectorOnMainThread:@selector(showRestoreResult) withObject:nil waitUntilDone:NO];
+        return;
+    }
+    
+    NSError *jsonErr = nil;
+    NSArray *importArray = [NSJSONSerialization JSONObjectWithData:jsonData options:0 error:&jsonErr];
+    if (jsonErr || !importArray) {
+        self.restoreSuccess = NO;
+        self.restoreResultMessage = [NSString stringWithFormat:@"JSON 解析失败: %@", jsonErr ?: @"" ];
+        [self performSelectorOnMainThread:@selector(showRestoreResult) withObject:nil waitUntilDone:NO];
+        return;
+    }
+    
+    NSUInteger successCount = 0, failCount = 0;
+    for (NSDictionary *item in importArray) {
+        NSData *data = nil;
+        if (item[@"data"]) {
+            data = [[NSData alloc] initWithBase64EncodedString:item[@"data"] options:0];
         }
-        
-        NSError *jsonErr = nil;
-        NSArray *importArray = [NSJSONSerialization JSONObjectWithData:jsonData options:0 error:&jsonErr];
-        if (jsonErr || !importArray) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [loading dismissViewControllerAnimated:YES completion:^{
-                    UIAlertController *errAlert = [UIAlertController alertControllerWithTitle:@"失败" message:[NSString stringWithFormat:@"JSON 解析失败: %@", jsonErr ?: @"" ] preferredStyle:UIAlertControllerStyleAlert];
-                    [errAlert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
-                    [self presentViewController:errAlert animated:YES completion:nil];
-                });
-            });
-            return;
+        NSMutableDictionary *addQuery = [NSMutableDictionary dictionary];
+        addQuery[(__bridge id)kSecClass] = (__bridge id)kSecClassGenericPassword;
+        if (data) addQuery[(__bridge id)kSecValueData] = data;
+        for (id key in item) {
+            if (![key isEqualToString:@"data"]) addQuery[key] = item[key];
         }
-        
-        NSUInteger successCount = 0, failCount = 0;
-        for (NSDictionary *item in importArray) {
-            NSData *data = nil;
-            if (item[@"data"]) {
-                data = [[NSData alloc] initWithBase64EncodedString:item[@"data"] options:0];
-            }
-            NSMutableDictionary *addQuery = [NSMutableDictionary dictionary];
-            addQuery[(__bridge id)kSecClass] = (__bridge id)kSecClassGenericPassword;
-            if (data) addQuery[(__bridge id)kSecValueData] = data;
-            for (id key in item) {
-                if (![key isEqualToString:@"data"]) addQuery[key] = item[key];
-            }
-            OSStatus status = SecItemAdd((__bridge CFDictionaryRef)addQuery, NULL);
-            if (status == errSecSuccess) {
+        OSStatus status = SecItemAdd((__bridge CFDictionaryRef)addQuery, NULL);
+        if (status == errSecSuccess) {
+            successCount++;
+        } else if (status == errSecDuplicateItem) {
+            NSDictionary *updQuery = @{
+                (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+                (__bridge id)kSecAttrAccount: item[(__bridge id)kSecAttrAccount] ?: @"",
+                (__bridge id)kSecAttrService: item[(__bridge id)kSecAttrService] ?: @""
+            };
+            NSDictionary *updAttrs = @{ (__bridge id)kSecValueData: data ?: [NSData data] };
+            if (SecItemUpdate((__bridge CFDictionaryRef)updQuery, (__bridge CFDictionaryRef)updAttrs) == errSecSuccess) {
                 successCount++;
-            } else if (status == errSecDuplicateItem) {
-                NSDictionary *updQuery = @{
-                    (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
-                    (__bridge id)kSecAttrAccount: item[(__bridge id)kSecAttrAccount] ?: @"",
-                    (__bridge id)kSecAttrService: item[(__bridge id)kSecAttrService] ?: @""
-                };
-                NSDictionary *updAttrs = @{ (__bridge id)kSecValueData: data ?: [NSData data] };
-                if (SecItemUpdate((__bridge CFDictionaryRef)updQuery, (__bridge CFDictionaryRef)updAttrs) == errSecSuccess) {
-                    successCount++;
-                } else failCount++;
             } else failCount++;
-        }
-        
-        dispatch_async(dispatch_get_main_queue(), ^{
-            [loading dismissViewControllerAnimated:YES completion:^{
-                UIAlertController *result = [UIAlertController alertControllerWithTitle:@"恢复完成"
-                                                                                  message:[NSString stringWithFormat:@"成功: %lu\n失败: %lu", (unsigned long)successCount, (unsigned long)failCount]
-                                                                           preferredStyle:UIAlertControllerStyleAlert];
-                [result addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-                    [self showMainMenu];
-                }]];
-                [self presentViewController:result animated:YES completion:nil];
-            });
-        });
-    });
+        } else failCount++;
+    }
+    
+    self.restoreSuccess = YES;
+    self.restoreResultMessage = [NSString stringWithFormat:@"成功: %lu\n失败: %lu", (unsigned long)successCount, (unsigned long)failCount];
+    [self performSelectorOnMainThread:@selector(showRestoreResult) withObject:nil waitUntilDone:NO];
+}
+
+- (void)showRestoreResult {
+    [self.loadingAlert dismissViewControllerAnimated:YES completion:^{
+        NSString *title = self.restoreSuccess ? @"恢复完成" : @"失败";
+        UIAlertController *result = [UIAlertController alertControllerWithTitle:title
+                                                                        message:self.restoreResultMessage
+                                                                 preferredStyle:UIAlertControllerStyleAlert];
+        [result addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+            [self showMainMenu];
+        }]];
+        [self presentViewController:result animated:YES completion:nil];
+    }];
 }
 
 @end
