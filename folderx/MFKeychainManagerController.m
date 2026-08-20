@@ -140,10 +140,10 @@ static NSString *mfFormatDetail(NSDictionary *item) {
         [exportArray addObject:exp];
     }
     
-    NSError *err = nil;
-    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:exportArray options:NSJSONWritingPrettyPrinted error:&err];
-    if (err || !jsonData) {
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"失败" message:[NSString stringWithFormat:@"JSON 编码失败: %@", err ?: @"" ] preferredStyle:UIAlertControllerStyleAlert];
+    NSError *jsonErr = nil;
+    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:exportArray options:NSJSONWritingPrettyPrinted error:&jsonErr];
+    if (jsonErr || !jsonData) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"失败" message:[NSString stringWithFormat:@"JSON 编码失败: %@", jsonErr ?: @"" ] preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
         [self presentViewController:alert animated:YES completion:nil];
         return;
@@ -190,20 +190,20 @@ static NSString *mfFormatDetail(NSDictionary *item) {
         if (!jsonData) {
             dispatch_async(dispatch_get_main_queue(), ^{
                 [loading dismissViewControllerAnimated:YES completion:^{
-                    UIAlertController *err = [UIAlertController alertControllerWithTitle:@"失败" message:@"Base64 解码失败" preferredStyle:UIAlertControllerStyleAlert];
-                    [err addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
-                    [self presentViewController:err animated:YES completion:nil];
+                    UIAlertController *errAlert = [UIAlertController alertControllerWithTitle:@"失败" message:@"Base64 解码失败" preferredStyle:UIAlertControllerStyleAlert];
+                    [errAlert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
+                    [self presentViewController:errAlert animated:YES completion:nil];
                 });
             });
             return;
         }
         
-        NSError *err = nil;
-        NSArray *importArray = [NSJSONSerialization JSONObjectWithData:jsonData options:0 error:&err];
-        if (err || !importArray) {
+        NSError *jsonErr = nil;
+        NSArray *importArray = [NSJSONSerialization JSONObjectWithData:jsonData options:0 error:&jsonErr];
+        if (jsonErr || !importArray) {
             dispatch_async(dispatch_get_main_queue(), ^{
                 [loading dismissViewControllerAnimated:YES completion:^{
-                    UIAlertController *errAlert = [UIAlertController alertControllerWithTitle:@"失败" message:[NSString stringWithFormat:@"JSON 解析失败: %@", err ?: @"" ] preferredStyle:UIAlertControllerStyleAlert];
+                    UIAlertController *errAlert = [UIAlertController alertControllerWithTitle:@"失败" message:[NSString stringWithFormat:@"JSON 解析失败: %@", jsonErr ?: @"" ] preferredStyle:UIAlertControllerStyleAlert];
                     [errAlert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
                     [self presentViewController:errAlert animated:YES completion:nil];
                 });
