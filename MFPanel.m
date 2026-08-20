@@ -952,6 +952,8 @@ static void iaphShowPanel(UIViewController *vc) {
         mfLog(@"PANEL STEP 7b: networkModify btn");
         gy = mfGridButton(home, 16, gy, gw, @"Product", @"🛍️", @selector(mfShowProductPage), NO, nil);
         mfLog(@"PANEL STEP 7c: product btn");
+        gy = mfGridButton(home, 16 + gw + 12, gy - 92, gw, @"Keychain", @"🔐", @selector(mfShowKeychainManagerPage), NO, nil);
+        mfLog(@"PANEL STEP 7d: keychain btn");
 
         [overlay addSubview:card];
         g_mfPanelOverlay = overlay;

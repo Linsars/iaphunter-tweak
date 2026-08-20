@@ -183,6 +183,24 @@
 			<key>label</key>
 			<string>立即清理诊断日志</string>
 		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>查看、导出、导入 Keychain Generic Password 项。导出为 Base64 JSON 到剪贴板，支持跨设备迁移。面板主页也有入口。</string>
+			<key>label</key>
+			<string>Keychain 管理</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSLinkCell</string>
+			<key>detail</key>
+			<string>MFKeychainManagerController</string>
+			<key>isController</key>
+			<true/>
+			<key>label</key>
+			<string>打开 Keychain 管理</string>
+		</dict>
 	
 	</array>
 	<key>title</key>

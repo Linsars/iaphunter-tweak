@@ -98,3 +98,6 @@ void mfShowRuleEditPage(NSString *pattern, NSString *action, NSInteger index, BO
 
 // ====== 诊断日志清理（MFDiagnosticCleaner.m） ======
 void mfDiagnosticCleanupFromSettings(void);
+
+// ====== Keychain 管理（MFKeychainManager.m） ======
+void mfShowKeychainManagerPage(void);
