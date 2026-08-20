@@ -481,7 +481,6 @@ void mfShowScanPage(void) {
                 if (!onlineMap[pid]) [toVerify addObject:pid];
             }
             mfLog(@"toVerify count: %d", (int)toVerify.count);
-            }
 
             mfQueryLocalPrices(toVerify, ^(NSDictionary *verifiedPrices) {
                 dispatch_async(dispatch_get_main_queue(), ^{
