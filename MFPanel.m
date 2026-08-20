@@ -608,6 +608,9 @@ void mfShowProductPage(void) {
 - (void)mfShowProductPage { mfShowProductPage(); }
 - (void)mfShowScanPage { mfShowScanPage(); }
 - (void)mfShowKeychainManagerPage { mfShowKeychainManagerPage(); }
+- (void)mfShowKeychainListPage { mfShowKeychainListPageAction(); }
+- (void)mfCopyKeychainAction { mfCopyKeychainAction(); }
+- (void)mfShowRestorePromptAction { mfShowRestorePromptAction(); }
 - (void)mfShowManualBuyPage { mfShowManualBuyPage(); }
 - (void)mfShowIconPage { mfShowIconPage(); }
 

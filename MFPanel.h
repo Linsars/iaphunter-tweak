@@ -54,8 +54,11 @@ void mfShowScanPage(void);
 void mfShowManualBuyPage(void);
 void mfShowIconPage(void);
 
-// FakeGPS（MFPanel.m）
-void mfShowGpsPage(void);
+// Keychain（MFKeychainManager.m）
+void mfShowKeychainManagerPage(void);       // Keychain 主页
+void mfShowKeychainListPageAction(void);    // 查看列表
+void mfCopyKeychainAction(void);            // 导出到剪贴板
+void mfShowRestorePromptAction(void);       // 从剪贴板恢复
 
 // ====== JS 规则引擎（MFJSRules.m） ======
 BOOL mfJSLoadScript(NSString *script);
