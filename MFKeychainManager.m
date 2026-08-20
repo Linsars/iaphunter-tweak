@@ -91,43 +91,60 @@ static void mfCopyKeychainInBackground(void) {
             NSData *data = item[(__bridge id)kSecValueData];
             if (data) exp[@"data"] = [data base64EncodedStringWithOptions:0];
             for (id key in item) {
-                if (![key isEqual:(__bridge id)kSecValueData]) exp[key] = item[key];
+                if (![key isEqual:(__bridge id)kSecValueData]) {
+                    id val = item[key];
+                    // 只保留 JSON 可序列化类型：NSString, NSNumber, NSArray, NSDictionary, NSNull
+                    // 其他类型 (NSDate, NSData 等) 转字符串
+                    if ([val isKindOfClass:[NSString class]] ||
+                        [val isKindOfClass:[NSNumber class]] ||
+                        [val isKindOfClass:[NSArray class]] ||
+                        [val isKindOfClass:[NSDictionary class]] ||
+                        [val isKindOfClass:[NSNull class]]) {
+                        exp[key] = val;
+                    } else {
+                        exp[key] = [val description];
+                    }
+                }
             }
             [exportArray addObject:exp];
         }
         
         mfKLog(@"serializing JSON");
-        NSError *err = nil;
-        NSData *jsonData = [NSJSONSerialization dataWithJSONObject:exportArray options:NSJSONWritingPrettyPrinted error:&err];
-        if (err || !jsonData) {
-            mfKLog(@"JSON encode failed: %@", err);
+        @try {
+            NSError *err = nil;
+            NSData *jsonData = [NSJSONSerialization dataWithJSONObject:exportArray options:NSJSONWritingPrettyPrinted error:&err];
+            if (err || !jsonData) {
+                mfKLog(@"JSON encode failed: %@", err);
+                @throw [NSException exceptionWithName:@"JSONEncodeError" reason:[err ?: @"" description] userInfo:nil];
+            }
+            
+            mfKLog(@"JSON size: %lu bytes", (unsigned long)jsonData.length);
+            NSString *base64 = [jsonData base64EncodedStringWithOptions:0];
+            mfKLog(@"Base64 length: %lu", (unsigned long)base64.length);
+            
+            [[UIPasteboard generalPasteboard] setString:base64];
+            mfKLog(@"copied to pasteboard");
+            
             dispatch_async(dispatch_get_main_queue(), ^{
-                UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"导出失败" message:[NSString stringWithFormat:@"JSON 编码失败: %@", err ?: @"" ] preferredStyle:UIAlertControllerStyleAlert];
+                @try {
+                    mfKLog(@"presenting toast alert");
+                    UIAlertController *toast = [UIAlertController alertControllerWithTitle:nil message:[NSString stringWithFormat:@"✅ 已复制到剪贴板 (%lu 项, %lu 字符)", (unsigned long)items.count, (unsigned long)base64.length] preferredStyle:UIAlertControllerStyleAlert];
+                    mfPresentOnPanelVC(toast);
+                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1.5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+                        [toast dismissViewControllerAnimated:YES completion:nil];
+                    });
+                } @catch (NSException *e) {
+                    mfKLog(@"toast crash: %@", e);
+                }
+            });
+        } @catch (NSException *e) {
+            mfKLog(@"JSON serialization exception: %@", e);
+            dispatch_async(dispatch_get_main_queue(), ^{
+                UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"导出失败" message:[NSString stringWithFormat:@"JSON 编码异常: %@", e.reason] preferredStyle:UIAlertControllerStyleAlert];
                 [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
                 mfPresentOnPanelVC(alert);
             });
-            return;
         }
-        
-        mfKLog(@"JSON size: %lu bytes", (unsigned long)jsonData.length);
-        NSString *base64 = [jsonData base64EncodedStringWithOptions:0];
-        mfKLog(@"Base64 length: %lu", (unsigned long)base64.length);
-        
-        [[UIPasteboard generalPasteboard] setString:base64];
-        mfKLog(@"copied to pasteboard");
-        
-        dispatch_async(dispatch_get_main_queue(), ^{
-            @try {
-                mfKLog(@"presenting toast alert");
-                UIAlertController *toast = [UIAlertController alertControllerWithTitle:nil message:[NSString stringWithFormat:@"✅ 已复制到剪贴板 (%lu 项, %lu 字符)", (unsigned long)items.count, (unsigned long)base64.length] preferredStyle:UIAlertControllerStyleAlert];
-                mfPresentOnPanelVC(toast);
-                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1.5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-                    [toast dismissViewControllerAnimated:YES completion:nil];
-                });
-            } @catch (NSException *e) {
-                mfKLog(@"toast crash: %@", e);
-            }
-        });
     });
     mfKLog(@"mfCopyKeychainInBackground END (async)");
 }
