@@ -79,6 +79,11 @@ static void mfCopyKeychainInBackground(void) {
         NSData *jsonData = [NSJSONSerialization dataWithJSONObject:exportArray options:NSJSONWritingPrettyPrinted error:&err];
         if (err || !jsonData) {
             mfKLog(@"JSON encode failed: %@", err);
+            dispatch_async(dispatch_get_main_queue(), ^{
+                UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"导出失败" message:[NSString stringWithFormat:@"JSON 编码失败: %@", err ?: @"" ] preferredStyle:UIAlertControllerStyleAlert];
+                [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
+                mfPresentOnPanelVC(alert);
+            });
             return;
         }
         
@@ -88,11 +93,15 @@ static void mfCopyKeychainInBackground(void) {
         mfKLog(@"copied %lu items to pasteboard (%lu chars)", (unsigned long)items.count, (unsigned long)base64.length);
         
         dispatch_async(dispatch_get_main_queue(), ^{
-            UIAlertController *toast = [UIAlertController alertControllerWithTitle:nil message:[NSString stringWithFormat:@"✅ 已复制到剪贴板 (%lu 项, %lu 字符)", (unsigned long)items.count, (unsigned long)base64.length] preferredStyle:UIAlertControllerStyleAlert];
-            mfPresentOnPanelVC(toast);
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1.5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-                [toast dismissViewControllerAnimated:YES completion:nil];
-            });
+            @try {
+                UIAlertController *toast = [UIAlertController alertControllerWithTitle:nil message:[NSString stringWithFormat:@"✅ 已复制到剪贴板 (%lu 项, %lu 字符)", (unsigned long)items.count, (unsigned long)base64.length] preferredStyle:UIAlertControllerStyleAlert];
+                mfPresentOnPanelVC(toast);
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1.5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+                    [toast dismissViewControllerAnimated:YES completion:nil];
+                });
+            } @catch (NSException *e) {
+                mfKLog(@"toast crash: %@", e);
+            }
         });
     });
 }
@@ -100,21 +109,27 @@ static void mfCopyKeychainInBackground(void) {
 // 从粘贴板导入恢复 Keychain
 static void mfRestoreKeychainInBackground(NSString *base64) {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        mfKLog(@"restore input length: %lu", (unsigned long)base64.length);
+        
         NSData *jsonData = [[NSData alloc] initWithBase64EncodedString:base64 options:0];
         if (!jsonData) {
+            mfKLog(@"Base64 decode failed, input: %@", base64);
             dispatch_async(dispatch_get_main_queue(), ^{
-                UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"失败" message:@"Base64 解码失败" preferredStyle:UIAlertControllerStyleAlert];
+                UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"失败" message:@"Base64 解码失败，请确认粘贴的是导出时的完整字符串" preferredStyle:UIAlertControllerStyleAlert];
                 [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
                 mfPresentOnPanelVC(alert);
             });
             return;
         }
         
+        mfKLog(@"Base64 decoded, jsonData length: %lu", (unsigned long)jsonData.length);
+        
         NSError *jsonErr = nil;
         NSArray *importArray = [NSJSONSerialization JSONObjectWithData:jsonData options:0 error:&jsonErr];
         if (jsonErr || !importArray) {
+            mfKLog(@"JSON parse failed: %@, raw data: %@", jsonErr, [[NSString alloc] initWithData:jsonData encoding:NSUTF8StringEncoding] ?: @"(non-utf8)");
             dispatch_async(dispatch_get_main_queue(), ^{
-                UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"失败" message:[NSString stringWithFormat:@"JSON 解析失败: %@", jsonErr ?: @"" ] preferredStyle:UIAlertControllerStyleAlert];
+                UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"失败" message:[NSString stringWithFormat:@"JSON 解析失败: %@\n请确认粘贴的是导出时的完整 Base64 字符串", jsonErr ?: @"" ] preferredStyle:UIAlertControllerStyleAlert];
                 [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
                 mfPresentOnPanelVC(alert);
             });
