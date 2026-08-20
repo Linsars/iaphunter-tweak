@@ -607,6 +607,7 @@ void mfShowProductPage(void) {
 - (void)mfShowFlexPage { }  // FLEX 已砍——保留空方法防止 KVO/archive 崩
 - (void)mfShowProductPage { mfShowProductPage(); }
 - (void)mfShowScanPage { mfShowScanPage(); }
+- (void)mfShowKeychainManagerPage { mfShowKeychainManagerPage(); }
 - (void)mfShowManualBuyPage { mfShowManualBuyPage(); }
 - (void)mfShowIconPage { mfShowIconPage(); }
 
