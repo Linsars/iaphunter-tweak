@@ -6,6 +6,8 @@
 #import <Security/Security.h>
 #import "MFPanel.h"
 
+extern UIViewController *g_mfPanelRootVC;
+
 // ====== 前向声明 ======
 static NSArray *mfGetKeychainItems(void);
 static NSString *mfFormatKeychainItem(NSDictionary *item);
@@ -58,6 +60,15 @@ static NSString *mfFormatKeychainSummary(NSDictionary *item) {
     NSString *account = item[(__bridge id)kSecAttrAccount] ?: @"(无账号)";
     NSString *service = item[(__bridge id)kSecAttrService] ?: @"(无服务)";
     return [NSString stringWithFormat:@"%@ / %@", account, service];
+}
+
+// 在面板 VC 上呈现 alert
+static void mfPresentOnPanelVC(UIAlertController *alert) {
+    if (g_mfPanelRootVC) {
+        [g_mfPanelRootVC presentViewController:alert animated:YES completion:nil];
+    } else {
+        mfKLog(@"no panel root VC to present on");
+    }
 }
 
 // ====== 核心功能 ======
@@ -171,10 +182,7 @@ void mfRestoreKeychain(void) {
                                                                        message:[NSString stringWithFormat:@"成功: %lu\n失败: %lu", (unsigned long)successCount, (unsigned long)failCount]
                                                                 preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
-        UIWindow *win = [[UIApplication sharedApplication] keyWindow];
-        if (win && win.rootViewController) {
-            [win.rootViewController presentViewController:alert animated:YES completion:nil];
-        }
+        mfPresentOnPanelVC(alert);
     });
 }
 
@@ -193,14 +201,10 @@ void mfShowKeychainMainMenu(void) {
             mfCopyKeychain();
             // Toast 反馈
             UIAlertController *toast = [UIAlertController alertControllerWithTitle:nil message:@"✅ 已复制到剪贴板" preferredStyle:UIAlertControllerStyleAlert];
-            UIWindow *win = [[UIApplication sharedApplication] keyWindow];
-            if (win && win.rootViewController) {
-                [win.rootViewController presentViewController:toast animated:YES completion:^{
-                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1.5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-                        [toast dismissViewControllerAnimated:YES completion:nil];
-                    });
-                }];
-            }
+            mfPresentOnPanelVC(toast);
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1.5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+                [toast dismissViewControllerAnimated:YES completion:nil];
+            });
         }]];
         
         [menu addAction:[UIAlertAction actionWithTitle:@"导入/恢复 Keychain (从剪贴板)" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
@@ -209,12 +213,7 @@ void mfShowKeychainMainMenu(void) {
         
         [menu addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
         
-        UIWindow *win = [[UIApplication sharedApplication] keyWindow];
-        if (win && win.rootViewController) {
-            UIViewController *vc = win.rootViewController;
-            while (vc.presentedViewController) vc = vc.presentedViewController;
-            [vc presentViewController:menu animated:YES completion:nil];
-        }
+        mfPresentOnPanelVC(menu);
     });
 }
 
@@ -243,12 +242,7 @@ static void mfShowKeychainList(void) {
             [list addAction:[UIAlertAction actionWithTitle:@"关闭" style:UIAlertActionStyleCancel handler:nil]];
         }
         
-        UIWindow *win = [[UIApplication sharedApplication] keyWindow];
-        if (win && win.rootViewController) {
-            UIViewController *vc = win.rootViewController;
-            while (vc.presentedViewController) vc = vc.presentedViewController;
-            [vc presentViewController:list animated:YES completion:nil];
-        }
+        mfPresentOnPanelVC(list);
     });
 }
 
@@ -268,12 +262,7 @@ static void mfShowKeychainDetail(NSDictionary *item) {
         }]];
         [detailAlert addAction:[UIAlertAction actionWithTitle:@"关闭" style:UIAlertActionStyleCancel handler:nil]];
         
-        UIWindow *win = [[UIApplication sharedApplication] keyWindow];
-        if (win && win.rootViewController) {
-            UIViewController *vc = win.rootViewController;
-            while (vc.presentedViewController) vc = vc.presentedViewController;
-            [vc presentViewController:detailAlert animated:YES completion:nil];
-        }
+        mfPresentOnPanelVC(detailAlert);
     });
 }
 
@@ -333,10 +322,7 @@ static void mfShowRestorePrompt(void) {
                                                                                                   message:[NSString stringWithFormat:@"成功: %lu\n失败: %lu", (unsigned long)successCount, (unsigned long)failCount]
                                                                                            preferredStyle:UIAlertControllerStyleAlert];
                                 [result addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
-                                UIWindow *win = [[UIApplication sharedApplication] keyWindow];
-                                if (win && win.rootViewController) {
-                                    [win.rootViewController presentViewController:result animated:YES completion:nil];
-                                }
+                                mfPresentOnPanelVC(result);
                             });
                         });
                     }
@@ -344,16 +330,12 @@ static void mfShowRestorePrompt(void) {
             }
         }]];
         
-        UIWindow *win = [[UIApplication sharedApplication] keyWindow];
-        if (win && win.rootViewController) {
-            UIViewController *vc = win.rootViewController;
-            while (vc.presentedViewController) vc = vc.presentedViewController;
-            [vc presentViewController:alert animated:YES completion:nil];
-        }
+        mfPresentOnPanelVC(alert);
     });
 }
 
 // 面板入口：从主页网格按钮调用
 void mfShowKeychainManagerPage(void) {
+    mfKLog(@"mfShowKeychainManagerPage called");
     mfShowKeychainMainMenu();
 }
