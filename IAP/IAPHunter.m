@@ -279,6 +279,8 @@ static void mfFetchIAPList(void (^cb)(NSArray *items, NSString *err)) {
     NSURLSession *ses = [NSURLSession sharedSession];
     NSURLSessionDataTask *task = [ses dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
         if (err) { cb(nil, err.localizedDescription); return; }
+        NSHTTPURLResponse *httpResp = (NSHTTPURLResponse *)resp;
+        if (httpResp.statusCode != 200) { cb(nil, [NSString stringWithFormat:@"HTTP %ld", (long)httpResp.statusCode]); return; }
         NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
         if (![json isKindOfClass:[NSDictionary class]]) { cb(nil, @"响应格式错误"); return; }
         NSArray *iaps = json[@"iaps"];
@@ -314,14 +316,8 @@ static void mfShowScanPage(void) {
         dispatch_async(dispatch_get_main_queue(), ^{
             [st removeFromSuperview];
             if (err) {
-                UILabel *e = [[UILabel alloc] initWithFrame:CGRectMake(16, 100, g_mfCardW - 32, 60)];
-                e.text = [NSString stringWithFormat:@"查询失败:\n%@", err];
-                e.numberOfLines = 0;
-                e.textAlignment = NSTextAlignmentCenter;
-                e.font = [UIFont systemFontOfSize:13];
-                e.textColor = [UIColor systemRedColor];
-                [page addSubview:e];
-                return;
+                mfLog(@"online fetch failed: %@, continuing with local scan", err);
+                // Don't return - continue with local scan
             }
             if (items.count == 0) {
                 UILabel *e = [[UILabel alloc] initWithFrame:CGRectMake(16, 100, g_mfCardW - 32, 40)];
