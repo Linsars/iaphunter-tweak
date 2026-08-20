@@ -2,9 +2,22 @@
 #import <UIKit/UIKit.h>
 #import <dlfcn.h>
 
-// libroot 函数声明
-extern const char *libroot_jbrootpath(void);
-extern const char *libroot_rootfspath(void);
+// libroot 函数指针（动态加载）
+static const char *(*g_libroot_jbrootpath)(void) = NULL;
+static const char *(*g_libroot_rootfspath)(void) = NULL;
+
+static void mfLoadLibroot(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        void *handle = dlopen("/var/jb/usr/lib/libroot.dylib", RTLD_LAZY);
+        if (!handle) handle = dlopen("/usr/lib/libroot.dylib", RTLD_LAZY);
+        if (!handle) handle = dlopen("@rpath/libroot.dylib", RTLD_LAZY);
+        if (handle) {
+            g_libroot_jbrootpath = (const char *(*)(void))dlsym(handle, "libroot_jbrootpath");
+            g_libroot_rootfspath = (const char *(*)(void))dlsym(handle, "libroot_rootfspath");
+        }
+    });
+}
 
 static const char *g_diagPaths[] = {
     "/var/mobile/Library/Logs",
@@ -26,8 +39,9 @@ static const char *g_diagPaths[] = {
 };
 
 static void mfRunDiagnosticCleanup(UIViewController *parentVC, void (^completion)(BOOL success, NSString *msg)) {
-    const char *jbroot = libroot_jbrootpath();
-    const char *rootfs = libroot_rootfspath();
+    mfLoadLibroot();
+    const char *jbroot = g_libroot_jbrootpath ? g_libroot_jbrootpath() : "";
+    const char *rootfs = g_libroot_rootfspath ? g_libroot_rootfspath() : "";
     
     if (!jbroot) jbroot = "";
     if (!rootfs) rootfs = "";
@@ -132,15 +146,14 @@ static void mfShowDiagnosticCleanupAlert(UIViewController *parentVC) {
 void mfDiagnosticCleanupFromSettings(void) {
     // 在主线程执行
     dispatch_async(dispatch_get_main_queue(), ^{
-        UIWindow *keyWindow = [[UIApplication sharedApplication] keyWindow];
-        if (!keyWindow) {
-            for (UIWindow *w in [[UIApplication sharedApplication] windows]) {
-                if (w.windowLevel == UIWindowLevelNormal && !w.hidden) {
-                    keyWindow = w;
-                    break;
-                }
+        UIWindow *keyWindow = nil;
+        for (UIWindow *w in [[UIApplication sharedApplication] windows]) {
+            if (w.windowLevel == UIWindowLevelNormal && !w.hidden && w.rootViewController) {
+                keyWindow = w;
+                break;
             }
         }
+        if (!keyWindow) return;
         UIViewController *rootVC = keyWindow.rootViewController;
         while (rootVC.presentedViewController) {
             rootVC = rootVC.presentedViewController;
