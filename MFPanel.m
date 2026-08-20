@@ -523,13 +523,14 @@ void mfShowManualBuyPage(void) {
     tf.borderStyle = UITextBorderStyleRoundedRect;
     tf.placeholder = @"输入产品 ID";
     tf.autocapitalizationType = UITextAutocapitalizationTypeNone;
-    tf.autocorrectionType = UITextAutocorrectionTypeNo;
-    tf.spellCheckingType = UITextSpellCheckingTypeNo;
-    tf.returnKeyType = UIReturnKeyDone;
     tf.font = [UIFont systemFontOfSize:13];
-    tf.clearsOnBeginEditing = NO;
-    tf.clearsOnInsertion = NO;
-    tf.delegate = g_mfCtrl;
+    // Add Done toolbar to dismiss keyboard (avoids delegate issues on iOS 17 with iOS 26-built app)
+    UIToolbar *toolbar = [[UIToolbar alloc] initWithFrame:CGRectMake(0, 0, g_mfCardW, 44)];
+    toolbar.barStyle = UIBarStyleDefault;
+    UIBarButtonItem *flex = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:nil action:nil];
+    UIBarButtonItem *done = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:tf action:@selector(resignFirstResponder)];
+    toolbar.items = @[flex, done];
+    tf.inputAccessoryView = toolbar;
     [page addSubview:tf];
     objc_setAssociatedObject(page, "tf", tf, OBJC_ASSOCIATION_RETAIN);
     UIButton *buy = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -593,21 +594,10 @@ void mfShowProductPage(void) {
 }
 
 // ====== MFPanelCtrl（所有 action 方法） ======
-@interface MFPanelCtrl : NSObject <UITextFieldDelegate> @end
+@interface MFPanelCtrl : NSObject @end
 @implementation MFPanelCtrl
 - (void)mfPopPage { mfPopPage(); }
 - (void)mfClosePanel { mfClosePanel(); }
-
-// UITextFieldDelegate - 处理手动购买页的 Return 键
-- (BOOL)textFieldShouldReturn:(UITextField *)textField {
-    [textField resignFirstResponder];
-    return YES;
-}
-- (BOOL)textFieldShouldBeginEditing:(UITextField *)textField {
-    return YES;
-}
-- (void)textFieldDidBeginEditing:(UITextField *)textField { }
-- (void)textFieldDidEndEditing:(UITextField *)textField { }
 
 // 页面入口
 - (void)mfShowDataAnalysisPage { mfShowDataAnalysisPage(); }
