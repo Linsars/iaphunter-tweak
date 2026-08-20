@@ -99,36 +99,13 @@ UIView *mfMakePage(NSString *title, BOOL showBack) {
         CGFloat maxH = MIN(560, g_mfPanelOverlay.bounds.size.height - 100);
         if (g_mfCardH < maxH) mfSetCardHeight(maxH);
     }
-    
-    // Liquid Glass: UIVisualEffectView with iOS 17 system material
-    UIBlurEffect *blurEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark];
-    UIVisualEffectView *blurView = [[UIVisualEffectView alloc] initWithEffect:blurEffect];
-    blurView.frame = CGRectMake(0, 0, g_mfCardW, g_mfCardH);
-    blurView.layer.cornerRadius = 20;
-    blurView.layer.masksToBounds = YES;
-    
-    // Inner glow border for liquid glass edge highlight
-    CALayer *innerGlow = [CALayer layer];
-    innerGlow.frame = CGRectMake(0, 0, g_mfCardW, g_mfCardH);
-    innerGlow.cornerRadius = 20;
-    innerGlow.borderWidth = 0.5;
-    innerGlow.borderColor = [UIColor colorWithWhite:1.0 alpha:0.18].CGColor;
-    [blurView.layer addSublayer:innerGlow];
-    
-    // Subtle tint overlay for liquid glass color dispersion feel
-    UIView *tintOverlay = [[UIView alloc] initWithFrame:blurView.bounds];
-    tintOverlay.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    tintOverlay.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.05];
-    [blurView.contentView addSubview:tintOverlay];
-    
-    // Navigation bar in contentView
+    UIView *page = [[UIView alloc] initWithFrame:CGRectMake(0, 0, g_mfCardW, g_mfCardH)];
+    page.backgroundColor = [UIColor clearColor];
     UIView *nav = [[UIView alloc] initWithFrame:CGRectMake(0, 0, g_mfCardW, 40)];
-    nav.backgroundColor = [UIColor clearColor];
-    [blurView.contentView addSubview:nav];
-    
+    [page addSubview:nav];
     if (showBack) {
         UIButton *back = [UIButton buttonWithType:UIButtonTypeSystem];
-        back.frame = CGRectMake(8, 4, 64, 32);
+        back.frame = CGRectMake(6, 4, 64, 32);
         [back setTitle:@"‹ 返回" forState:UIControlStateNormal];
         back.titleLabel.font = [UIFont systemFontOfSize:15];
         [back addTarget:g_mfCtrl action:NSSelectorFromString(@"mfPopPage") forControlEvents:UIControlEventTouchUpInside];
@@ -145,8 +122,7 @@ UIView *mfMakePage(NSString *title, BOOL showBack) {
     [close setTitle:@"✕" forState:UIControlStateNormal];
     [close addTarget:g_mfCtrl action:NSSelectorFromString(@"mfClosePanel") forControlEvents:UIControlEventTouchUpInside];
     [nav addSubview:close];
-    
-    return blurView;
+    return page;
 }
 
 // 动态调整卡片高度（子页拉长 / 主页恢复紧凑）
@@ -260,8 +236,6 @@ static void mfFetchIAPList(void (^cb)(NSArray *items, NSString *err)) {
     [req setValue:@"https://xn--ug8h.eu.org" forHTTPHeaderField:@"Referer"];
     NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
         if (err) { cb(nil, err.localizedDescription); return; }
-        NSHTTPURLResponse *httpResp = (NSHTTPURLResponse *)resp;
-        if (httpResp.statusCode != 200) { cb(nil, [NSString stringWithFormat:@"HTTP %ld", (long)httpResp.statusCode]); return; }
         NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
         if (![json isKindOfClass:[NSDictionary class]]) { cb(nil, @"响应格式错误"); return; }
         NSArray *iaps = json[@"iaps"];
@@ -465,14 +439,9 @@ void mfShowScanPage(void) {
 
         // 2. 在线查询
         mfFetchIAPList(^(NSArray *onlineItems, NSString *err) {
-            if (err) {
-                mfLog(@"online fetch failed: %@, falling back to local scan only", err);
-            }
-            NSMutableDictionary *onlineMap = [NSMutableDictionary dictionary];
-            if (onlineItems) {
-                for (NSDictionary *item in onlineItems) {
-                    if (item[@"pid"]) onlineMap[item[@"pid"]] = item[@"price"] ?: @"?";
-                }
+            NSMutableDictionary *onlineMap = [NSMutableDictionary dictionary]; // pid -> price
+            for (NSDictionary *item in onlineItems) {
+                if (item[@"pid"]) onlineMap[item[@"pid"]] = item[@"price"] ?: @"?";
             }
 
             // 3. 本地候选中排除在线已有的，剩下的用 SKProductsRequest 验证
@@ -480,7 +449,6 @@ void mfShowScanPage(void) {
             for (NSString *pid in localCandidates) {
                 if (!onlineMap[pid]) [toVerify addObject:pid];
             }
-            mfLog(@"toVerify count: %d", (int)toVerify.count);
 
             mfQueryLocalPrices(toVerify, ^(NSDictionary *verifiedPrices) {
                 dispatch_async(dispatch_get_main_queue(), ^{
@@ -1073,36 +1041,19 @@ static void iaphShowPanel(UIViewController *vc) {
         CGFloat cardH = 300;  // 主页紧凑——子页 push 时自动拉长
         g_mfCardW = cardW; g_mfCardH = cardH;
         g_mfHomeCardH = cardH;
-        
-        // Liquid Glass: UIVisualEffectView with iOS 17 system ultra thin material
-        UIBlurEffect *blurEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark];
-        UIVisualEffectView *card = [[UIVisualEffectView alloc] initWithEffect:blurEffect];
-        card.frame = CGRectMake(16, (sb.size.height - cardH)/2, cardW, cardH);
+        UIVisualEffectView *card = [[UIVisualEffectView alloc] initWithFrame:CGRectMake(16, (sb.size.height - cardH)/2, cardW, cardH)];
+        card.effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
         card.layer.cornerRadius = 22;
         card.clipsToBounds = YES;
         g_mfCardView = card;
-        
-        // Inner glow border for liquid glass edge highlight
-        CALayer *innerGlow = [CALayer layer];
-        innerGlow.frame = CGRectMake(0, 0, cardW, cardH);
-        innerGlow.cornerRadius = 22;
-        innerGlow.borderWidth = 0.5;
-        innerGlow.borderColor = [UIColor colorWithWhite:1.0 alpha:0.18].CGColor;
-        [card.layer addSublayer:innerGlow];
-        
-        // Subtle tint overlay for liquid glass color dispersion feel
-        UIView *tintOverlay = [[UIView alloc] initWithFrame:card.bounds];
-        tintOverlay.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        tintOverlay.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.05];
-        [card.contentView addSubview:tintOverlay];
-        
-        g_mfCardContentView = card.contentView;
+        UIView *content = card.contentView;
+        g_mfCardContentView = content;
         mfLog(@"PANEL STEP 5: card created");
 
         // 主页内容容器——push 子页时隐藏它
-        UIView *home = [[UIView alloc] initWithFrame:card.contentView.bounds];
+        UIView *home = [[UIView alloc] initWithFrame:content.bounds];
         home.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        [card.contentView addSubview:home];
+        [content addSubview:home];
         g_mfHomePage = home;
 
         UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(20, 12, 200, 26)];
