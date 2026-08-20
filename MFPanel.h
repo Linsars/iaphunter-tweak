@@ -95,3 +95,6 @@ void mfSaveRule(MFRewriteRule *rule, NSInteger index);   // index<0 追加
 void mfRemoveRule(NSInteger index);
 NSString *mfCurrentBundleId(void);
 void mfShowRuleEditPage(NSString *pattern, NSString *action, NSInteger index, BOOL fromList);
+
+// ====== 诊断日志清理（MFDiagnosticCleaner.m） ======
+void mfDiagnosticCleanupFromSettings(void);

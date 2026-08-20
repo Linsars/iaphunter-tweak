@@ -20,8 +20,8 @@ FolderX_ARCHS = arm64 arm64e
 
 # IAPHunter 已合并进 MinisFix（SK hooks + IAP 收集 + 交易观察器）
 
-# MinisFix v5.0（新面板：数据分析/网络修改/Product）
-MinisFix_FILES = MFPanel.m MFNetworkCapture.m MFJSRules.m
+# MinisFix v5.0（新面板：数据分析/网络修改/Product + 诊断清理）
+MinisFix_FILES = MFPanel.m MFNetworkCapture.m MFJSRules.m MFDiagnosticCleaner.m
 MinisFix_FRAMEWORKS = UIKit Foundation StoreKit JavaScriptCore
 MinisFix_LDFLAGS = -weak_framework UIKit -weak_framework StoreKit -weak_framework JavaScriptCore
 MinisFix_CFLAGS = -fobjc-arc -Wno-everything
