@@ -37,8 +37,8 @@ static void mfPresentOnPanelVC(UIAlertController *alert) {
     }
 }
 
-// 删除单个 Keychain 项
-static void mfDeleteKeychainItem(NSDictionary *item) {
+// 删除单个 Keychain 项 (静态内部函数)
+static BOOL mfDeleteKeychainItemInternal(NSDictionary *item) {
     NSDictionary *deleteQuery = @{
         (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
         (__bridge id)kSecAttrAccount: item[(__bridge id)kSecAttrAccount] ?: @"",
@@ -239,7 +239,7 @@ void mfShowKeychainDetail(NSDictionary *item) {
     mfPresentOnPanelVC(alert);
 }
 
-// 删除 Keychain 项 (从列表页按钮调用)
+// 删除 Keychain 项 (从列表页按钮调用) - 外部可见
 void mfDeleteKeychainItem(UIButton *btn) {
     NSDictionary *item = objc_getAssociatedObject(btn, "item");
     if (!item) return;
@@ -252,14 +252,14 @@ void mfDeleteKeychainItem(UIButton *btn) {
                                                             preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
     [alert addAction:[UIAlertAction actionWithTitle:@"删除" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
-        BOOL ok = mfDeleteKeychainItem(item);
+        BOOL ok = mfDeleteKeychainItemInternal(item);
         dispatch_async(dispatch_get_main_queue(), ^{
             UIAlertController *result = [UIAlertController alertControllerWithTitle:ok ? @"已删除" : @"删除失败"
                                                                                message:nil
                                                                         preferredStyle:UIAlertControllerStyleAlert];
             [result addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
                 if (ok) {
-                    [mfPopPage performSelector:@selector(invoke)]; // 刷新列表页
+                    mfPopPage();
                     mfShowKeychainListPage();
                 }
             }]];
