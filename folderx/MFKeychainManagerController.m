@@ -5,15 +5,9 @@
 #import <UIKit/UIKit.h>
 #import <Security/Security.h>
 
-static const char *kSecClass = "kSecClass";
-static const char *kSecClassGenericPassword = "kSecClassGenericPassword";
-static const char *kSecMatchLimit = "kSecMatchLimit";
-static const char *kSecMatchLimitAll = "kSecMatchLimitAll";
-static const char *kSecReturnAttributes = "kSecReturnAttributes";
-static const char *kSecReturnData = "kSecReturnData";
-static const char *kSecValueData = "kSecValueData";
-static const char *kSecAttrAccount = "kSecAttrAccount";
-static const char *kSecAttrService = "kSecAttrService";
+static NSArray *mfGetKeychainItems(void);
+static NSString *mfFormatSummary(NSDictionary *item);
+static NSString *mfFormatDetail(NSDictionary *item);
 
 static NSArray *mfGetKeychainItems(void) {
     NSDictionary *query = @{
@@ -158,7 +152,7 @@ static NSString *mfFormatDetail(NSDictionary *item) {
     NSString *base64 = [jsonData base64EncodedStringWithOptions:0];
     [[UIPasteboard generalPasteboard] setString:base64];
     
-    UIAlertController *toast = [UIAlertController alertControllerWithTitle:nil message:@"✅ 已复制到剪贴板 (%lu 项, %lu 字符)" preferredStyle:UIAlertControllerStyleAlert];
+    UIAlertController *toast = [UIAlertController alertControllerWithTitle:nil message:[NSString stringWithFormat:@"✅ 已复制到剪贴板 (%lu 项, %lu 字符)", (unsigned long)items.count, (unsigned long)base64.length] preferredStyle:UIAlertControllerStyleAlert];
     [self presentViewController:toast animated:YES completion:^{
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1.5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
             [toast dismissViewControllerAnimated:YES completion:nil];

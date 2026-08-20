@@ -6,14 +6,12 @@
 #import <Security/Security.h>
 #import "MFPanel.h"
 
-// ====== 常量 ======
-static const char *kSecClass = "kSecClass";
-static const char *kSecClassGenericPassword = "kSecClassGenericPassword";
-static const char *kSecMatchLimit = "kSecMatchLimit";
-static const char *kSecMatchLimitAll = "kSecMatchLimitAll";
-static const char *kSecReturnAttributes = "kSecReturnAttributes";
-static const char *kSecReturnData = "kSecReturnData";
-static const char *kSecValueData = "kSecValueData";
+// ====== 前向声明 ======
+static NSArray *mfGetKeychainItems(void);
+static NSString *mfFormatKeychainItem(NSDictionary *item);
+static NSString *mfFormatKeychainSummary(NSDictionary *item);
+static void mfShowKeychainDetail(NSDictionary *item);
+static void mfShowRestorePrompt(void);
 
 // ====== 工具函数 ======
 static void mfKLog(NSString *fmt, ...) {
@@ -254,7 +252,7 @@ void mfShowKeychainList(void) {
 }
 
 // 显示单项详情
-void mfShowKeychainDetail(NSDictionary *item) {
+static void mfShowKeychainDetail(NSDictionary *item) {
     NSString *detail = mfFormatKeychainItem(item);
     
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -279,7 +277,7 @@ void mfShowKeychainDetail(NSDictionary *item) {
 }
 
 // 显示恢复输入框
-void mfShowRestorePrompt(void) {
+static void mfShowRestorePrompt(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"恢复 Keychain"
                                                                        message:@"粘贴 Base64 编码的 Keychain JSON 数据"
