@@ -6,6 +6,24 @@
 static const char *(*g_libroot_jbrootpath)(void) = NULL;
 static const char *(*g_libroot_rootfspath)(void) = NULL;
 
+// 受保护路径：即使能遍历也无法删除，跳过以避免误报失败
+static const char *g_skipPaths[] = {
+    "/var/db/analyticsd",
+    "/var/mobile/Library/Logs/com.apple.ioam",
+    "/var/root/Library/Logs/MobileContainerManager",
+    "/private/var/log/com.apple.xpc.launchd",
+    NULL
+};
+
+static BOOL mfShouldSkipPath(NSString *path) {
+    for (int i = 0; g_skipPaths[i]; i++) {
+        if ([path hasPrefix:[NSString stringWithUTF8String:g_skipPaths[i]]]) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
 static void mfLoadLibroot(void) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
@@ -68,6 +86,11 @@ static void mfRunDiagnosticCleanup(UIViewController *parentVC, void (^completion
     NSMutableArray *errors = [NSMutableArray array];
     
     for (NSString *path in uniquePaths) {
+        // 跳过已知受保护路径
+        if (mfShouldSkipPath(path)) {
+            continue;
+        }
+        
         NSError *err = nil;
         BOOL isDir = NO;
         [[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDir];
@@ -78,6 +101,9 @@ static void mfRunDiagnosticCleanup(UIViewController *parentVC, void (^completion
             if (contents) {
                 for (NSString *item in contents) {
                     NSString *itemPath = [path stringByAppendingPathComponent:item];
+                    // 跳过受保护子项
+                    if (mfShouldSkipPath(itemPath)) continue;
+                    
                     NSError *itemErr = nil;
                     if ([[NSFileManager defaultManager] removeItemAtPath:itemPath error:&itemErr]) {
                         deletedCount++;
