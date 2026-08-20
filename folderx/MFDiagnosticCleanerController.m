@@ -38,6 +38,12 @@ static const char *g_diagPaths[] = {
     NULL
 };
 
+@interface MFDiagnosticCleanerController ()
+@property (nonatomic, strong) UIAlertController *loadingAlert;
+@property (nonatomic, strong) NSString *cleanupMessage;
+@property (nonatomic, assign) BOOL cleanupSuccess;
+@end
+
 @implementation MFDiagnosticCleanerController
 
 - (void)viewDidLoad {
@@ -61,29 +67,24 @@ static const char *g_diagPaths[] = {
     [alert addAction:cancelAction];
     
     UIAlertAction *cleanupAction = [UIAlertAction actionWithTitle:@"清理" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
-        [self performCleanup];
+        [self startCleanup];
     }];
     [alert addAction:cleanupAction];
     
     [self presentViewController:alert animated:YES completion:nil];
 }
 
-- (void)performCleanup {
-    UIAlertController *loading = [UIAlertController alertControllerWithTitle:nil
-                                                                     message:@"正在清理…"
-                                                              preferredStyle:UIAlertControllerStyleAlert];
-    [self presentViewController:loading animated:YES completion:nil];
+- (void)startCleanup {
+    self.loadingAlert = [UIAlertController alertControllerWithTitle:nil
+                                                            message:@"正在清理…"
+                                                     preferredStyle:UIAlertControllerStyleAlert];
+    [self presentViewController:self.loadingAlert animated:YES completion:nil];
     
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        [self performCleanupInBackground:^(NSString *msg, BOOL success) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [self showResultAlertWithMessage:msg success:success];
-            });
-        });
-    });
+    // 在后台线程执行清理
+    [self performSelectorInBackground:@selector(doCleanupInBackground) withObject:nil];
 }
 
-- (void)performCleanupInBackground:(void (^)(NSString *msg, BOOL success))completion {
+- (void)doCleanupInBackground {
     mfLoadLibroot();
     const char *jbroot = g_libroot_jbrootpath ? g_libroot_jbrootpath() : "";
     const char *rootfs = g_libroot_rootfspath ? g_libroot_rootfspath() : "";
@@ -138,29 +139,31 @@ static const char *g_diagPaths[] = {
         }
     }
     
-    NSString *msg;
-    BOOL success = (failedCount == 0);
-    if (success) {
-        msg = [NSString stringWithFormat:@"✅ 清理完成，共删除 %lu 项", (unsigned long)deletedCount];
+    self.cleanupSuccess = (failedCount == 0);
+    if (self.cleanupSuccess) {
+        self.cleanupMessage = [NSString stringWithFormat:@"✅ 清理完成，共删除 %lu 项", (unsigned long)deletedCount];
     } else {
-        msg = [NSString stringWithFormat:@"⚠️ 部分清理失败 (%lu/%lu)，删除了 %lu 项\n错误:\n%@", 
-               (unsigned long)failedCount, (unsigned long)(deletedCount + failedCount), (unsigned long)deletedCount,
-               [errors componentsJoinedByString:@"\n"]];
+        self.cleanupMessage = [NSString stringWithFormat:@"⚠️ 部分清理失败 (%lu/%lu)，删除了 %lu 项\n错误:\n%@", 
+                               (unsigned long)failedCount, (unsigned long)(deletedCount + failedCount), (unsigned long)deletedCount,
+                               [errors componentsJoinedByString:@"\n"]];
     }
     
-    completion(msg, success);
+    // 回主线程显示结果
+    [self performSelectorOnMainThread:@selector(showCleanupResult) withObject:nil waitUntilDone:NO];
 }
 
-- (void)showResultAlertWithMessage:(NSString *)msg success:(BOOL)success {
-    NSString *resultTitle = success ? @"完成" : @"完成 (有失败)";
-    UIAlertController *result = [UIAlertController alertControllerWithTitle:resultTitle
-                                                                     message:msg
-                                                              preferredStyle:UIAlertControllerStyleAlert];
-    UIAlertAction *okAction = [UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        [self.navigationController popViewControllerAnimated:YES];
+- (void)showCleanupResult {
+    [self.loadingAlert dismissViewControllerAnimated:YES completion:^{
+        NSString *resultTitle = self.cleanupSuccess ? @"完成" : @"完成 (有失败)";
+        UIAlertController *result = [UIAlertController alertControllerWithTitle:resultTitle
+                                                                        message:self.cleanupMessage
+                                                                 preferredStyle:UIAlertControllerStyleAlert];
+        UIAlertAction *okAction = [UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+            [self.navigationController popViewControllerAnimated:YES];
+        }];
+        [result addAction:okAction];
+        [self presentViewController:result animated:YES completion:nil];
     }];
-    [result addAction:okAction];
-    [self presentViewController:result animated:YES completion:nil];
 }
 
 @end
