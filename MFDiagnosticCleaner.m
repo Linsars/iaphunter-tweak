@@ -116,12 +116,12 @@ static void mfShowDiagnosticCleanupAlert(UIViewController *parentVC) {
         
         mfRunDiagnosticCleanup(parentVC, ^(BOOL success, NSString *msg) {
             [loading dismissViewControllerAnimated:YES completion:^{
-                UIAlertController *result = [UIAlertController alertControllerWithTitle:success ? @"完成" : @"完成 (有失败)"
+                UIAlertController *result = [UIAlertController alertControllerWithTitle:(success ? @"完成" : @"完成 (有失败)")
                                                                                 message:msg
                                                                          preferredStyle:UIAlertControllerStyleAlert];
                 [result addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
                 [parentVC presentViewController:result animated:YES completion:nil];
-            });
+            }];
         });
     }]];
     
