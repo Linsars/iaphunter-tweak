@@ -1,4 +1,4 @@
-// MFPanel.m — MinisFix v5.0 面板控制器 + 导航系统 + 主面板
+// MFPanel.m — IAP工具箱 v5.0 面板控制器 + 导航系统 + 主面板
 // 主页双列网格：数据分析 📡 / 网络修改 🔧 / Product 🛍️
 
 #import "MFPanel.h"
@@ -932,7 +932,7 @@ static void iaphShowPanel(UIViewController *vc) {
         g_mfHomePage = home;
 
         UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(20, 12, 200, 26)];
-        title.text = @"MinisFix";
+        title.text = @"IAP工具箱";
         title.font = [UIFont boldSystemFontOfSize:18];
         title.textColor = [UIColor labelColor];
         [home addSubview:title];
