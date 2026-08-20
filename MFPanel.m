@@ -523,7 +523,13 @@ void mfShowManualBuyPage(void) {
     tf.borderStyle = UITextBorderStyleRoundedRect;
     tf.placeholder = @"输入产品 ID";
     tf.autocapitalizationType = UITextAutocapitalizationTypeNone;
+    tf.autocorrectionType = UITextAutocorrectionTypeNo;
+    tf.spellCheckingType = UITextSpellCheckingTypeNo;
+    tf.returnKeyType = UIReturnKeyDone;
     tf.font = [UIFont systemFontOfSize:13];
+    tf.clearsOnBeginEditing = NO;
+    tf.clearsOnInsertion = NO;
+    tf.delegate = g_mfCtrl;
     [page addSubview:tf];
     objc_setAssociatedObject(page, "tf", tf, OBJC_ASSOCIATION_RETAIN);
     UIButton *buy = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -586,104 +592,6 @@ void mfShowProductPage(void) {
     mfPushPage(page);
 }
 
-// ====== FakeGPS（v4.1 迁移） ======
-static double iaphFakeLat(void) { id v = mfPrefsDict()[@"iaphFakeLat"]; return v ? [v doubleValue] : 39.9042; }
-static double iaphFakeLon(void) { id v = mfPrefsDict()[@"iaphFakeLon"]; return v ? [v doubleValue] : 116.4074; }
-static double g_mfSelLat = 0, g_mfSelLon = 0;
-
-void mfShowGpsPage(void) {
-    dlopen("/System/Library/Frameworks/MapKit.framework/MapKit", RTLD_LAZY | RTLD_GLOBAL);
-    dlopen("/System/Library/Frameworks/CoreLocation.framework/CoreLocation", RTLD_LAZY | RTLD_GLOBAL);
-    UIView *page = mfMakePage(@"Fake GPS", YES);
-    UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectMake(16, 48, 60, 31)];
-    sw.on = mfPrefBool(@"iaphFakeGPS", NO);
-    [sw addTarget:g_mfCtrl action:NSSelectorFromString(@"mfGpsSwitch:") forControlEvents:UIControlEventValueChanged];
-    [page addSubview:sw];
-    UILabel *swLb = [[UILabel alloc] initWithFrame:CGRectMake(84, 52, 160, 24)];
-    swLb.text = @"启用模拟定位"; swLb.font = [UIFont systemFontOfSize:14];
-    [page addSubview:swLb];
-    Class MKCls = objc_getClass("MKMapView");
-    if (!MKCls) {
-        UILabel *e = [[UILabel alloc] initWithFrame:CGRectMake(16, 100, g_mfCardW - 32, 40)];
-        e.text = @"MapKit 不可用"; e.textColor = [UIColor secondaryLabelColor];
-        [page addSubview:e]; mfPushPage(page); return;
-    }
-    id map = [[MKCls alloc] initWithFrame:CGRectMake(12, 86, g_mfCardW - 24, 200)];
-    ((UIView *)map).layer.cornerRadius = 14;
-    ((UIView *)map).clipsToBounds = YES;
-    typedef struct { double lat, lon; } CLLoc;
-    typedef struct { CLLoc center; struct { double latD, lonD; } span; } MKReg;
-    MKReg reg; reg.center.lat = iaphFakeLat(); reg.center.lon = iaphFakeLon();
-    reg.span.latD = 0.05; reg.span.lonD = 0.05;
-    ((void(*)(id, SEL, MKReg, BOOL))objc_msgSend)(map, NSSelectorFromString(@"setRegion:animated:"), reg, NO);
-    UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:g_mfCtrl action:NSSelectorFromString(@"mfMapLongPress:")];
-    lp.minimumPressDuration = 0.5;
-    [map addGestureRecognizer:lp];
-    [page addSubview:map];
-    UILabel *coord = [[UILabel alloc] initWithFrame:CGRectMake(16, 296, g_mfCardW - 32, 36)];
-    coord.text = [NSString stringWithFormat:@"当前: %.4f, %.4f（长按地图选点）", iaphFakeLat(), iaphFakeLon()];
-    coord.font = [UIFont systemFontOfSize:12]; coord.textColor = [UIColor secondaryLabelColor];
-    coord.numberOfLines = 0; coord.textAlignment = NSTextAlignmentCenter;
-    [page addSubview:coord];
-    objc_setAssociatedObject(page, "coord", coord, OBJC_ASSOCIATION_RETAIN);
-    UIButton *ok = [UIButton buttonWithType:UIButtonTypeSystem];
-    ok.frame = CGRectMake(16, 338, g_mfCardW - 32, 44);
-    ok.backgroundColor = [UIColor systemBlueColor];
-    ok.layer.cornerRadius = 12;
-    [ok setTitle:@"确认模拟此坐标" forState:UIControlStateNormal];
-    [ok setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    [ok addTarget:g_mfCtrl action:NSSelectorFromString(@"mfConfirmCoord") forControlEvents:UIControlEventTouchUpInside];
-    [page addSubview:ok];
-    mfPushPage(page);
-}
-
-// ====== FakeGPS hook（ctor 注册） ======
-static IMP orig_clLocation, orig_startUpdating;
-static id makeFakeLocation(void) {
-    Class locCls = objc_getClass("CLLocation");
-    if (!locCls) return nil;
-    id loc = [locCls alloc];
-    SEL initSel = NSSelectorFromString(@"initWithLatitude:longitude:");
-    return ((id(*)(id, SEL, double, double))objc_msgSend)(loc, initSel, iaphFakeLat(), iaphFakeLon());
-}
-static id new_clLocation(id self, SEL _cmd) {
-    if (mfPrefBool(@"iaphFakeGPS", NO)) return makeFakeLocation();
-    return orig_clLocation ? ((id(*)(id, SEL))orig_clLocation)(self, _cmd) : nil;
-}
-static void new_startUpdating(id self, SEL _cmd) {
-    if (mfPrefBool(@"iaphFakeGPS", NO)) {
-        id delegate = [self performSelector:NSSelectorFromString(@"delegate")];
-        SEL upd = NSSelectorFromString(@"locationManager:didUpdateLocations:");
-        if (delegate && [delegate respondsToSelector:upd]) {
-            id fake = makeFakeLocation();
-            ((void(*)(id, SEL, id, id))objc_msgSend)(delegate, upd, self, @[fake]);
-            return;
-        }
-    }
-    if (orig_startUpdating) ((void(*)(id, SEL))orig_startUpdating)(self, _cmd);
-}
-static void hookFakeGPS(void) {
-    Class cls = objc_getClass("CLLocationManager");
-    if (!cls) return;
-    Method m;
-    if ((m = class_getInstanceMethod(cls, @selector(location)))) { orig_clLocation = method_getImplementation(m); method_setImplementation(m, (IMP)new_clLocation); }
-    if ((m = class_getInstanceMethod(cls, @selector(startUpdatingLocation)))) { orig_startUpdating = method_getImplementation(m); method_setImplementation(m, (IMP)new_startUpdating); }
-    mfLog(@"hookFakeGPS: installed");
-}
-
-// 屏蔽摇一摇
-static IMP orig_motionEnded;
-static void new_motionEnded(id self, SEL _cmd, int motion, id event) {
-    if (mfPrefBool(@"iaphShakeBlock", NO)) return;
-    if (orig_motionEnded) ((void(*)(id, SEL, int, id))orig_motionEnded)(self, _cmd, motion, event);
-}
-static void hookShakeBlock(void) {
-    Class cls = objc_getClass("UIResponder");
-    if (!cls) return;
-    Method m = class_getInstanceMethod(cls, NSSelectorFromString(@"motionEnded:withEvent:"));
-    if (m) { orig_motionEnded = method_getImplementation(m); method_setImplementation(m, (IMP)new_motionEnded); mfLog(@"hookShakeBlock: installed"); }
-}
-
 // ====== MFPanelCtrl（所有 action 方法） ======
 @interface MFPanelCtrl : NSObject @end
 @implementation MFPanelCtrl
@@ -700,7 +608,6 @@ static void hookShakeBlock(void) {
 - (void)mfShowScanPage { mfShowScanPage(); }
 - (void)mfShowManualBuyPage { mfShowManualBuyPage(); }
 - (void)mfShowIconPage { mfShowIconPage(); }
-- (void)mfShowGpsPage { mfShowGpsPage(); }
 
 // 捕获详情
 - (void)mfShowCaptureDetail:(UITapGestureRecognizer *)g {
@@ -887,39 +794,6 @@ static void hookShakeBlock(void) {
         }];
         b.backgroundColor = [UIColor systemGreenColor];
     }
-}
-
-// FakeGPS
-- (void)mfGpsSwitch:(UISwitch *)sw { mfSetBoolPref(@"iaphFakeGPS", sw.on); mfLog(@"FakeGPS -> %d", sw.on); }
-- (void)mfMapLongPress:(UILongPressGestureRecognizer *)g {
-    if (g.state != UIGestureRecognizerStateBegan) return;
-    UIView *map = g.view;
-    typedef struct { double lat, lon; } CLLoc;
-    CLLoc c = ((CLLoc(*)(id, SEL, CGPoint, id))objc_msgSend)(map, NSSelectorFromString(@"convertPoint:toCoordinateFromView:"), [g locationInView:map], map);
-    g_mfSelLat = c.lat; g_mfSelLon = c.lon;
-    Class annCls = objc_getClass("MKPointAnnotation");
-    if (annCls) {
-        id ann = [[annCls alloc] init];
-        ((void(*)(id, SEL, CLLoc))objc_msgSend)(ann, NSSelectorFromString(@"setCoordinate:"), c);
-        [map performSelector:NSSelectorFromString(@"removeAnnotations:") withObject:[map performSelector:NSSelectorFromString(@"annotations")]];
-        [map performSelector:NSSelectorFromString(@"addAnnotation:") withObject:ann];
-    }
-    UIView *top = [g_mfPages lastObject];
-    UILabel *cl = objc_getAssociatedObject(top, "coord");
-    if (cl) cl.text = [NSString stringWithFormat:@"选中: %.4f, %.4f", c.lat, c.lon];
-}
-- (void)mfConfirmCoord {
-    UIView *top = [g_mfPages lastObject];
-    UILabel *cl = objc_getAssociatedObject(top, "coord");
-    if (g_mfSelLat == 0 && g_mfSelLon == 0) {
-        if (cl) { cl.text = @"请先长按地图选择坐标"; cl.textColor = [UIColor systemOrangeColor]; }
-        return;
-    }
-    mfSetPrefDouble(@"iaphFakeLat", g_mfSelLat);
-    mfSetPrefDouble(@"iaphFakeLon", g_mfSelLon);
-    mfSetBoolPref(@"iaphFakeGPS", YES);
-    if (cl) { cl.text = [NSString stringWithFormat:@"✅ 已启用: %.4f, %.4f", g_mfSelLat, g_mfSelLon]; cl.textColor = [UIColor systemGreenColor]; }
-    mfLog(@"FakeGPS set: %.4f, %.4f", g_mfSelLat, g_mfSelLon);
 }
 
 // Crypto 工具箱
