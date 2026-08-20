@@ -37,6 +37,17 @@ static void mfPresentOnPanelVC(UIAlertController *alert) {
     }
 }
 
+// 删除单个 Keychain 项
+static void mfDeleteKeychainItem(NSDictionary *item) {
+    NSDictionary *deleteQuery = @{
+        (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+        (__bridge id)kSecAttrAccount: item[(__bridge id)kSecAttrAccount] ?: @"",
+        (__bridge id)kSecAttrService: item[(__bridge id)kSecAttrService] ?: @""
+    };
+    OSStatus status = SecItemDelete((__bridge CFDictionaryRef)deleteQuery);
+    return status == errSecSuccess || status == errSecItemNotFound;
+}
+
 // ====== 核心操作 (在后台线程执行) ======
 
 // 导出 Keychain -> Base64 JSON -> 粘贴板
@@ -163,7 +174,8 @@ static void mfShowKeychainListPage(void) {
         label.font = [UIFont systemFontOfSize:15];
         [page addSubview:label];
     } else {
-        UIScrollView *sv = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 0, g_mfCardW, g_mfCardH)];
+        // ScrollView 从 nav bar 下方开始 (y=40)，避免遮挡返回键
+        UIScrollView *sv = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 40, g_mfCardW, g_mfCardH - 40)];
         sv.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
         [page addSubview:sv];
         
@@ -173,18 +185,33 @@ static void mfShowKeychainListPage(void) {
             NSString *service = item[(__bridge id)kSecAttrService] ?: @"(无服务)";
             NSString *summary = [NSString stringWithFormat:@"%@ / %@", account, service];
             
+            UIView *cell = [[UIView alloc] initWithFrame:CGRectMake(12, y, g_mfCardW - 24, 44)];
+            cell.backgroundColor = [UIColor secondarySystemBackgroundColor];
+            cell.layer.cornerRadius = 8;
+            
             UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
-            btn.frame = CGRectMake(12, y, g_mfCardW - 24, 44);
-            btn.backgroundColor = [UIColor secondarySystemBackgroundColor];
-            btn.layer.cornerRadius = 8;
+            btn.frame = cell.bounds;
             btn.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
             [btn setTitle:[NSString stringWithFormat:@"  %@", summary] forState:UIControlStateNormal];
             [btn setTitleColor:[UIColor labelColor] forState:UIControlStateNormal];
             btn.titleLabel.font = [UIFont systemFontOfSize:14];
             objc_setAssociatedObject(btn, "item", item, OBJC_ASSOCIATION_RETAIN);
             [btn addTarget:g_mfCtrl action:@selector(mfShowKeychainDetail:) forControlEvents:UIControlEventTouchUpInside];
-            [sv addSubview:btn];
+            [cell addSubview:btn];
             
+            // 删除按钮 (右侧红色)
+            UIButton *delBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+            delBtn.frame = CGRectMake(g_mfCardW - 24 - 60, 4, 60, 36);
+            delBtn.backgroundColor = [UIColor systemRedColor];
+            delBtn.layer.cornerRadius = 6;
+            [delBtn setTitle:@"删除" forState:UIControlStateNormal];
+            [delBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+            delBtn.titleLabel.font = [UIFont systemFontOfSize:12];
+            objc_setAssociatedObject(delBtn, "item", item, OBJC_ASSOCIATION_RETAIN);
+            [delBtn addTarget:g_mfCtrl action:@selector(mfDeleteKeychainItem:) forControlEvents:UIControlEventTouchUpInside];
+            [cell addSubview:delBtn];
+            
+            [sv addSubview:cell];
             y += 48;
         }
         sv.contentSize = CGSizeMake(g_mfCardW, y + 20);
@@ -209,6 +236,36 @@ void mfShowKeychainDetail(NSDictionary *item) {
         }
     }]];
     [alert addAction:[UIAlertAction actionWithTitle:@"关闭" style:UIAlertActionStyleCancel handler:nil]];
+    mfPresentOnPanelVC(alert);
+}
+
+// 删除 Keychain 项 (从列表页按钮调用)
+void mfDeleteKeychainItem(UIButton *btn) {
+    NSDictionary *item = objc_getAssociatedObject(btn, "item");
+    if (!item) return;
+    
+    NSString *account = item[(__bridge id)kSecAttrAccount] ?: @"(无账号)";
+    NSString *service = item[(__bridge id)kSecAttrService] ?: @"(无服务)";
+    
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"删除 Keychain 项"
+                                                                   message:[NSString stringWithFormat:@"确定删除？\n%@ / %@", account, service]
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"删除" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
+        BOOL ok = mfDeleteKeychainItem(item);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            UIAlertController *result = [UIAlertController alertControllerWithTitle:ok ? @"已删除" : @"删除失败"
+                                                                               message:nil
+                                                                        preferredStyle:UIAlertControllerStyleAlert];
+            [result addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+                if (ok) {
+                    [mfPopPage performSelector:@selector(invoke)]; // 刷新列表页
+                    mfShowKeychainListPage();
+                }
+            }]];
+            mfPresentOnPanelVC(result);
+        });
+    }]];
     mfPresentOnPanelVC(alert);
 }
 

@@ -621,6 +621,13 @@ void mfShowProductPage(void) {
     mfShowKeychainDetail(item);
 }
 
+// Keychain 删除
+- (void)mfDeleteKeychainItem:(UIButton *)btn {
+    NSDictionary *item = objc_getAssociatedObject(btn, "item");
+    if (!item) return;
+    mfDeleteKeychainItem(btn);
+}
+
 // 捕获详情
 - (void)mfShowCaptureDetail:(UITapGestureRecognizer *)g {
     MFNetRecord *rec = objc_getAssociatedObject(g, "rec");
