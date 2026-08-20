@@ -7,9 +7,9 @@
 #import "MFPanel.h"
 
 extern UIViewController *g_mfPanelRootVC;
+extern void mfLog(NSString *fmt, ...);  // 使用面板统一日志
 
 // ====== 工具函数 ======
-// 版本号 (与 control 同步)
 #define MFKEYCHAIN_VERSION @"1.3.0"
 
 static void mfKLog(NSString *fmt, ...) {
@@ -17,7 +17,7 @@ static void mfKLog(NSString *fmt, ...) {
     va_start(args, fmt);
     NSString *msg = [[NSString alloc] initWithFormat:fmt arguments:args];
     va_end(args);
-    NSLog(@"[MFKeychain v%@] %@", MFKEYCHAIN_VERSION, msg);
+    mfLog(@"[MFKeychain v%@] %@", MFKEYCHAIN_VERSION, msg);
 }
 
 static NSArray *mfGetKeychainItems(void) {
