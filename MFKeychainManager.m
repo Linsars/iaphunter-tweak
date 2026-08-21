@@ -369,61 +369,86 @@ void mfProcessSingleRestoreItem(NSDictionary *item) {
 static void mfShowKeychainListPage(void) {
     mfKLog(@"mfShowKeychainListPage called");
     UIView *page = mfMakePage(@"Keychain 列表", YES);
-    NSArray *items = mfGetKeychainItems();
-    mfKLog(@"list page: %lu items", (unsigned long)items.count);
     
-    if (items.count == 0) {
-        UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(20, 50, g_mfCardW - 40, 40)];
-        label.text = @"无 Generic Password 项";
-        label.textAlignment = NSTextAlignmentCenter;
-        label.textColor = [UIColor secondaryLabelColor];
-        label.font = [UIFont systemFontOfSize:15];
-        [page addSubview:label];
-    } else {
-        // ScrollView 从 nav bar 下方开始 (y=40)，避免遮挡返回键
-        UIScrollView *sv = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 40, g_mfCardW, g_mfCardH - 40)];
-        sv.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        [page addSubview:sv];
-        
-        CGFloat y = 12;
-        for (NSDictionary *item in items) {
-            NSString *account = item[(__bridge id)kSecAttrAccount] ?: @"(无账号)";
-            NSString *service = item[(__bridge id)kSecAttrService] ?: @"(无服务)";
-            NSString *summary = [NSString stringWithFormat:@"%@ / %@", account, service];
-            
-            UIView *cell = [[UIView alloc] initWithFrame:CGRectMake(12, y, g_mfCardW - 24, 44)];
-            cell.backgroundColor = [UIColor secondarySystemBackgroundColor];
-            cell.layer.cornerRadius = 8;
-            
-            UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
-            btn.frame = cell.bounds;
-            btn.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
-            [btn setTitle:[NSString stringWithFormat:@"  %@", summary] forState:UIControlStateNormal];
-            [btn setTitleColor:[UIColor labelColor] forState:UIControlStateNormal];
-            btn.titleLabel.font = [UIFont systemFontOfSize:14];
-            objc_setAssociatedObject(btn, "item", item, OBJC_ASSOCIATION_RETAIN);
-            [btn addTarget:g_mfCtrl action:@selector(mfShowKeychainDetail:) forControlEvents:UIControlEventTouchUpInside];
-            [cell addSubview:btn];
-            
-            // 删除按钮 (右侧红色)
-            UIButton *delBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-            delBtn.frame = CGRectMake(g_mfCardW - 24 - 60, 4, 60, 36);
-            delBtn.backgroundColor = [UIColor systemRedColor];
-            delBtn.layer.cornerRadius = 6;
-            [delBtn setTitle:@"删除" forState:UIControlStateNormal];
-            [delBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-            delBtn.titleLabel.font = [UIFont systemFontOfSize:12];
-            objc_setAssociatedObject(delBtn, "item", item, OBJC_ASSOCIATION_RETAIN);
-            [delBtn addTarget:g_mfCtrl action:@selector(mfDeleteKeychainItem:) forControlEvents:UIControlEventTouchUpInside];
-            [cell addSubview:delBtn];
-            
-            [sv addSubview:cell];
-            y += 48;
-        }
-        sv.contentSize = CGSizeMake(g_mfCardW, y + 20);
-    }
-    mfKLog(@"pushing list page");
+    // 先显示加载中
+    UIActivityIndicatorView *spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleGray];
+    spinner.center = CGPointMake(g_mfCardW / 2, g_mfCardH / 2);
+    spinner.hidesWhenStopped = YES;
+    [page addSubview:spinner];
+    [spinner startAnimating];
+    
+    UILabel *loadingLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, spinner.center.y + 30, g_mfCardW - 40, 20)];
+    loadingLabel.text = @"查询 Keychain 中...";
+    loadingLabel.textAlignment = NSTextAlignmentCenter;
+    loadingLabel.textColor = [UIColor secondaryLabelColor];
+    loadingLabel.font = [UIFont systemFontOfSize:14];
+    [page addSubview:loadingLabel];
+    
     mfPushPage(page);
+    
+    // 后台查询
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSArray *items = mfGetKeychainItems();
+        mfKLog(@"list page query done: %lu items", (unsigned long)items.count);
+        
+        dispatch_async(dispatch_get_main_queue(), ^{
+            // 移除加载指示器
+            [spinner stopAnimating];
+            [spinner removeFromSuperview];
+            [loadingLabel removeFromSuperview];
+            
+            if (items.count == 0) {
+                UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(20, 50, g_mfCardW - 40, 40)];
+                label.text = @"无 Generic Password 项";
+                label.textAlignment = NSTextAlignmentCenter;
+                label.textColor = [UIColor secondaryLabelColor];
+                label.font = [UIFont systemFontOfSize:15];
+                [page addSubview:label];
+            } else {
+                // ScrollView 从 nav bar 下方开始 (y=40)，避免遮挡返回键
+                UIScrollView *sv = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 40, g_mfCardW, g_mfCardH - 40)];
+                sv.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+                [page addSubview:sv];
+                
+                CGFloat y = 12;
+                for (NSDictionary *item in items) {
+                    NSString *account = item[(__bridge id)kSecAttrAccount] ?: @"(无账号)";
+                    NSString *service = item[(__bridge id)kSecAttrService] ?: @"(无服务)";
+                    NSString *summary = [NSString stringWithFormat:@"%@ / %@", account, service];
+                    
+                    UIView *cell = [[UIView alloc] initWithFrame:CGRectMake(12, y, g_mfCardW - 24, 44)];
+                    cell.backgroundColor = [UIColor secondarySystemBackgroundColor];
+                    cell.layer.cornerRadius = 8;
+                    
+                    UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
+                    btn.frame = cell.bounds;
+                    btn.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
+                    [btn setTitle:[NSString stringWithFormat:@"  %@", summary] forState:UIControlStateNormal];
+                    [btn setTitleColor:[UIColor labelColor] forState:UIControlStateNormal];
+                    btn.titleLabel.font = [UIFont systemFontOfSize:14];
+                    objc_setAssociatedObject(btn, "item", item, OBJC_ASSOCIATION_RETAIN);
+                    [btn addTarget:g_mfCtrl action:@selector(mfShowKeychainDetail:) forControlEvents:UIControlEventTouchUpInside];
+                    [cell addSubview:btn];
+                    
+                    // 删除按钮 (右侧红色)
+                    UIButton *delBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+                    delBtn.frame = CGRectMake(g_mfCardW - 24 - 60, 4, 60, 36);
+                    delBtn.backgroundColor = [UIColor systemRedColor];
+                    delBtn.layer.cornerRadius = 6;
+                    [delBtn setTitle:@"删除" forState:UIControlStateNormal];
+                    [delBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+                    delBtn.titleLabel.font = [UIFont systemFontOfSize:12];
+                    objc_setAssociatedObject(delBtn, "item", item, OBJC_ASSOCIATION_RETAIN);
+                    [delBtn addTarget:g_mfCtrl action:@selector(mfDeleteKeychainItem:) forControlEvents:UIControlEventTouchUpInside];
+                    [cell addSubview:delBtn];
+                    
+                    [sv addSubview:cell];
+                    y += 48;
+                }
+                sv.contentSize = CGSizeMake(g_mfCardW, y + 20);
+            }
+        });
+    });
 }
 
 // 显示详情
