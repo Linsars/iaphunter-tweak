@@ -547,6 +547,20 @@ static void mfShowICloudIDListPage(NSString *bundleID, NSString *appName, NSArra
         [sv addSubview:cell];
         y += 80;
         
+        // 无 iCloud 容器的 App：直接显示最终状态，绝不碰 CloudKit
+        // （无 entitlement 的进程调用 CKContainer API 会底层 abort，@try 拦不住）
+        if ([containerID isEqualToString:@"(默认容器)"]) {
+            statusLabel.text = @"🚫 该 App 未声明 iCloud 容器\n（未启用 iCloud capability，无法查询）";
+            statusLabel.textColor = [UIColor systemGrayColor];
+            pendingCount--;
+            if (pendingCount <= 0) {
+                [spinner stopAnimating];
+                [spinner removeFromSuperview];
+                [loadingLabel removeFromSuperview];
+            }
+            continue;
+        }
+        
         // 异步查询
         NSString *cid = containerID;
         mfQueryRecordIDForContainer(cid, ^(NSString *recordName, NSError *error) {
