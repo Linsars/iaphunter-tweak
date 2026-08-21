@@ -6,6 +6,7 @@
 #import "MFPanel.h"
 #include <zlib.h>
 #include <time.h>
+#include <ctype.h>
 
 // ====== 类型编码 → C 类型（精简版 CDTypeParser） ======
 static NSString *mfDecOne(const char *e, NSUInteger *ip) {
@@ -84,7 +85,6 @@ static NSString *mfDecodeType(const char *enc) {
 // ====== 方法渲染：- (ret)sela:(arg)a1 b:(arg)a2; ======
 static NSString *mfRenderMethod(Method m, BOOL isCls) {
     const char *retEnc = method_getReturnType(m);
-    unsigned argc = method_getNumberOfArguments(m);
     NSMutableString *sig = [NSMutableString string];
     [sig appendFormat:@"%c (%@)", isCls ? '+' : '-', mfDecodeType(retEnc)];
     SEL sel = method_getName(m);
@@ -112,7 +112,7 @@ static NSString *mfHeaderForClass(Class cls) {
     NSMutableArray *protos = [NSMutableArray array];
     unsigned pc = 0;
     Protocol * __unsafe_unretained *pl = class_copyProtocolList(cls, &pc);
-    for (unsigned i = 0; i < pc; i++) [protos addObject:protocol_getName(pl[i])];
+    for (unsigned i = 0; i < pc; i++) [protos addObject:@(protocol_getName(pl[i]))];
     free(pl);
 
     [h appendFormat:@"@interface %s", nm];
@@ -238,7 +238,8 @@ static NSData *mfZipFinish(NSMutableData *zip, NSMutableArray *cds) {
 void mfClassDumpStartAction(UIProgressView *pv, UILabel *lb, UIButton *btn, UIViewController *hostVC) {
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         Class *classes = NULL;
-        unsigned total = objc_copyClassList(&classes);
+        unsigned total = 0;
+        classes = objc_copyClassList(&total);
         if (!total || !classes) {
             dispatch_async(dispatch_get_main_queue(), ^{ lb.text = @"⚠️ 无类可枚举"; });
             free(classes); return;
