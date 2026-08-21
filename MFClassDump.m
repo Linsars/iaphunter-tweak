@@ -84,9 +84,11 @@ static NSString *mfDecodeType(const char *enc) {
 
 // ====== 方法渲染：- (ret)sela:(arg)a1 b:(arg)a2; ======
 static NSString *mfRenderMethod(Method m, BOOL isCls) {
-    const char *retEnc = method_getReturnType(m);
+    // 老版 SDK 把 method_getReturnType 声明为 (m,dst,len) 遗留变体，统一用 copy 系
+    char *retp = method_copyReturnType(m);
     NSMutableString *sig = [NSMutableString string];
-    [sig appendFormat:@"%c (%@)", isCls ? '+' : '-', mfDecodeType(retEnc)];
+    [sig appendFormat:@"%c (%@)", isCls ? '+' : '-', mfDecodeType(retp)];
+    if (retp) free(retp);
     SEL sel = method_getName(m);
     NSArray *parts = [NSStringFromSelector(sel) componentsSeparatedByString:@":"];
     int ai = 0;
