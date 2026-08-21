@@ -21,7 +21,7 @@ FolderX_ARCHS = arm64 arm64e
 
 # MinisFix v5.0（新面板：数据分析/网络修改/Product + 诊断清理 + Keychain管理）
 MinisFix_FILES = MFPanel.m MFNetworkCapture.m MFJSRules.m MFDiagnosticCleaner.m MFKeychainManager.m
-MinisFix_FRAMEWORKS = UIKit Foundation StoreKit JavaScriptCore Security CloudKit
+MinisFix_FRAMEWORKS = UIKit Foundation StoreKit JavaScriptCore Security CloudKit MobileCoreServices
 MinisFix_LDFLAGS = -weak_framework UIKit -weak_framework StoreKit -weak_framework JavaScriptCore
 MinisFix_CFLAGS = -fobjc-arc -Wno-everything
 MinisFix_ARCHS = arm64 arm64e
