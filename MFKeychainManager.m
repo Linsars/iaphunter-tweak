@@ -366,7 +366,7 @@ void mfProcessSingleRestoreItem(NSDictionary *item) {
 
 // ====== iCloud ID 查询 (通过 CloudKit) ======
 
-static void mfFetchCloudKitRecordID(void) {
+void mfFetchCloudKitRecordID(void) {
     mfKLog(@"mfFetchCloudKitRecordID called");
     
     // 显示加载中
