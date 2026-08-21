@@ -366,8 +366,8 @@ void mfProcessSingleRestoreItem(NSDictionary *item) {
 
 // ====== iCloud ID 查询 (通过 CloudKit) ======
 
-void mfFetchCloudKitRecordID(void) {
-    mfKLog(@"mfFetchCloudKitRecordID called");
+void mfFetchCloudKitRecordID(NSString *containerIdentifier) {
+    mfKLog(@"mfFetchCloudKitRecordID called, container=%@", containerIdentifier ?: @"default");
     
     // 显示加载中
     UIAlertController *loading = [UIAlertController alertControllerWithTitle:@"查询 iCloud ID"
@@ -382,7 +382,7 @@ void mfFetchCloudKitRecordID(void) {
     
     // 后台查询
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        CKContainer *container = [CKContainer defaultContainer];
+        CKContainer *container = containerIdentifier ? [CKContainer containerWithIdentifier:containerIdentifier] : [CKContainer defaultContainer];
         [container fetchUserRecordIDWithCompletionHandler:^(CKRecordID *recordID, NSError *error) {
             dispatch_async(dispatch_get_main_queue(), ^{
                 [loading dismissViewControllerAnimated:YES completion:nil];
@@ -426,6 +426,33 @@ void mfFetchCloudKitRecordID(void) {
             });
         }];
     });
+}
+
+static void mfFetchCloudKitRecordIDDefault(void) {
+    mfFetchCloudKitRecordID(nil);
+}
+
+static void mfShowCloudKitIdentifierPrompt(void) {
+    mfKLog(@"mfShowCloudKitIdentifierPrompt called");
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"获取 iCloud ID (Scripting)"
+                                                                   message:@"输入 Container Identifier (留空使用默认)"
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+        tf.placeholder = @"iCloud.com.example.app";
+        tf.font = [UIFont systemFontOfSize:13];
+        tf.autocapitalizationType = UITextAutocapitalizationTypeNone;
+    }];
+    
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"获取" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        UITextField *tf = alert.textFields.firstObject;
+        NSString *identifier = tf.text.length > 0 ? tf.text : nil;
+        mfKLog(@"user submitted with identifier: %@", identifier ?: @"(default)");
+        mfFetchCloudKitRecordID(identifier);
+    }]];
+    
+    mfPresentOnPanelVC(alert);
 }
 
 // ====== 面板页面 ======
@@ -612,9 +639,10 @@ void mfShowKeychainManagerPage(void) {
     CGFloat gy = 48;
     
     gy = mfGridButton(page, 16, gy, gw, @"查看列表", @"📋", @selector(mfShowKeychainListPage), NO, nil);
-    gy = mfGridButton(page, 16 + gw + 12, gy, gw, @"获取 iCloud ID", @"☁️", @selector(mfFetchCloudKitRecordID), NO, nil);
-    gy = mfGridButton(page, 16, gy, gw, @"导出到剪贴板", @"📤", @selector(mfShowCopyAction), NO, nil);
-    gy = mfGridButton(page, 16 + gw + 12, gy, gw, @"从剪贴板恢复", @"📥", @selector(mfShowRestorePrompt), NO, nil);
+    gy = mfGridButton(page, 16 + gw + 12, gy - 92, gw, @"获取 iCloud ID", @"☁️", @selector(mfFetchCloudKitRecordIDDefault), NO, nil);
+    gy = mfGridButton(page, 16, gy, gw, @"Scripting 模式", @"📝", @selector(mfShowCloudKitIdentifierPrompt), NO, nil);
+    gy = mfGridButton(page, 16 + gw + 12, gy - 92, gw, @"导出到剪贴板", @"📤", @selector(mfShowCopyAction), NO, nil);
+    gy = mfGridButton(page, 16, gy, gw, @"从剪贴板恢复", @"📥", @selector(mfShowRestorePrompt), NO, nil);
     
     mfPushPage(page);
 }
