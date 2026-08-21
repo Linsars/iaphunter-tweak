@@ -611,8 +611,7 @@ void mfShowProductPage(void) {
 - (void)mfShowKeychainListPage { mfShowKeychainListPageAction(); }
 - (void)mfCopyKeychainAction { mfCopyKeychainAction(); }
 - (void)mfShowRestorePromptAction { mfShowRestorePromptAction(); }
-- (void)mfFetchCloudKitRecordIDDefault { mfFetchCloudKitRecordIDDefault(); }
-- (void)mfShowCloudKitIdentifierPrompt { mfShowCloudKitIdentifierPrompt(); }
+- (void)mfFetchCloudKitRecordIDAuto { mfFetchCloudKitRecordIDAuto(); }
 - (void)mfShowManualBuyPage { mfShowManualBuyPage(); }
 - (void)mfShowIconPage { mfShowIconPage(); }
 
