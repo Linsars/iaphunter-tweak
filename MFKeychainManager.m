@@ -417,11 +417,8 @@ static NSArray *mfGetFrontmostAppContainerIdentifiers(NSString **outBundleID, NS
             
             // 从 scene 直接尝试 (有些版本直接在 scene 上)
             if (!bundleID) {
-                if ([scene respondsToSelector:@selector(bundleIdentifier)]) {
-                    bundleID = [scene bundleIdentifier];
-                }
+                bundleID = [scene valueForKey:@"bundleIdentifier"];
             }
-            if (!bundleID) bundleID = [scene valueForKey:@"bundleIdentifier"];
             if (!bundleID) bundleID = [scene valueForKey:@"applicationIdentifier"];
             
             mfKLog(@"  bundleID: %@", bundleID ?: @"nil");
