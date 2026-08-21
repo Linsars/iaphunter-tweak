@@ -8,6 +8,11 @@
 #import "MFPanel.h"
 #import "LSApplicationProxy.h"
 
+// SecTask 私有 API 声明 (Security framework 内，iOS 未公开头文件)
+typedef struct CF_BRIDGED_TYPE(id) OpaqueSecTaskRef *SecTaskRef;
+extern SecTaskRef SecTaskCreateFromSelf(CFAllocatorRef allocator);
+extern CFTypeRef SecTaskCopyValueForEntitlement(SecTaskRef task, CFStringRef entitlement, CFErrorRef *error);
+
 extern UIViewController *g_mfPanelRootVC;
 extern void mfLog(NSString *fmt, ...);  // 使用面板统一日志
 
@@ -368,11 +373,11 @@ void mfProcessSingleRestoreItem(NSDictionary *item) {
 // ====== iCloud ID 查询 (通过当前前台 App 的 Entitlements 自动获取 Container Identifier) ======
 
 // 获取当前前台 App 的 Container Identifiers
-// 关键：tweak 注入到每个 App 进程，直接用 NSBundle.mainBundle 拿当前 App 的 bundleID
+// 关键：tweak 注入到每个 App 进程，直接用 SecTask 读自己的 Entitlements (内核级)
 static NSArray *mfGetFrontmostAppContainerIdentifiers(NSString **outBundleID, NSString **outAppName) {
-    mfKLog(@"mfGetFrontmostAppContainerIdentifiers called (mainBundle method)");
+    mfKLog(@"mfGetFrontmostAppContainerIdentifiers called (SecTask method)");
     
-    // 我们就在目标 App 进程里，直接拿 mainBundle 的 bundleID
+    // 我们就在目标 App 进程里
     NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier];
     mfKLog(@"Current app bundleID: %@", bundleID);
     
@@ -383,28 +388,34 @@ static NSArray *mfGetFrontmostAppContainerIdentifiers(NSString **outBundleID, NS
     
     if (outBundleID) *outBundleID = bundleID;
     
-    // 用 LSApplicationWorkspace 获取该 App 的 proxy
+    // 用 SecTask 直接从内核读当前进程的 Entitlements
     @try {
-        LSApplicationWorkspace *ws = [LSApplicationWorkspace defaultWorkspace];
-        if (!ws) {
-            mfKLog(@"LSApplicationWorkspace nil");
+        SecTaskRef task = SecTaskCreateFromSelf(kCFAllocatorDefault);
+        if (!task) {
+            mfKLog(@"SecTaskCreateFromSelf failed");
             return nil;
         }
         
-        LSApplicationProxy *proxy = [ws applicationProxyForIdentifier:bundleID];
-        if (!proxy) {
-            mfKLog(@"proxy nil for %@", bundleID);
+        CFTypeRef containersRef = SecTaskCopyValueForEntitlement(
+            task,
+            (__bridge CFStringRef)@"com.apple.developer.icloud-container-identifiers",
+            NULL
+        );
+        CFRelease(task);
+        
+        if (!containersRef) {
+            mfKLog(@"No icloud-container-identifiers entitlement found");
             return nil;
         }
         
-        if (outAppName) *outAppName = proxy.localizedName ?: bundleID;
-        
-        NSDictionary *entitlements = proxy.embeddedEntitlements;
-        mfKLog(@"entitlements: %@", entitlements ? @"found" : @"nil");
-        if (!entitlements) return nil;
-        
-        NSArray *containerIDs = entitlements[@"com.apple.developer.icloud-container-identifiers"];
+        NSArray *containerIDs = (__bridge_transfer NSArray *)containersRef;
         mfKLog(@"App %@ containers: %@", bundleID, containerIDs);
+        
+        // 尝试拿 App 名称
+        NSDictionary *infoDict = [[NSBundle mainBundle] infoDictionary];
+        NSString *appName = infoDict[@"CFBundleDisplayName"] ?: infoDict[@"CFBundleName"] ?: bundleID;
+        if (outAppName) *outAppName = appName;
+        
         return containerIDs;
     } @catch (NSException *e) {
         mfKLog(@"Exception: %@", e);
