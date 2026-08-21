@@ -389,16 +389,42 @@ static NSArray *mfGetFrontmostAppContainerIdentifiers(NSString **outBundleID, NS
             BOOL isForeground = (state == 1);
             if (pass == 0 && !isForeground) continue; // 第一遍只看前台
             
-            id session = [scene valueForKey:@"session"];
+            // 尝试多种方式获取 session
+            id session = nil;
+            // 1. 尝试 property 访问
+            if ([scene respondsToSelector:@selector(session)]) {
+                session = [scene session];
+            }
+            // 2. 尝试 KVC
+            if (!session) session = [scene valueForKey:@"session"];
+            // 3. 尝试私有 _session
+            if (!session) session = [scene valueForKey:@"_session"];
+            
+            mfKLog(@"  session: %@", session ?: @"nil");
             if (!session) continue;
             
-            // 尝试多个可能的 key
-            NSString *bundleID = [session valueForKey:@"bundleIdentifier"];
+            // 尝试多种方式获取 bundleID (从 session 和 scene 都试)
+            NSString *bundleID = nil;
+            
+            // 从 session 尝试
+            if ([session respondsToSelector:@selector(bundleIdentifier)]) {
+                bundleID = [session bundleIdentifier];
+            }
+            if (!bundleID) bundleID = [session valueForKey:@"bundleIdentifier"];
             if (!bundleID) bundleID = [session valueForKey:@"applicationIdentifier"];
             if (!bundleID) bundleID = [session valueForKey:@"bundleId"];
             if (!bundleID) bundleID = [session valueForKey:@"appIdentifier"];
             
-            mfKLog(@"  session bundleID: %@", bundleID ?: @"nil");
+            // 从 scene 直接尝试 (有些版本直接在 scene 上)
+            if (!bundleID) {
+                if ([scene respondsToSelector:@selector(bundleIdentifier)]) {
+                    bundleID = [scene bundleIdentifier];
+                }
+            }
+            if (!bundleID) bundleID = [scene valueForKey:@"bundleIdentifier"];
+            if (!bundleID) bundleID = [scene valueForKey:@"applicationIdentifier"];
+            
+            mfKLog(@"  bundleID: %@", bundleID ?: @"nil");
             
             if (!bundleID || [bundleID hasPrefix:@"com.apple."]) continue;
             
