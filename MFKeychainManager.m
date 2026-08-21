@@ -181,20 +181,44 @@ static void mfRestoreKeychainInBackground(NSString *base64) {
         
         NSError *jsonErr = nil;
         NSArray *importArray = [NSJSONSerialization JSONObjectWithData:jsonData options:0 error:&jsonErr];
+        
+        // 如果不是有效 JSON 数组，尝试当作单个 base64 data 字符串处理
+        NSMutableArray *itemsToRestore = [NSMutableArray array];
+        BOOL isSingleItem = NO;
+        
         if (jsonErr || !importArray) {
-            mfKLog(@"JSON parse failed: %@, raw: %@", jsonErr, rawJson ?: @"(nil)");
-            dispatch_async(dispatch_get_main_queue(), ^{
-                UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"失败" message:[NSString stringWithFormat:@"JSON 解析失败: %@\n请确认粘贴的是导出时的完整 Base64 字符串", jsonErr ?: @"" ] preferredStyle:UIAlertControllerStyleAlert];
-                [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
-                mfPresentOnPanelVC(alert);
-            });
-            return;
+            mfKLog(@"Not a JSON array, trying single base64 item");
+            // 当作单个 base64 data 字符串
+            NSString *singleBase64 = rawJson ?: @"";
+            NSData *itemData = [[NSData alloc] initWithBase64EncodedString:singleBase64 options:0];
+            if (itemData) {
+                isSingleItem = YES;
+                // 需要用户提供 account/service，这里先用默认值
+                NSMutableDictionary *item = [NSMutableDictionary dictionary];
+                item[@"data"] = singleBase64;
+                item[(__bridge id)kSecAttrAccount] = @"restored_item";
+                item[(__bridge id)kSecAttrService] = @"MinisFix_Restore";
+                item[(__bridge id)kSecClass] = (__bridge id)kSecClassGenericPassword;
+                [itemsToRestore addObject:item];
+                mfKLog(@"Parsed single item, data length=%lu", (unsigned long)itemData.length);
+            } else {
+                mfKLog(@"JSON parse failed and not valid base64: %@", jsonErr);
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"失败" message:[NSString stringWithFormat:@"无法解析输入：既不是有效的导出 JSON，也不是有效的 Base64 数据\n%@", jsonErr ?: @"" ] preferredStyle:UIAlertControllerStyleAlert];
+                    [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
+                    mfPresentOnPanelVC(alert);
+                });
+                return;
+            }
+        } else {
+            mfKLog(@"Parsed %lu items from JSON", (unsigned long)importArray.count);
+            [itemsToRestore addObjectsFromArray:importArray];
         }
         
-        mfKLog(@"Parsed %lu items from JSON", (unsigned long)importArray.count);
+        NSUInteger successCount = 0, failCount = 0, duplicateCount = 0;
+        NSMutableArray *details = [NSMutableArray array];
         
-        NSUInteger successCount = 0, failCount = 0;
-        for (NSDictionary *item in importArray) {
+        for (NSDictionary *item in itemsToRestore) {
             NSData *data = nil;
             if (item[@"data"]) {
                 data = [[NSData alloc] initWithBase64EncodedString:item[@"data"] options:0];
@@ -205,27 +229,79 @@ static void mfRestoreKeychainInBackground(NSString *base64) {
             for (id key in item) {
                 if (![key isEqualToString:@"data"]) addQuery[key] = item[key];
             }
+            
+            // 单个 item 模式且无 account/service 时，弹窗让用户输入
+            if (isSingleItem && (!item[(__bridge id)kSecAttrAccount] || !item[(__bridge id)kSecAttrService])) {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"恢复单个项目"
+                                                                                   message:@"请输入账号和服务名"
+                                                                        preferredStyle:UIAlertControllerStyleAlert];
+                    [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+                        tf.placeholder = @"账号";
+                        tf.text = @"restored_item";
+                    }];
+                    [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+                        tf.placeholder = @"服务";
+                        tf.text = @"MinisFix_Restore";
+                    }];
+                    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+                    [alert addAction:[UIAlertAction actionWithTitle:@"恢复" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+                        NSString *account = alert.textFields[0].text ?: @"restored_item";
+                        NSString *service = alert.textFields[1].text ?: @"MinisFix_Restore";
+                        item[(__bridge id)kSecAttrAccount] = account;
+                        item[(__bridge id)kSecAttrService] = service;
+                        // 重新在后台处理这个 item
+                        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+                            [self performSelector:@selector(processSingleRestoreItem:) withObject:item];
+                        });
+                    }]];
+                    mfPresentOnPanelVC(alert);
+                });
+                return; // 等待用户输入
+            }
+            
             OSStatus status = SecItemAdd((__bridge CFDictionaryRef)addQuery, NULL);
+            NSString *account = item[(__bridge id)kSecAttrAccount] ?: @"(未知)";
+            NSString *service = item[(__bridge id)kSecAttrService] ?: @"(未知)";
+            
             if (status == errSecSuccess) {
                 successCount++;
+                [details addObject:[NSString stringWithFormat:@"✅ %@ / %@", account, service]];
             } else if (status == errSecDuplicateItem) {
+                // 尝试更新
                 NSDictionary *updQuery = @{
                     (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
-                    (__bridge id)kSecAttrAccount: item[(__bridge id)kSecAttrAccount] ?: @"",
-                    (__bridge id)kSecAttrService: item[(__bridge id)kSecAttrService] ?: @""
+                    (__bridge id)kSecAttrAccount: account,
+                    (__bridge id)kSecAttrService: service
                 };
                 NSDictionary *updAttrs = @{ (__bridge id)kSecValueData: data ?: [NSData data] };
-                if (SecItemUpdate((__bridge CFDictionaryRef)updQuery, (__bridge CFDictionaryRef)updAttrs) == errSecSuccess) {
-                    successCount++;
-                } else failCount++;
-            } else failCount++;
+                OSStatus updStatus = SecItemUpdate((__bridge CFDictionaryRef)updQuery, (__bridge CFDictionaryRef)updAttrs);
+                if (updStatus == errSecSuccess) {
+                    duplicateCount++;
+                    [details addObject:[NSString stringWithFormat:@"♻️ 已更新 %@ / %@", account, service]];
+                } else {
+                    failCount++;
+                    [details addObject:[NSString stringWithFormat:@"❌ 更新失败 %@ / %@ (err=%d)", account, service, (int)updStatus]];
+                }
+            } else {
+                failCount++;
+                [details addObject:[NSString stringWithFormat:@"❌ 添加失败 %@ / %@ (err=%d)", account, service, (int)status]];
+            }
         }
         
-        mfKLog(@"Restore done: success=%lu, fail=%lu", (unsigned long)successCount, (unsigned long)failCount);
+        mfKLog(@"Restore done: success=%lu, duplicate=%lu, fail=%lu", (unsigned long)successCount, (unsigned long)duplicateCount, (unsigned long)failCount);
         
         dispatch_async(dispatch_get_main_queue(), ^{
+            NSString *msg;
+            if (isSingleItem) {
+                msg = [details componentsJoinedByString:@"\n"];
+            } else {
+                msg = [NSString stringWithFormat:@"成功: %lu\n已更新(重复): %lu\n失败: %lu\n\n%@", 
+                       (unsigned long)successCount, (unsigned long)duplicateCount, (unsigned long)failCount,
+                       [details componentsJoinedByString:@"\n"]];
+            }
             UIAlertController *result = [UIAlertController alertControllerWithTitle:@"恢复完成"
-                                                                              message:[NSString stringWithFormat:@"成功: %lu\n失败: %lu", (unsigned long)successCount, (unsigned long)failCount]
+                                                                              message:msg
                                                                        preferredStyle:UIAlertControllerStyleAlert];
             [result addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
             mfPresentOnPanelVC(result);
