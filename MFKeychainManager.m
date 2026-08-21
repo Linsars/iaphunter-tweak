@@ -555,7 +555,30 @@ static void mfShowICloudIDListPage(NSString *bundleID, NSString *appName, NSArra
     sv.contentSize = CGSizeMake(g_mfCardW, y + 20);
 }
 
-// 入口：自动检测当前 App 的容器并打开列表页
+// iCloud Record ID 复制 (从列表页点击 cell) - 导出函数
+void mfCopyICloudRecordIDFromCell(UIViewController *vc, UIView *cell) {
+    if (!cell) return;
+    NSString *recordID = objc_getAssociatedObject(cell, "recordID");
+    NSString *containerID = objc_getAssociatedObject(cell, "containerID");
+    if (!recordID) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"提示"
+                                                                       message:@"Record ID 尚未查询完成"
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
+        mfPresentOnPanelVC(alert);
+        return;
+    }
+    [[UIPasteboard generalPasteboard] setString:recordID];
+    mfKLog(@"Copied iCloud Record ID: %@ (container: %@)", recordID, containerID);
+    
+    UIAlertController *toast = [UIAlertController alertControllerWithTitle:nil
+                                                                   message:@"✅ 已复制 Record ID"
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    mfPresentOnPanelVC(toast);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1.0 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        [toast dismissViewControllerAnimated:YES completion:nil];
+    });
+}
 void mfFetchCloudKitRecordIDAuto(void) {
     mfKLog(@"mfFetchCloudKitRecordIDAuto called");
     

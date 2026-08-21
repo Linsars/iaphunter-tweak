@@ -105,3 +105,4 @@ void mfDiagnosticCleanupFromSettings(void);
 
 // ====== Keychain 管理（MFKeychainManager.m） ======
 void mfShowKeychainManagerPage(void);
+void mfCopyICloudRecordIDFromCell(UIViewController *vc, UIView *cell);

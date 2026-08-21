@@ -633,26 +633,7 @@ void mfShowProductPage(void) {
 - (void)mfCopyICloudRecordID:(UITapGestureRecognizer *)tap {
     UIView *cell = tap.view;
     if (!cell) return;
-    NSString *recordID = objc_getAssociatedObject(cell, "recordID");
-    NSString *containerID = objc_getAssociatedObject(cell, "containerID");
-    if (!recordID) {
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"提示"
-                                                                       message:@"Record ID 尚未查询完成"
-                                                                preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
-        mfPresentOnPanelVC(alert);
-        return;
-    }
-    [[UIPasteboard generalPasteboard] setString:recordID];
-    mfKLog(@"Copied iCloud Record ID: %@ (container: %@)", recordID, containerID);
-    
-    UIAlertController *toast = [UIAlertController alertControllerWithTitle:nil
-                                                                   message:@"✅ 已复制 Record ID"
-                                                            preferredStyle:UIAlertControllerStyleAlert];
-    mfPresentOnPanelVC(toast);
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1.0 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-        [toast dismissViewControllerAnimated:YES completion:nil];
-    });
+    mfCopyICloudRecordIDFromCell(self, cell);
 }
 
 // 捕获详情
