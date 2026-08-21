@@ -367,46 +367,63 @@ void mfProcessSingleRestoreItem(NSDictionary *item) {
 
 // ====== iCloud ID 查询 (通过当前前台 App 的 Entitlements 自动获取 Container Identifier) ======
 
-// 获取当前前台 App 的 Container Identifiers
+// 获取当前前台 App 的 Container Identifiers (通过 UIWindowScene 反推)
 static NSArray *mfGetFrontmostAppContainerIdentifiers(NSString **outBundleID, NSString **outAppName) {
-    mfKLog(@"mfGetFrontmostAppContainerIdentifiers called");
+    mfKLog(@"mfGetFrontmostAppContainerIdentifiers called (UIWindowScene method)");
     
-    LSApplicationWorkspace *ws = [LSApplicationWorkspace defaultWorkspace];
-    if (!ws) {
-        mfKLog(@"LSApplicationWorkspace defaultWorkspace returned nil");
+    // 方法：遍历 UIApplication.sharedApplication.connectedScenes
+    // 找 activationState == UISceneActivationStateForegroundActive (3) 的场景
+    UIApplication *app = [UIApplication sharedApplication];
+    NSSet *scenes = [app valueForKey:@"connectedScenes"]; // 私有属性
+    if (!scenes) {
+        mfKLog(@"No connectedScenes");
         return nil;
     }
     
-    NSArray *allApps = [ws allApplications];
-    mfKLog(@"Found %lu total apps", (unsigned long)allApps.count);
-    
-    for (LSApplicationProxy *proxy in allApps) {
-        // 检查是否为前台激活 App
-        // activationState: 0=None, 1=Background, 2=ForegroundInactive, 3=ForegroundActive
-        NSNumber *stateNum = proxy.embeddedEntitlements[@"activationState"] ?: proxy.embeddedEntitlements[@"UISceneActivationState"];
-        // 更可靠：用 LSApplicationProxy 的私有方法或属性
-        // 这里用启发式：检查是否有 window scene 连接
-        // 简单做法：取第一个非系统、有 bundleID 的
+    for (UIScene *scene in scenes) {
+        // 检查 activationState
+        // UISceneActivationState: 0=Unattached, 1=ForegroundActive, 2=ForegroundInactive, 3=Background, 4=BackgroundInactive
+        NSNumber *stateNum = [scene valueForKey:@"activationState"];
+        NSInteger state = stateNum ? [stateNum integerValue] : 0;
         
-        NSString *bundleID = proxy.applicationIdentifier;
-        if (!bundleID || [bundleID hasPrefix:@"com.apple."]) continue;
+        mfKLog(@"Scene: %@, activationState=%ld", scene, (long)state);
         
-        // 获取 entitlements
-        NSDictionary *entitlements = proxy.embeddedEntitlements;
-        if (!entitlements) continue;
-        
-        // 提取 iCloud Container Identifiers
-        NSArray *containerIDs = entitlements[@"com.apple.developer.icloud-container-identifiers"];
-        if (!containerIDs || containerIDs.count == 0) continue;
-        
-        mfKLog(@"Frontmost app candidate: %@, containers: %@", bundleID, containerIDs);
-        
-        if (outBundleID) *outBundleID = bundleID;
-        if (outAppName) *outAppName = proxy.localizedName ?: bundleID;
-        return containerIDs;
+        if (state == 1) { // UISceneActivationStateForegroundActive
+            // 找到前台场景
+            // 尝试获取 session -> application
+            id session = [scene valueForKey:@"session"];
+            if (session) {
+                // LSApplicationProxy *proxy = [session valueForKey:@"application"];
+                // 或者从 session 获取 bundleIdentifier
+                NSString *bundleID = [session valueForKey:@"bundleIdentifier"];
+                if (!bundleID) {
+                    bundleID = [session valueForKey:@"applicationIdentifier"];
+                }
+                
+                if (bundleID && ![bundleID hasPrefix:@"com.apple."]) {
+                    mfKLog(@"Found frontmost app via scene: %@", bundleID);
+                    
+                    // 用 LSApplicationWorkspace 获取该 App 的 proxy
+                    LSApplicationWorkspace *ws = [LSApplicationWorkspace defaultWorkspace];
+                    if (ws) {
+                        LSApplicationProxy *proxy = [ws applicationProxyForIdentifier:bundleID];
+                        if (proxy) {
+                            NSDictionary *entitlements = proxy.embeddedEntitlements;
+                            if (entitlements) {
+                                NSArray *containerIDs = entitlements[@"com.apple.developer.icloud-container-identifiers"];
+                                mfKLog(@"App %@ containers: %@", bundleID, containerIDs);
+                                if (outBundleID) *outBundleID = bundleID;
+                                if (outAppName) *outAppName = proxy.localizedName ?: bundleID;
+                                return containerIDs;
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
     
-    mfKLog(@"No frontmost app with iCloud containers found");
+    mfKLog(@"No foreground active scene found");
     return nil;
 }
 
