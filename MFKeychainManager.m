@@ -374,7 +374,8 @@ void mfProcessSingleRestoreItem(NSDictionary *item) {
 
 // 获取当前前台 App 的 Container Identifiers
 // 关键：tweak 注入到每个 App 进程，直接用 SecTask 读自己的 Entitlements (内核级)
-static NSArray *mfGetFrontmostAppContainerIdentifiers(NSString **outBundleID, NSString **outAppName) {
+// outHasKVS: 返回是否声明了 ubiquity-kvstore (iCloud 键值存储)
+static NSArray *mfGetFrontmostAppContainerIdentifiers(NSString **outBundleID, NSString **outAppName, BOOL *outHasKVS) {
     mfKLog(@"mfGetFrontmostAppContainerIdentifiers called (SecTask method)");
     
     // 我们就在目标 App 进程里
@@ -394,6 +395,18 @@ static NSArray *mfGetFrontmostAppContainerIdentifiers(NSString **outBundleID, NS
         if (!task) {
             mfKLog(@"SecTaskCreateFromSelf failed");
             return nil;
+        }
+        
+        // 检测 ubiquity-kvstore (iCloud 键值存储)
+        if (outHasKVS) {
+            CFTypeRef kvsRef = SecTaskCopyValueForEntitlement(
+                task,
+                (__bridge CFStringRef)@"com.apple.developer.ubiquity-kvstore-identifier",
+                NULL
+            );
+            *outHasKVS = (kvsRef != NULL);
+            mfKLog(@"Has KVS entitlement: %@", kvsRef ? @"YES" : @"NO");
+            if (kvsRef) CFRelease(kvsRef);
         }
         
         CFTypeRef containersRef = SecTaskCopyValueForEntitlement(
@@ -467,8 +480,8 @@ static void mfQueryRecordIDForContainer(NSString *containerIdentifier,
 }
 
 // iCloud ID 列表页（类似 Keychain 查看列表）
-static void mfShowICloudIDListPage(NSString *bundleID, NSString *appName, NSArray *containers) {
-    mfKLog(@"mfShowICloudIDListPage called, %lu containers", (unsigned long)containers.count);
+static void mfShowICloudIDListPage(NSString *bundleID, NSString *appName, NSArray *containers, BOOL hasKVS) {
+    mfKLog(@"mfShowICloudIDListPage called, %lu containers, kvs=%@", (unsigned long)containers.count, hasKVS ? @"YES" : @"NO");
     
     UIView *page = mfMakePage(@"iCloud ID 列表", YES);
     
@@ -516,6 +529,29 @@ static void mfShowICloudIDListPage(NSString *bundleID, NSString *appName, NSArra
     sectionTitle.textColor = [UIColor secondaryLabelColor];
     [sv addSubview:sectionTitle];
     y += 28;
+    
+    // KVS 状态行（如果声明了 ubiquity-kvstore）
+    if (hasKVS) {
+        UIView *kvsCell = [[UIView alloc] initWithFrame:CGRectMake(12, y, g_mfCardW - 24, 56)];
+        kvsCell.backgroundColor = [UIColor secondarySystemBackgroundColor];
+        kvsCell.layer.cornerRadius = 8;
+        
+        UILabel *kvsTitle = [[UILabel alloc] initWithFrame:CGRectMake(12, 6, g_mfCardW - 48, 18)];
+        kvsTitle.text = @"iCloud 键值存储 (KVS)";
+        kvsTitle.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
+        kvsTitle.textColor = [UIColor labelColor];
+        [kvsCell addSubview:kvsTitle];
+        
+        UILabel *kvsStatus = [[UILabel alloc] initWithFrame:CGRectMake(12, 26, g_mfCardW - 48, 24)];
+        kvsStatus.text = @"ℹ️ 已启用 NSUbiquitousKeyValueStore 小数据同步";
+        kvsStatus.font = [UIFont systemFontOfSize:12];
+        kvsStatus.textColor = [UIColor systemBlueColor];
+        kvsStatus.numberOfLines = 2;
+        [kvsCell addSubview:kvsStatus];
+        
+        [sv addSubview:kvsCell];
+        y += 64;
+    }
     
     // 为每个容器查询 Record ID
     for (NSString *containerID in containers) {
@@ -623,18 +659,19 @@ void mfFetchCloudKitRecordIDAuto(void) {
     
     NSString *bundleID = nil;
     NSString *appName = nil;
-    NSArray *containers = mfGetFrontmostAppContainerIdentifiers(&bundleID, &appName);
+    BOOL hasKVS = NO;
+    NSArray *containers = mfGetFrontmostAppContainerIdentifiers(&bundleID, &appName, &hasKVS);
     
     if (!containers || containers.count == 0) {
-        mfKLog(@"No iCloud containers found, showing default container query");
-        // 无容器时也打开列表页，用默认容器查（App 无 iCloud 权限时查询会失败并显示错误）
+        mfKLog(@"No iCloud containers found (kvs=%@), opening list page", hasKVS ? @"YES" : @"NO");
+        // 无容器：不碰 CloudKit，列表页显示降级说明（v17 查询前拦截）
         NSMutableArray *arr = [NSMutableArray arrayWithObject:@"(默认容器)"];
-        mfShowICloudIDListPage(bundleID ?: @"未知", appName ?: @"未知", arr);
+        mfShowICloudIDListPage(bundleID ?: @"未知", appName ?: @"未知", arr, hasKVS);
         return;
     }
     
-    mfKLog(@"Found %lu containers, opening list page", (unsigned long)containers.count);
-    mfShowICloudIDListPage(bundleID, appName, containers);
+    mfKLog(@"Found %lu containers (kvs=%@), opening list page", (unsigned long)containers.count, hasKVS ? @"YES" : @"NO");
+    mfShowICloudIDListPage(bundleID, appName, containers, hasKVS);
 }
 
 // ====== 面板页面 ======
