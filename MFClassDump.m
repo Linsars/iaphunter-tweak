@@ -188,117 +188,173 @@ static void mfZipTime(uint16_t *t, uint16_t *dt) {
     *dt = (uint16_t)(((tmv.tm_year + 1900 - 1980) << 9) | ((tmv.tm_mon + 1) << 5) | tmv.tm_mday);
 }
 
-static void mfZipAdd(NSMutableData *zip, NSMutableArray *cds, NSString *name, NSData *data) {
-    uint16_t mtime, mdate; mfZipTime(&mtime, &mdate);
-    uint32_t crc = (uint32_t)crc32(0, data.bytes, (uInt)data.length);
-    NSMutableData *comp = [NSMutableData dataWithCapacity:data.length / 2 + 64];
-    uLongf csz = compressBound(data.length);
-    [comp setLength:csz];
-    int rc = compress2(comp.mutableBytes, &csz, data.bytes, data.length, Z_DEFAULT_COMPRESSION);
-    BOOL stored = (rc != Z_OK || csz >= data.length);
-    uint16_t method = stored ? 0 : 8;
-    uint32_t finalSize = stored ? (uint32_t)data.length : (uint32_t)csz;
-
-    uint32_t off = (uint32_t)zip.length;
-    mfPut32(zip, 0x04034b50); mfPut16(zip, 20); mfPut16(zip, 0x0800);
-    mfPut16(zip, method); mfPut16(zip, mtime); mfPut16(zip, mdate);
-    mfPut32(zip, crc);
-    mfPut32(zip, stored ? (uint32_t)data.length : (uint32_t)csz);
-    mfPut32(zip, (uint32_t)data.length);
-    NSData *nb = [name dataUsingEncoding:NSUTF8StringEncoding];
-    mfPut16(zip, (uint16_t)nb.length); mfPut16(zip, 0);
-    [zip appendData:nb];
-    [zip appendData:(stored ? data : comp)];
-
-    MFCDEntry e = { name, crc, finalSize, (uint32_t)data.length, off, method };
-    [cds addObject:[NSValue valueWithBytes:&e objCType:@encode(MFCDEntry)]];
-}
-
-static NSData *mfZipFinish(NSMutableData *zip, NSMutableArray *cds) {
-    uint32_t cdOff = (uint32_t)zip.length;
-    for (NSValue *v in cds) {
-        MFCDEntry e; [v getValue:&e];
+// 流式写单条目到文件句柄，CD 记录进数组（最后统一追加）
+static BOOL mfZipAddStream(NSFileHandle *fh, NSMutableArray *cds, NSString *name, NSData *data,
+                           uint32_t *outOffset, NSMutableData *scratch) {
+    @try {
         uint16_t mtime, mdate; mfZipTime(&mtime, &mdate);
-        mfPut32(zip, 0x02014b50); mfPut16(zip, 20); mfPut16(zip, 20);
-        mfPut16(zip, 0x0800); mfPut16(zip, e.method);
-        mfPut16(zip, mtime); mfPut16(zip, mdate);
-        mfPut32(zip, e.crc); mfPut32(zip, e.csize); mfPut32(zip, e.usize);
-        NSData *nb = [e.name dataUsingEncoding:NSUTF8StringEncoding];
-        mfPut16(zip, (uint16_t)nb.length);
-        mfPut16(zip, 0); mfPut16(zip, 0); mfPut16(zip, 0); mfPut16(zip, 0);
-        mfPut32(zip, 0); mfPut32(zip, e.offset);
-        [zip appendData:nb];
+        uint32_t crc = (uint32_t)crc32(0, data.bytes, (uInt)data.length);
+
+        // deflate 到复用 scratch 缓冲，避免每类 malloc/free 大块
+        uLongf bound = compressBound(data.length);
+        if (scratch.length < bound) [scratch setLength:bound];
+        uLongf csz = scratch.length;
+        int rc = compress2(scratch.mutableBytes, &csz, data.bytes, data.length, Z_BEST_SPEED);
+        BOOL stored = (rc != Z_OK || csz >= data.length);
+        uint16_t method = stored ? 0 : 8;
+        uint32_t finalSize = stored ? (uint32_t)data.length : (uint32_t)csz;
+
+        uint32_t off = (uint32_t)fh.offsetInFile;
+        NSMutableData *lh = [NSMutableData dataWithCapacity:30 + name.length];
+        mfPut32(lh, 0x04034b50); mfPut16(lh, 20); mfPut16(lh, 0x0800);
+        mfPut16(lh, method); mfPut16(lh, mtime); mfPut16(lh, mdate);
+        mfPut32(lh, crc);
+        mfPut32(lh, finalSize);
+        mfPut32(lh, (uint32_t)data.length);
+        NSData *nb = [name dataUsingEncoding:NSUTF8StringEncoding];
+        mfPut16(lh, (uint16_t)nb.length); mfPut16(lh, 0);
+        [lh appendData:nb];
+        [fh writeData:lh];
+        [fh writeData:(stored ? data : [NSData dataWithBytesNoCopy:scratch.mutableBytes length:csz freeWhenDone:NO])];
+
+        MFCDEntry e = { name, crc, finalSize, (uint32_t)data.length, off, method };
+        [cds addObject:[NSValue valueWithBytes:&e objCType:@encode(MFCDEntry)]];
+        if (outOffset) *outOffset = off;
+        return YES;
+    } @catch (NSException *ex) {
+        mfLog(@"CLASSDUMP zip entry failed: %@", ex.reason);
+        return NO;
     }
-    uint32_t cdSize = (uint32_t)(zip.length - cdOff);
-    mfPut32(zip, 0x06054b50); mfPut16(zip, 0); mfPut16(zip, 0);
-    mfPut16(zip, (uint16_t)cds.count); mfPut16(zip, (uint16_t)cds.count);
-    mfPut32(zip, cdSize); mfPut32(zip, cdOff); mfPut16(zip, 0);
-    return zip;
 }
 
-// ====== 主流程 ======
+static BOOL mfZipFinishStream(NSFileHandle *fh, NSMutableArray *cds) {
+    @try {
+        uint32_t cdOff = (uint32_t)fh.offsetInFile;
+        NSMutableData *cd = [NSMutableData data];
+        for (NSValue *v in cds) {
+            MFCDEntry e; [v getValue:&e];
+            uint16_t mtime, mdate; mfZipTime(&mtime, &mdate);
+            mfPut32(cd, 0x02014b50); mfPut16(cd, 20); mfPut16(cd, 20);
+            mfPut16(cd, 0x0800); mfPut16(cd, e.method);
+            mfPut16(cd, mtime); mfPut16(cd, mdate);
+            mfPut32(cd, e.crc); mfPut32(cd, e.csize); mfPut32(cd, e.usize);
+            NSData *nb = [e.name dataUsingEncoding:NSUTF8StringEncoding];
+            mfPut16(cd, (uint16_t)nb.length);
+            mfPut16(cd, 0); mfPut16(cd, 0); mfPut16(cd, 0); mfPut16(cd, 0);
+            mfPut32(cd, 0); mfPut32(cd, e.offset);
+            [cd appendData:nb];
+        }
+        [fh writeData:cd];
+        uint32_t cdSize = (uint32_t)cd.length;
+        NSMutableData *eo = [NSMutableData dataWithCapacity:22];
+        mfPut32(eo, 0x06054b50); mfPut16(eo, 0); mfPut16(eo, 0);
+        mfPut16(eo, (uint16_t)cds.count); mfPut16(eo, (uint16_t)cds.count);
+        mfPut32(eo, cdSize); mfPut32(eo, cdOff); mfPut16(eo, 0);
+        [fh writeData:eo];
+        return YES;
+    } @catch (NSException *ex) {
+        mfLog(@"CLASSDUMP zip finish failed: %@", ex.reason);
+        return NO;
+    }
+}
+
+// ====== 主流程（流式落盘：内存峰值 = 单类头文件，防 jetsam） ======
 void mfClassDumpStartAction(UIProgressView *pv, UILabel *lb, UIButton *btn, UIViewController *hostVC) {
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        Class *classes = NULL;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
         unsigned total = 0;
-        classes = objc_copyClassList(&total);
+        Class *classes = objc_copyClassList(&total);
+        mfLog(@"CLASSDUMP start: %u classes", total);
         if (!total || !classes) {
-            dispatch_async(dispatch_get_main_queue(), ^{ lb.text = @"⚠️ 无类可枚举"; });
+            dispatch_async(dispatch_get_main_queue(), ^{ lb.text = @"⚠️ 无类可枚举"; btn.enabled = YES; });
+            return;
+        }
+        NSString *dir = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0]
+                            stringByAppendingPathComponent:@"classdump"];
+        [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+        NSString *app = [[[NSBundle mainBundle] bundleIdentifier] lastPathComponent] ?: @"App";
+        NSDateFormatter *df = [[NSDateFormatter alloc] init];
+        df.dateFormat = @"yyyyMMdd_HHmm";
+        NSString *finalPath = [dir stringByAppendingFormat:@"/%@_Dump_%@.zip", app, [df stringFromDate:[NSDate date]]];
+        NSString *tmpPath = [finalPath stringByAppendingString:@".building"];
+
+        [[NSFileManager defaultManager] removeItemAtPath:tmpPath error:nil];
+        if (![[NSFileManager defaultManager] createFileAtPath:tmpPath contents:nil attributes:nil]) {
+            mfLog(@"CLASSDUMP create file FAILED");
+            dispatch_async(dispatch_get_main_queue(), ^{ lb.text = @"⚠️ 无法创建输出文件"; btn.enabled = YES; });
             free(classes); return;
         }
-        NSMutableData *zip = [NSMutableData dataWithCapacity:1 << 20];
+        NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:tmpPath];
+        NSMutableData *scratch = [NSMutableData dataWithCapacity:1 << 16];
         NSMutableArray *cds = [NSMutableArray array];
         NSMutableSet *seen = [NSMutableSet set];
         unsigned done = 0;
 
         for (unsigned i = 0; i < total; i++) {
             @autoreleasepool {
-                const char *nm = class_getName(classes[i]);
-                if (!nm || !*nm) continue;
-                NSString *name = @(nm);
-                if ([seen containsObject:name]) continue;
-                [seen addObject:name];
-                NSString *fname = [[name stringByReplacingOccurrencesOfString:@"/" withString:@"_"]
-                                    stringByAppendingString:@".h"];
-                NSString *body = mfHeaderForClass(classes[i]);
-                if (body) mfZipAdd(zip, cds, fname, [body dataUsingEncoding:NSUTF8StringEncoding]);
+                @try {
+                    const char *nm = class_getName(classes[i]);
+                    if (!nm || !*nm) continue;
+                    NSString *name = @(nm);
+                    if ([seen containsObject:name]) continue;
+                    [seen addObject:name];
+                    NSString *fname = [[name stringByReplacingOccurrencesOfString:@"/" withString:@"_"]
+                                        stringByAppendingString:@".h"];
+                    NSString *body = mfHeaderForClass(classes[i]);
+                    if (body) mfZipAddStream(fh, cds, fname, [body dataUsingEncoding:NSUTF8StringEncoding], NULL, scratch);
+                } @catch (NSException *ex) {
+                    mfLog(@"CLASSDUMP class %u failed: %@", i, ex.name);
+                }
             }
             done++;
-            if (done % 200 == 0 || done == total) {
+            if (done % 500 == 0 || done == total) {
                 float frac = (float)done / total;
+                unsigned d = done;
                 dispatch_async(dispatch_get_main_queue(), ^{
                     pv.progress = frac;
-                    lb.text = [NSString stringWithFormat:@"正在生成头文件... %.0f%%", frac * 100];
+                    lb.text = [NSString stringWithFormat:@"正在生成头文件... %.0f%% (%u/%u)", frac * 100, d, total];
                 });
             }
         }
         free(classes);
-        mfZipAdd(zip, cds, @"finish.txt", [@"finish" dataUsingEncoding:NSUTF8StringEncoding]);
-        mfZipFinish(zip, cds);
+        mfLog(@"CLASSDUMP generated %u headers, writing central dir", (unsigned)cds.count);
 
-        NSString *app = [[[NSBundle mainBundle] bundleIdentifier] lastPathComponent] ?: @"App";
-        NSDateFormatter *df = [[NSDateFormatter alloc] init];
-        df.dateFormat = @"yyyyMMdd_HHmm";
-        NSString *dir = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0]
-                            stringByAppendingPathComponent:@"classdump"];
-        [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
-        NSString *path = [dir stringByAppendingFormat:@"/%@_Dump_%@.zip", app, [df stringFromDate:[NSDate date]]];
-        [zip writeToFile:path atomically:YES];
+        // finish 标记 + 中央目录
+        mfZipAddStream(fh, cds, @"finish.txt", [@"finish" dataUsingEncoding:NSUTF8StringEncoding], NULL, scratch);
+        BOOL ok = mfZipFinishStream(fh, cds);
+        [fh closeFile];
+
+        if (!ok || cds.count < 2) {
+            [[NSFileManager defaultManager] removeItemAtPath:tmpPath error:nil];
+            dispatch_async(dispatch_get_main_queue(), ^{ lb.text = @"⚠️ 压缩失败，详见日志"; btn.enabled = YES; });
+            return;
+        }
+        // 原子落位：.building → 正式名
+        [[NSFileManager defaultManager] removeItemAtPath:finalPath error:nil];
+        NSError *mvErr = nil;
+        [[NSFileManager defaultManager] moveItemAtPath:tmpPath toPath:finalPath error:&mvErr];
+        if (mvErr) mfLog(@"CLASSDUMP move failed: %@", mvErr.localizedDescription);
+
+        unsigned cnt = (unsigned)cds.count;
+        NSDictionary *szAt = [[NSFileManager defaultManager] attributesOfItemAtPath:finalPath error:nil];
+        mfLog(@"CLASSDUMP done: %@ size=%@", finalPath, szAt[NSFileSize]);
 
         dispatch_async(dispatch_get_main_queue(), ^{
-            lb.text = [NSString stringWithFormat:@"✅ 完成：%u 类 → %@", seen.count,
-                       [path lastPathComponent]];
+            lb.text = [NSString stringWithFormat:@"✅ 完成：%u 类 → %@", cnt, [finalPath lastPathComponent]];
             btn.enabled = YES;
             UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"ClassDump"
-                    message:[NSString stringWithFormat:@"已压缩为 zip\n%@", path]
+                    message:[NSString stringWithFormat:@"已压缩为 zip\n%@", finalPath]
                     preferredStyle:UIAlertControllerStyleAlert];
             [alert addAction:[UIAlertAction actionWithTitle:@"分享/保存" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
                 UIActivityViewController *av = [[UIActivityViewController alloc]
-                        initWithActivityItems:@[[NSURL fileURLWithPath:path]] applicationActivities:nil];
-                [hostVC presentViewController:av animated:YES completion:nil];
+                        initWithActivityItems:@[[NSURL fileURLWithPath:finalPath]] applicationActivities:nil];
+                UIViewController *presenter = hostVC;
+                while (presenter.presentedViewController) presenter = presenter.presentedViewController;
+                [presenter presentViewController:av animated:YES completion:nil];
             }]];
             [alert addAction:[UIAlertAction actionWithTitle:@"关闭" style:UIAlertActionStyleCancel handler:nil]];
-            [hostVC presentViewController:alert animated:YES completion:nil];
+            UIViewController *presenter = hostVC ?: g_mfPanelRootVC;
+            while (presenter.presentedViewController) presenter = presenter.presentedViewController;
+            [presenter presentViewController:alert animated:YES completion:nil];
         });
     });
 }
