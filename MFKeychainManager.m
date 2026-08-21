@@ -367,98 +367,49 @@ void mfProcessSingleRestoreItem(NSDictionary *item) {
 
 // ====== iCloud ID 查询 (通过当前前台 App 的 Entitlements 自动获取 Container Identifier) ======
 
-// 获取当前前台 App 的 Container Identifiers (通过 UIWindowScene 反推)
+// 获取当前前台 App 的 Container Identifiers
+// 关键：tweak 注入到每个 App 进程，直接用 NSBundle.mainBundle 拿当前 App 的 bundleID
 static NSArray *mfGetFrontmostAppContainerIdentifiers(NSString **outBundleID, NSString **outAppName) {
-    mfKLog(@"mfGetFrontmostAppContainerIdentifiers called (UIWindowScene method)");
+    mfKLog(@"mfGetFrontmostAppContainerIdentifiers called (mainBundle method)");
     
-    UIApplication *app = [UIApplication sharedApplication];
-    NSSet *scenes = [app valueForKey:@"connectedScenes"];
-    if (!scenes) {
-        mfKLog(@"No connectedScenes");
+    // 我们就在目标 App 进程里，直接拿 mainBundle 的 bundleID
+    NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier];
+    mfKLog(@"Current app bundleID: %@", bundleID);
+    
+    if (!bundleID || [bundleID hasPrefix:@"com.apple."]) {
+        mfKLog(@"Invalid or system bundleID");
         return nil;
     }
     
-    // 两遍策略：第一遍找 activationState==1，第二遍兜底拿第一个有 bundleID 的
-    for (int pass = 0; pass < 2; pass++) {
-        for (UIScene *scene in scenes) {
-            NSNumber *stateNum = [scene valueForKey:@"activationState"];
-            NSInteger state = stateNum ? [stateNum integerValue] : -1;
-            
-            mfKLog(@"Scene: %@, activationState=%ld", scene, (long)state);
-            
-            BOOL isForeground = (state == 1);
-            if (pass == 0 && !isForeground) continue; // 第一遍只看前台
-            
-            // 尝试多种方式获取 session
-            id session = nil;
-            if ([scene respondsToSelector:@selector(session)]) {
-                session = [scene session];
-            }
-            if (!session) session = [scene valueForKey:@"session"];
-            if (!session) session = [scene valueForKey:@"_session"];
-            
-            mfKLog(@"  session: %@", session ?: @"nil");
-            if (!session) continue;
-            
-            // 只用 KVC + @try/@catch 安全提取 bundleID
-            NSString *bundleID = nil;
-            
-            @try {
-                // 1. 从 session 的 userInfo 字典尝试 (最可靠)
-                NSDictionary *userInfo = [session valueForKey:@"userInfo"];
-                mfKLog(@"  session.userInfo: %@", userInfo ?: @"nil");
-                if (userInfo) {
-                    bundleID = userInfo[@"bundleIdentifier"] ?: userInfo[@"applicationIdentifier"] ?: userInfo[@"bundleId"];
-                }
-                
-                // 2. 从 session.configuration 拿
-                if (!bundleID) {
-                    id config = [session valueForKey:@"configuration"];
-                    mfKLog(@"  session.configuration: %@", config ?: @"nil");
-                    if (config) {
-                        bundleID = [config valueForKey:@"bundleIdentifier"] ?: [config valueForKey:@"applicationIdentifier"];
-                    }
-                }
-                
-                // 3. 直接从 session KVC 尝试
-                if (!bundleID) bundleID = [session valueForKey:@"bundleIdentifier"];
-                if (!bundleID) bundleID = [session valueForKey:@"applicationIdentifier"];
-                if (!bundleID) bundleID = [session valueForKey:@"bundleId"];
-                if (!bundleID) bundleID = [session valueForKey:@"appIdentifier"];
-                
-                // 4. 从 scene 直接尝试
-                if (!bundleID) bundleID = [scene valueForKey:@"bundleIdentifier"];
-                if (!bundleID) bundleID = [scene valueForKey:@"applicationIdentifier"];
-                
-            } @catch (NSException *e) {
-                mfKLog(@"  bundleID extraction exception: %@", e);
-            }
-            
-            mfKLog(@"  bundleID: %@", bundleID ?: @"nil");
-            
-            if (!bundleID || [bundleID hasPrefix:@"com.apple."]) continue;
-            
-            mfKLog(@"Found candidate app via scene (pass=%d): %@", pass, bundleID);
-            
-            LSApplicationWorkspace *ws = [LSApplicationWorkspace defaultWorkspace];
-            if (ws) {
-                LSApplicationProxy *proxy = [ws applicationProxyForIdentifier:bundleID];
-                if (proxy) {
-                    NSDictionary *entitlements = proxy.embeddedEntitlements;
-                    if (entitlements) {
-                        NSArray *containerIDs = entitlements[@"com.apple.developer.icloud-container-identifiers"];
-                        mfKLog(@"App %@ containers: %@", bundleID, containerIDs);
-                        if (outBundleID) *outBundleID = bundleID;
-                        if (outAppName) *outAppName = proxy.localizedName ?: bundleID;
-                        return containerIDs;
-                    }
-                }
-            }
-        }
-    }
+    if (outBundleID) *outBundleID = bundleID;
     
-    mfKLog(@"No suitable scene with bundleID found");
-    return nil;
+    // 用 LSApplicationWorkspace 获取该 App 的 proxy
+    @try {
+        LSApplicationWorkspace *ws = [LSApplicationWorkspace defaultWorkspace];
+        if (!ws) {
+            mfKLog(@"LSApplicationWorkspace nil");
+            return nil;
+        }
+        
+        LSApplicationProxy *proxy = [ws applicationProxyForIdentifier:bundleID];
+        if (!proxy) {
+            mfKLog(@"proxy nil for %@", bundleID);
+            return nil;
+        }
+        
+        if (outAppName) *outAppName = proxy.localizedName ?: bundleID;
+        
+        NSDictionary *entitlements = proxy.embeddedEntitlements;
+        mfKLog(@"entitlements: %@", entitlements ? @"found" : @"nil");
+        if (!entitlements) return nil;
+        
+        NSArray *containerIDs = entitlements[@"com.apple.developer.icloud-container-identifiers"];
+        mfKLog(@"App %@ containers: %@", bundleID, containerIDs);
+        return containerIDs;
+    } @catch (NSException *e) {
+        mfKLog(@"Exception: %@", e);
+        return nil;
+    }
 }
 
 // 核心查询函数
