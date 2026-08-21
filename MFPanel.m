@@ -612,6 +612,14 @@ void mfShowProductPage(void) {
 - (void)mfCopyKeychainAction { mfCopyKeychainAction(); }
 - (void)mfShowRestorePromptAction { mfShowRestorePromptAction(); }
 - (void)mfFetchCloudKitRecordIDAuto { mfFetchCloudKitRecordIDAuto(); }
+// ClassDump（数据分析板块）
+- (void)mfShowClassDumpPage { mfShowClassDumpPage(); }
+- (void)mfClassDumpStart:(UIButton *)btn {
+    NSArray *trio = objc_getAssociatedObject(btn, "trio");
+    if (!trio || trio.count < 2) return;
+    btn.enabled = NO;
+    mfClassDumpStartAction(trio[0], trio[1], btn, g_mfPanelRootVC);
+}
 - (void)mfShowManualBuyPage { mfShowManualBuyPage(); }
 - (void)mfShowIconPage { mfShowIconPage(); }
 
@@ -978,8 +986,7 @@ static void iaphShowPanel(UIViewController *vc) {
         mfLog(@"PANEL STEP 7b: networkModify btn");
         gy = mfGridButton(home, 16, gy, gw, @"Product", @"🛍️", @selector(mfShowProductPage), NO, nil);
         mfLog(@"PANEL STEP 7c: product btn");
-        gy = mfGridButton(home, 16 + gw + 12, gy - 92, gw, @"Keychain", @"🔐", @selector(mfShowKeychainManagerPage), NO, nil);
-        mfLog(@"PANEL STEP 7d: keychain btn");
+        // Keychain 已并入 数据分析 板块 (v1.4.0)
 
         [overlay addSubview:card];
         g_mfPanelOverlay = overlay;

@@ -592,6 +592,8 @@ void mfShowDataAnalysisPage(void) {
     CGFloat gy = 48;
     gy = mfGridButton(page, 16, gy, gw, @"网络捕获", @"📡", @selector(mfShowNetworkCapturePage), NO, nil);
     gy = mfGridButton(page, 16 + gw + 12, gy - 92, gw, @"解密工具", @"🔐", @selector(mfShowCryptoPage), NO, nil);
+    gy = mfGridButton(page, 16, gy, gw, @"ClassDump", @"📦", @selector(mfShowClassDumpPage), NO, nil);
+    gy = mfGridButton(page, 16 + gw + 12, gy - 92, gw, @"Keychain 管理", @"🔑", @selector(mfShowKeychainManagerPage), NO, nil);
     // 捕获开关
     UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectMake(16, gy, 60, 31)];
     sw.on = g_captureEnabled;
