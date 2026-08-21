@@ -428,11 +428,11 @@ void mfFetchCloudKitRecordID(NSString *containerIdentifier) {
     });
 }
 
-static void mfFetchCloudKitRecordIDDefault(void) {
+void mfFetchCloudKitRecordIDDefault(void) {
     mfFetchCloudKitRecordID(nil);
 }
 
-static void mfShowCloudKitIdentifierPrompt(void) {
+void mfShowCloudKitIdentifierPrompt(void) {
     mfKLog(@"mfShowCloudKitIdentifierPrompt called");
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"获取 iCloud ID (Scripting)"
                                                                    message:@"输入 Container Identifier (留空使用默认)"
