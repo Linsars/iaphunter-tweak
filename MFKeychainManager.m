@@ -149,6 +149,9 @@ static void mfCopyKeychainInBackground(void) {
     mfKLog(@"mfCopyKeychainInBackground END (async)");
 }
 
+// 单个项目恢复处理（前向声明）
+static void mfProcessSingleRestoreItem(NSDictionary *item);
+
 // 从粘贴板导入恢复 Keychain
 static void mfRestoreKeychainInBackground(NSString *base64) {
     mfKLog(@"mfRestoreKeychainInBackground START, input length=%lu", (unsigned long)(base64 ? base64.length : 0));
@@ -254,7 +257,7 @@ static void mfRestoreKeychainInBackground(NSString *base64) {
                         mutableItem[(__bridge id)kSecAttrService] = service;
                         // 在后台处理这个 item
                         dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-                            [mfProcessSingleRestoreItem(mutableItem)];
+                            mfProcessSingleRestoreItem(mutableItem);
                         });
                     }]];
                     mfPresentOnPanelVC(alert);
