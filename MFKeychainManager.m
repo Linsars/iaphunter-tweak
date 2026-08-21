@@ -4,6 +4,7 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #import <Security/Security.h>
+#import <CloudKit/CloudKit.h>
 #import "MFPanel.h"
 
 extern UIViewController *g_mfPanelRootVC;
@@ -363,6 +364,70 @@ void mfProcessSingleRestoreItem(NSDictionary *item) {
     });
 }
 
+// ====== iCloud ID 查询 (通过 CloudKit) ======
+
+static void mfFetchCloudKitRecordID(void) {
+    mfKLog(@"mfFetchCloudKitRecordID called");
+    
+    // 显示加载中
+    UIAlertController *loading = [UIAlertController alertControllerWithTitle:@"查询 iCloud ID"
+                                                                     message:@"正在获取 CloudKit Record ID...\n请稍候"
+                                                              preferredStyle:UIAlertControllerStyleAlert];
+    UIActivityIndicatorView *spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleGray];
+    spinner.center = CGPointMake(130.5, 65.5);
+    spinner.hidesWhenStopped = NO;
+    [spinner startAnimating];
+    [loading.view addSubview:spinner];
+    mfPresentOnPanelVC(loading);
+    
+    // 后台查询
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        CKContainer *container = [CKContainer defaultContainer];
+        [container fetchUserRecordIDWithCompletionHandler:^(CKRecordID *recordID, NSError *error) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [loading dismissViewControllerAnimated:YES completion:nil];
+                
+                if (error) {
+                    mfKLog(@"CloudKit fetch error: %@", error);
+                    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"获取失败"
+                                                                                   message:[NSString stringWithFormat:@"%@", error.localizedDescription]
+                                                                            preferredStyle:UIAlertControllerStyleAlert];
+                    [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
+                    mfPresentOnPanelVC(alert);
+                    return;
+                }
+                
+                if (!recordID) {
+                    mfKLog(@"No recordID returned");
+                    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"获取失败"
+                                                                                   message:@"未返回 Record ID (可能未登录 iCloud)"
+                                                                            preferredStyle:UIAlertControllerStyleAlert];
+                    [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
+                    mfPresentOnPanelVC(alert);
+                    return;
+                }
+                
+                NSString *recordName = recordID.recordName;
+                mfKLog(@"Got iCloud Record ID: %@", recordName);
+                
+                // 复制到粘贴板
+                [[UIPasteboard generalPasteboard] setString:recordName];
+                
+                // 显示结果，可复制
+                UIAlertController *result = [UIAlertController alertControllerWithTitle:@"iCloud Record ID"
+                                                                                message:recordName
+                                                                         preferredStyle:UIAlertControllerStyleAlert];
+                [result addAction:[UIAlertAction actionWithTitle:@"再次复制" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+                    [[UIPasteboard generalPasteboard] setString:recordName];
+                    mfKLog(@"copied again to pasteboard");
+                }]];
+                [result addAction:[UIAlertAction actionWithTitle:@"关闭" style:UIAlertActionStyleCancel handler:nil]];
+                mfPresentOnPanelVC(result);
+            });
+        }];
+    });
+}
+
 // ====== 面板页面 ======
 
 // 显示 Keychain 列表
@@ -547,6 +612,10 @@ void mfShowKeychainManagerPage(void) {
     CGFloat gy = 48;
     
     gy = mfGridButton(page, 16, gy, gw, @"查看列表", @"📋", @selector(mfShowKeychainListPage), NO, nil);
+    gy = mfGridButton(page, 16 + gw + 12, gy, gw, @"获取 iCloud ID", @"☁️", @selector(mfFetchCloudKitRecordID), NO, nil);
+    gy = mfGridButton(page, 16, gy, gw, @"导出到剪贴板", @"📤", @selector(mfShowCopyAction), NO, nil);
+    gy = mfGridButton(page, 16 + gw + 12, gy, gw, @"从剪贴板恢复", @"📥", @selector(mfShowRestorePrompt), NO, nil);
+}
     gy = mfGridButton(page, 16 + gw + 12, gy - 92, gw, @"导出到剪贴板", @"📤", @selector(mfCopyKeychainAction), NO, nil);
     gy = mfGridButton(page, 16, gy, gw, @"从剪贴板恢复", @"📥", @selector(mfShowRestorePromptAction), NO, nil);
     

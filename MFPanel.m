@@ -611,6 +611,7 @@ void mfShowProductPage(void) {
 - (void)mfShowKeychainListPage { mfShowKeychainListPageAction(); }
 - (void)mfCopyKeychainAction { mfCopyKeychainAction(); }
 - (void)mfShowRestorePromptAction { mfShowRestorePromptAction(); }
+- (void)mfFetchCloudKitRecordID { mfFetchCloudKitRecordID(); }
 - (void)mfShowManualBuyPage { mfShowManualBuyPage(); }
 - (void)mfShowIconPage { mfShowIconPage(); }
 
