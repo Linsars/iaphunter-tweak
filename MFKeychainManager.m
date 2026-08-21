@@ -391,35 +391,48 @@ static NSArray *mfGetFrontmostAppContainerIdentifiers(NSString **outBundleID, NS
             
             // 尝试多种方式获取 session
             id session = nil;
-            // 1. 尝试 property 访问
             if ([scene respondsToSelector:@selector(session)]) {
                 session = [scene session];
             }
-            // 2. 尝试 KVC
             if (!session) session = [scene valueForKey:@"session"];
-            // 3. 尝试私有 _session
             if (!session) session = [scene valueForKey:@"_session"];
             
             mfKLog(@"  session: %@", session ?: @"nil");
             if (!session) continue;
             
-            // 尝试多种方式获取 bundleID (从 session 和 scene 都试)
+            // 只用 KVC + @try/@catch 安全提取 bundleID
             NSString *bundleID = nil;
             
-            // 从 session 尝试
-            if ([session respondsToSelector:@selector(bundleIdentifier)]) {
-                bundleID = [session bundleIdentifier];
+            @try {
+                // 1. 从 session 的 userInfo 字典尝试 (最可靠)
+                NSDictionary *userInfo = [session valueForKey:@"userInfo"];
+                mfKLog(@"  session.userInfo: %@", userInfo ?: @"nil");
+                if (userInfo) {
+                    bundleID = userInfo[@"bundleIdentifier"] ?: userInfo[@"applicationIdentifier"] ?: userInfo[@"bundleId"];
+                }
+                
+                // 2. 从 session.configuration 拿
+                if (!bundleID) {
+                    id config = [session valueForKey:@"configuration"];
+                    mfKLog(@"  session.configuration: %@", config ?: @"nil");
+                    if (config) {
+                        bundleID = [config valueForKey:@"bundleIdentifier"] ?: [config valueForKey:@"applicationIdentifier"];
+                    }
+                }
+                
+                // 3. 直接从 session KVC 尝试
+                if (!bundleID) bundleID = [session valueForKey:@"bundleIdentifier"];
+                if (!bundleID) bundleID = [session valueForKey:@"applicationIdentifier"];
+                if (!bundleID) bundleID = [session valueForKey:@"bundleId"];
+                if (!bundleID) bundleID = [session valueForKey:@"appIdentifier"];
+                
+                // 4. 从 scene 直接尝试
+                if (!bundleID) bundleID = [scene valueForKey:@"bundleIdentifier"];
+                if (!bundleID) bundleID = [scene valueForKey:@"applicationIdentifier"];
+                
+            } @catch (NSException *e) {
+                mfKLog(@"  bundleID extraction exception: %@", e);
             }
-            if (!bundleID) bundleID = [session valueForKey:@"bundleIdentifier"];
-            if (!bundleID) bundleID = [session valueForKey:@"applicationIdentifier"];
-            if (!bundleID) bundleID = [session valueForKey:@"bundleId"];
-            if (!bundleID) bundleID = [session valueForKey:@"appIdentifier"];
-            
-            // 从 scene 直接尝试 (有些版本直接在 scene 上)
-            if (!bundleID) {
-                bundleID = [scene valueForKey:@"bundleIdentifier"];
-            }
-            if (!bundleID) bundleID = [scene valueForKey:@"applicationIdentifier"];
             
             mfKLog(@"  bundleID: %@", bundleID ?: @"nil");
             
