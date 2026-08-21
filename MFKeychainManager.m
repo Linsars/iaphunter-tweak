@@ -423,67 +423,139 @@ static NSArray *mfGetFrontmostAppContainerIdentifiers(NSString **outBundleID, NS
     }
 }
 
-// 核心查询函数
-static void mfFetchCloudKitRecordIDForContainer(NSString *containerIdentifier, NSString *appName) {
-    mfKLog(@"mfFetchCloudKitRecordIDForContainer called, container=%@", containerIdentifier ?: @"default");
-    
-    NSString *title = appName ? [NSString stringWithFormat:@"%@ 的 iCloud ID", appName] : @"查询 iCloud ID";
-    
-    UIAlertController *loading = [UIAlertController alertControllerWithTitle:title
-                                                                     message:@"正在获取 CloudKit Record ID...\n请稍候"
-                                                              preferredStyle:UIAlertControllerStyleAlert];
-    UIActivityIndicatorView *spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleGray];
-    spinner.center = CGPointMake(130.5, 65.5);
-    spinner.hidesWhenStopped = NO;
-    [spinner startAnimating];
-    [loading.view addSubview:spinner];
-    mfPresentOnPanelVC(loading);
-    
+// 核心查询函数：查单个容器的 Record ID 并回调
+static void mfQueryRecordIDForContainer(NSString *containerIdentifier,
+                                         void (^completion)(NSString *recordName, NSError *error)) {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        CKContainer *container = containerIdentifier ? [CKContainer containerWithIdentifier:containerIdentifier] : [CKContainer defaultContainer];
+        CKContainer *container;
+        if (containerIdentifier && ![containerIdentifier isEqualToString:@"__default__"]) {
+            container = [CKContainer containerWithIdentifier:containerIdentifier];
+        } else {
+            container = [CKContainer defaultContainer];
+        }
         [container fetchUserRecordIDWithCompletionHandler:^(CKRecordID *recordID, NSError *error) {
             dispatch_async(dispatch_get_main_queue(), ^{
-                [loading dismissViewControllerAnimated:YES completion:nil];
-                
-                if (error) {
-                    mfKLog(@"CloudKit fetch error: %@", error);
-                    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"获取失败"
-                                                                                   message:[NSString stringWithFormat:@"%@", error.localizedDescription]
-                                                                            preferredStyle:UIAlertControllerStyleAlert];
-                    [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
-                    mfPresentOnPanelVC(alert);
-                    return;
-                }
-                
-                if (!recordID) {
-                    mfKLog(@"No recordID returned");
-                    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"获取失败"
-                                                                                   message:@"未返回 Record ID (可能未登录 iCloud)"
-                                                                            preferredStyle:UIAlertControllerStyleAlert];
-                    [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
-                    mfPresentOnPanelVC(alert);
-                    return;
-                }
-                
-                NSString *recordName = recordID.recordName;
-                mfKLog(@"Got iCloud Record ID: %@", recordName);
-                
-                [[UIPasteboard generalPasteboard] setString:recordName];
-                
-                UIAlertController *result = [UIAlertController alertControllerWithTitle:@"iCloud Record ID"
-                                                                                message:[NSString stringWithFormat:@"App: %@\nContainer: %@\n\n%@", appName ?: @"未知", containerIdentifier ?: @"默认", recordName]
-                                                                         preferredStyle:UIAlertControllerStyleAlert];
-                [result addAction:[UIAlertAction actionWithTitle:@"再次复制" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-                    [[UIPasteboard generalPasteboard] setString:recordName];
-                }]];
-                [result addAction:[UIAlertAction actionWithTitle:@"关闭" style:UIAlertActionStyleCancel handler:nil]];
-                mfPresentOnPanelVC(result);
+                completion(recordID.recordName, error);
             });
         }];
     });
 }
 
-// 入口：自动检测当前 App 的容器并查询
+// iCloud ID 列表页（类似 Keychain 查看列表）
+static void mfShowICloudIDListPage(NSString *bundleID, NSString *appName, NSArray *containers) {
+    mfKLog(@"mfShowICloudIDListPage called, %lu containers", (unsigned long)containers.count);
+    
+    UIView *page = mfMakePage(@"iCloud ID 列表", YES);
+    
+    // 加载指示
+    UIActivityIndicatorView *spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleGray];
+    spinner.center = CGPointMake(g_mfCardW / 2, g_mfCardH / 2);
+    spinner.hidesWhenStopped = YES;
+    [page addSubview:spinner];
+    [spinner startAnimating];
+    
+    UILabel *loadingLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, spinner.center.y + 30, g_mfCardW - 40, 20)];
+    loadingLabel.text = @"查询 iCloud Record ID 中...";
+    loadingLabel.textAlignment = NSTextAlignmentCenter;
+    loadingLabel.textColor = [UIColor secondaryLabelColor];
+    loadingLabel.font = [UIFont systemFontOfSize:14];
+    [page addSubview:loadingLabel];
+    
+    mfPushPage(page);
+    
+    // ScrollView 预创建
+    UIScrollView *sv = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 40, g_mfCardW, g_mfCardH - 40)];
+    sv.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    [page addSubview:sv];
+    
+    __block CGFloat y = 12;
+    __block NSInteger pendingCount = containers.count;
+    
+    // App 信息卡片（静态）
+    UIView *infoCard = [[UIView alloc] initWithFrame:CGRectMake(12, y, g_mfCardW - 24, 60)];
+    infoCard.backgroundColor = [UIColor tertiarySystemBackgroundColor];
+    infoCard.layer.cornerRadius = 8;
+    UILabel *infoLabel = [[UILabel alloc] initWithFrame:CGRectMake(12, 8, g_mfCardW - 48, 44)];
+    infoLabel.text = [NSString stringWithFormat:@"📱 %@\n🆔 %@", appName ?: @"未知", bundleID ?: @""];
+    infoLabel.font = [UIFont systemFontOfSize:13];
+    infoLabel.textColor = [UIColor labelColor];
+    infoLabel.numberOfLines = 0;
+    [infoCard addSubview:infoLabel];
+    [sv addSubview:infoCard];
+    y += 68;
+    
+    // 分隔标题
+    UILabel *sectionTitle = [[UILabel alloc] initWithFrame:CGRectMake(16, y, g_mfCardW - 32, 24)];
+    sectionTitle.text = [NSString stringWithFormat:@"iCloud 容器 (%lu)", (unsigned long)containers.count];
+    sectionTitle.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+    sectionTitle.textColor = [UIColor secondaryLabelColor];
+    [sv addSubview:sectionTitle];
+    y += 28;
+    
+    // 为每个容器查询 Record ID
+    for (NSString *containerID in containers) {
+        // 占位 cell
+        UIView *cell = [[UIView alloc] initWithFrame:CGRectMake(12, y, g_mfCardW - 24, 72)];
+        cell.backgroundColor = [UIColor secondarySystemBackgroundColor];
+        cell.layer.cornerRadius = 8;
+        
+        UILabel *containerLabel = [[UILabel alloc] initWithFrame:CGRectMake(12, 6, g_mfCardW - 48, 18)];
+        containerLabel.text = containerID;
+        containerLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
+        containerLabel.textColor = [UIColor labelColor];
+        [cell addSubview:containerLabel];
+        
+        UILabel *statusLabel = [[UILabel alloc] initWithFrame:CGRectMake(12, 26, g_mfCardW - 48, 40)];
+        statusLabel.text = @"⏳ 查询中...";
+        statusLabel.font = [UIFont systemFontOfSize:12];
+        statusLabel.textColor = [UIColor secondaryLabelColor];
+        statusLabel.numberOfLines = 2;
+        [cell addSubview:statusLabel];
+        
+        objc_setAssociatedObject(cell, "containerID", containerID, OBJC_ASSOCIATION_RETAIN);
+        objc_setAssociatedObject(cell, "statusLabel", statusLabel, OBJC_ASSOCIATION_RETAIN);
+        
+        // 点击复制 Record ID
+        UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:g_mfCtrl action:@selector(mfCopyICloudRecordID:)];
+        [cell addGestureRecognizer:tap];
+        
+        [sv addSubview:cell];
+        y += 80;
+        
+        // 异步查询
+        NSString *cid = containerID;
+        mfQueryRecordIDForContainer(cid, ^(NSString *recordName, NSError *error) {
+            UILabel *lbl = objc_getAssociatedObject(cell, "statusLabel");
+            if (!lbl) return;
+            
+            if (error) {
+                lbl.text = [NSString stringWithFormat:@"❌ %@", error.localizedDescription ?: @"查询失败"];
+                lbl.textColor = [UIColor systemRedColor];
+                mfKLog(@"Container %@ error: %@", cid, error);
+            } else if (recordName) {
+                lbl.text = [NSString stringWithFormat:@"🔑 %@", recordName];
+                lbl.textColor = [UIColor systemGreenColor];
+                objc_setAssociatedObject(cell, "recordID", recordName, OBJC_ASSOCIATION_RETAIN);
+                mfKLog(@"Container %@ recordID: %@", cid, recordName);
+            } else {
+                lbl.text = @"⚠️ 未返回 Record ID";
+                lbl.textColor = [UIColor systemOrangeColor];
+            }
+            
+            pendingCount--;
+            if (pendingCount <= 0) {
+                [spinner stopAnimating];
+                [spinner removeFromSuperview];
+                [loadingLabel removeFromSuperview];
+            }
+            sv.contentSize = CGSizeMake(g_mfCardW, y + 20);
+        });
+    }
+    
+    sv.contentSize = CGSizeMake(g_mfCardW, y + 20);
+}
+
+// 入口：自动检测当前 App 的容器并打开列表页
 void mfFetchCloudKitRecordIDAuto(void) {
     mfKLog(@"mfFetchCloudKitRecordIDAuto called");
     
@@ -492,33 +564,15 @@ void mfFetchCloudKitRecordIDAuto(void) {
     NSArray *containers = mfGetFrontmostAppContainerIdentifiers(&bundleID, &appName);
     
     if (!containers || containers.count == 0) {
-        mfKLog(@"No iCloud containers found for frontmost app, fallback to default");
-        // 回退到默认容器
-        mfFetchCloudKitRecordIDForContainer(nil, @"(默认容器)");
+        mfKLog(@"No iCloud containers found, showing default container query");
+        // 无容器时也打开列表页，用默认容器查
+        NSMutableArray *arr = [NSMutableArray arrayWithObject:@"__default__"];
+        mfShowICloudIDListPage(bundleID ?: @"未知", appName ?: @"未知", arr);
         return;
     }
     
-    if (containers.count == 1) {
-        // 只有一个容器，直接查
-        mfKLog(@"Single container found: %@", containers[0]);
-        mfFetchCloudKitRecordIDForContainer(containers[0], appName);
-        return;
-    }
-    
-    // 多个容器，让用户选
-    mfKLog(@"Multiple containers found: %@", containers);
-    
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"选择 iCloud 容器"
-                                                                   message:[NSString stringWithFormat:@"App: %@ (%@)\n发现 %lu 个 iCloud 容器", appName ?: @"未知", bundleID ?: @"", (unsigned long)containers.count]
-                                                            preferredStyle:UIAlertControllerStyleActionSheet];
-    
-    for (NSString *containerID in containers) {
-        [alert addAction:[UIAlertAction actionWithTitle:containerID style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-            mfFetchCloudKitRecordIDForContainer(action.title, appName);
-        }]];
-    }
-    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    mfPresentOnPanelVC(alert);
+    mfKLog(@"Found %lu containers, opening list page", (unsigned long)containers.count);
+    mfShowICloudIDListPage(bundleID, appName, containers);
 }
 
 // ====== 面板页面 ======
