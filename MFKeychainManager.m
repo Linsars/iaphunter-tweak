@@ -424,20 +424,45 @@ static NSArray *mfGetFrontmostAppContainerIdentifiers(NSString **outBundleID, NS
 }
 
 // 核心查询函数：查单个容器的 Record ID 并回调
+// 关键：App 无 iCloud entitlement 时 CKContainer API 会抛异常，必须 @try 包裹
 static void mfQueryRecordIDForContainer(NSString *containerIdentifier,
                                          void (^completion)(NSString *recordName, NSError *error)) {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        CKContainer *container;
-        if (containerIdentifier && ![containerIdentifier isEqualToString:@"__default__"]) {
-            container = [CKContainer containerWithIdentifier:containerIdentifier];
-        } else {
-            container = [CKContainer defaultContainer];
+        CKContainer *container = nil;
+        NSString *fetchError = nil;
+        
+        @try {
+            if (containerIdentifier && ![containerIdentifier isEqualToString:@"(默认容器)"]) {
+                container = [CKContainer containerWithIdentifier:containerIdentifier];
+            } else {
+                container = [CKContainer defaultContainer];
+            }
+            if (!container) fetchError = @"CKContainer 为空";
+        } @catch (NSException *e) {
+            mfKLog(@"CKContainer exception: %@", e);
+            fetchError = e.reason ?: @"无 iCloud 权限";
+            container = nil;
         }
-        [container fetchUserRecordIDWithCompletionHandler:^(CKRecordID *recordID, NSError *error) {
+        
+        if (!container) {
             dispatch_async(dispatch_get_main_queue(), ^{
-                completion(recordID.recordName, error);
+                completion(nil, [NSError errorWithDomain:@"MFCloudKit" code:-1 userInfo:@{NSLocalizedDescriptionKey: fetchError ?: @"无 iCloud 权限"}]);
             });
-        }];
+            return;
+        }
+        
+        @try {
+            [container fetchUserRecordIDWithCompletionHandler:^(CKRecordID *recordID, NSError *error) {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    completion(recordID.recordName, error);
+                });
+            }];
+        } @catch (NSException *e) {
+            mfKLog(@"fetchUserRecordID exception: %@", e);
+            dispatch_async(dispatch_get_main_queue(), ^{
+                completion(nil, [NSError errorWithDomain:@"MFCloudKit" code:-2 userInfo:@{NSLocalizedDescriptionKey: e.reason ?: @"查询异常"}]);
+            });
+        }
     });
 }
 
@@ -588,8 +613,8 @@ void mfFetchCloudKitRecordIDAuto(void) {
     
     if (!containers || containers.count == 0) {
         mfKLog(@"No iCloud containers found, showing default container query");
-        // 无容器时也打开列表页，用默认容器查
-        NSMutableArray *arr = [NSMutableArray arrayWithObject:@"__default__"];
+        // 无容器时也打开列表页，用默认容器查（App 无 iCloud 权限时查询会失败并显示错误）
+        NSMutableArray *arr = [NSMutableArray arrayWithObject:@"(默认容器)"];
         mfShowICloudIDListPage(bundleID ?: @"未知", appName ?: @"未知", arr);
         return;
     }
