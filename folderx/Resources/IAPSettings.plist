@@ -13,6 +13,8 @@
 			<string>IAP工具箱</string>
 		</dict>
 		<dict>
+			<key>PostNotification</key>
+			<string>com.linsars.minisfix/ReloadPrefs</string>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>default</key>
@@ -23,8 +25,6 @@
 			<string>mfIAPEnabled</string>
 			<key>label</key>
 			<string>启用 IAP工具箱</string>
-			<key>PostNotification</key>
-			<string>com.linsars.minisfix/ReloadPrefs</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -35,6 +35,8 @@
 			<string>作用范围</string>
 		</dict>
 		<dict>
+			<key>PostNotification</key>
+			<string>com.linsars.minisfix/ReloadPrefs</string>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>default</key>
@@ -45,10 +47,10 @@
 			<string>mfIAPAutoApply</string>
 			<key>label</key>
 			<string>自动添加新安装 App</string>
-			<key>PostNotification</key>
-			<string>com.linsars.minisfix/ReloadPrefs</string>
 		</dict>
 		<dict>
+			<key>PostNotification</key>
+			<string>com.linsars.minisfix/ReloadPrefs</string>
 			<key>cell</key>
 			<string>PSLinkListCell</string>
 			<key>defaultApplicationSwitchValue</key>
@@ -65,8 +67,6 @@
 			<string>mfIAPAppList</string>
 			<key>label</key>
 			<string>应用程序</string>
-			<key>PostNotification</key>
-			<string>com.linsars.minisfix/ReloadPrefs</string>
 			<key>sections</key>
 			<array>
 				<dict>
@@ -138,6 +138,8 @@
 			<string>TestFlight 增强</string>
 		</dict>
 		<dict>
+			<key>PostNotification</key>
+			<string>com.linsars.minisfix/ReloadPrefs</string>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>default</key>
@@ -148,10 +150,10 @@
 			<string>mfTFCompatible</string>
 			<key>label</key>
 			<string>兼容性增强</string>
-			<key>PostNotification</key>
-			<string>com.linsars.minisfix/ReloadPrefs</string>
 		</dict>
 		<dict>
+			<key>PostNotification</key>
+			<string>com.linsars.minisfix/ReloadPrefs</string>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>default</key>
@@ -162,8 +164,6 @@
 			<string>mfTFExpiration</string>
 			<key>label</key>
 			<string>禁止跑路</string>
-			<key>PostNotification</key>
-			<string>com.linsars.minisfix/ReloadPrefs</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -183,25 +183,6 @@
 			<key>label</key>
 			<string>立即清理诊断日志</string>
 		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>footerText</key>
-			<string>查看、导出、导入 Keychain Generic Password 项。导出为 Base64 JSON 到剪贴板，支持跨设备迁移。面板主页也有入口。</string>
-			<key>label</key>
-			<string>Keychain 管理</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSLinkCell</string>
-			<key>detail</key>
-			<string>MFKeychainManagerController</string>
-			<key>isController</key>
-			<true/>
-			<key>label</key>
-			<string>打开 Keychain 管理</string>
-		</dict>
-	
 	</array>
 	<key>title</key>
 	<string>IAP工具箱</string>

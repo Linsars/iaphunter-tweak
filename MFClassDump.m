@@ -179,7 +179,13 @@ static NSString *mfHeaderForClass(Class cls) {
 static void mfPut16(NSMutableData *d, uint16_t v) { [d appendBytes:&v length:2]; }
 static void mfPut32(NSMutableData *d, uint32_t v) { [d appendBytes:&v length:4]; }
 
-typedef struct { NSString *name; uint32_t crc, csize, usize, offset; uint16_t method; } MFCDEntry;
+// 中央目录记录：必须用 ObjC 对象持有 name（NSValue+裸结构体会 UAF，v2 闪退根因）
+@interface MFCDRec : NSObject
+@property (copy) NSString *name;
+@property (assign) uint32_t crc, csize, usize, offset;
+@property (assign) uint16_t method;
+@end
+@implementation MFCDRec @end
 
 static void mfZipTime(uint16_t *t, uint16_t *dt) {
     time_t now = time(NULL);
@@ -190,7 +196,7 @@ static void mfZipTime(uint16_t *t, uint16_t *dt) {
 
 // 流式写单条目到文件句柄，CD 记录进数组（最后统一追加）
 static BOOL mfZipAddStream(NSFileHandle *fh, NSMutableArray *cds, NSString *name, NSData *data,
-                           uint32_t *outOffset, NSMutableData *scratch) {
+                           NSMutableData *scratch) {
     @try {
         uint16_t mtime, mdate; mfZipTime(&mtime, &mdate);
         uint32_t crc = (uint32_t)crc32(0, data.bytes, (uInt)data.length);
@@ -217,9 +223,10 @@ static BOOL mfZipAddStream(NSFileHandle *fh, NSMutableArray *cds, NSString *name
         [fh writeData:lh];
         [fh writeData:(stored ? data : [NSData dataWithBytesNoCopy:scratch.mutableBytes length:csz freeWhenDone:NO])];
 
-        MFCDEntry e = { name, crc, finalSize, (uint32_t)data.length, off, method };
-        [cds addObject:[NSValue valueWithBytes:&e objCType:@encode(MFCDEntry)]];
-        if (outOffset) *outOffset = off;
+        MFCDRec *rec = [MFCDRec new];
+        rec.name = name; rec.crc = crc; rec.csize = finalSize;
+        rec.usize = (uint32_t)data.length; rec.offset = off; rec.method = method;
+        [cds addObject:rec];
         return YES;
     } @catch (NSException *ex) {
         mfLog(@"CLASSDUMP zip entry failed: %@", ex.reason);
@@ -231,8 +238,7 @@ static BOOL mfZipFinishStream(NSFileHandle *fh, NSMutableArray *cds) {
     @try {
         uint32_t cdOff = (uint32_t)fh.offsetInFile;
         NSMutableData *cd = [NSMutableData data];
-        for (NSValue *v in cds) {
-            MFCDEntry e; [v getValue:&e];
+        for (MFCDRec *e in cds) {
             uint16_t mtime, mdate; mfZipTime(&mtime, &mdate);
             mfPut32(cd, 0x02014b50); mfPut16(cd, 20); mfPut16(cd, 20);
             mfPut16(cd, 0x0800); mfPut16(cd, e.method);
@@ -255,6 +261,143 @@ static BOOL mfZipFinishStream(NSFileHandle *fh, NSMutableArray *cds) {
     } @catch (NSException *ex) {
         mfLog(@"CLASSDUMP zip finish failed: %@", ex.reason);
         return NO;
+    }
+}
+
+// ====== Swift 类型扫描（__swift5_types → 伪接口）======
+#include <mach-o/dyld.h>
+#include <mach-o/getsect.h>
+#include <mach-o/loader.h>
+
+// 相对指针解析（swift metadata 全是 i32 自相对），带镜像范围校验
+static uintptr_t mfRelPtr(uintptr_t slotAddr, int32_t off, uintptr_t lo, uintptr_t hi) {
+    if (off == 0) return 0;
+    uintptr_t t = slotAddr + (uintptr_t)(int64_t)off;
+    return (t >= lo && t < hi) ? t : 0;
+}
+static const char *mfSafeStr(uintptr_t addr, uintptr_t lo, uintptr_t hi) {
+    if (!addr || addr >= hi - 1) return NULL;
+    const char *s = (const char *)addr;
+    // 粗略可读性校验
+    if (*s && !(*s >= 32 && *s < 127) && (unsigned char)*s < 0xC0) return NULL;
+    return s;
+}
+
+static NSString *mfSwiftKindName(uint8_t kind) {
+    switch (kind) {
+        case 16: return @"class";
+        case 17: return @"struct";
+        case 18: return @"enum";
+        default: return nil;
+    }
+}
+
+// 遍历单镜像 __swift5_types，输出伪接口文本
+static NSString *mfSwiftDumpImage(const struct mach_header *mh, intptr_t slide, NSString **outModuleCount) {
+    unsigned long sz = 0;
+    // getsectiondata 内部处理 slide，返回的是已重定位地址
+    const uint8_t *types = getsectiondata(mh, "__TEXT", "__swift5_types", &sz);
+    if (!types || sz < 4) return nil;
+    uintptr_t lo = (uintptr_t)mh, hi = lo; // 范围用所有段聚合
+    {
+        uintptr_t minA = ~0ull, maxA = 0;
+        const struct mach_header_64 *h64 = (const struct mach_header_64 *)mh;
+        const uint8_t *p = (const uint8_t *)(h64 + 1);
+        for (uint32_t i = 0; i < h64->ncmds; i++) {
+            const struct load_command *lc = (const struct load_command *)p;
+            if (lc->cmd == LC_SEGMENT_64) {
+                const struct segment_command_64 *sg = (const struct segment_command_64 *)p;
+                uintptr_t a = (uintptr_t)sg->vmaddr + slide, b = a + sg->vmsize;
+                if (a < minA) minA = a;
+                if (b > maxA) maxA = b;
+            }
+            p += lc->cmdsize;
+        }
+        if (!maxA) return nil;
+        lo = minA; hi = maxA;
+    }
+
+    NSMutableString *out = [NSMutableString string];
+    __block NSUInteger count = 0;
+    const int32_t *rels = (const int32_t *)types;
+    size_t n = sz / 4;
+    for (size_t i = 0; i < n; i++) {
+        uintptr_t descAddr = mfRelPtr((uintptr_t)&rels[i], rels[i], lo, hi);
+        if (!descAddr) continue;
+        const int32_t *desc = (const int32_t *)descAddr;
+        uint32_t flags = (uint32_t)desc[0];
+        uint8_t kind = flags & 0x1F;
+        NSString *kindName = mfSwiftKindName(kind);
+        if (!kindName) continue;
+        const char *tname = mfSafeStr(mfRelPtr(descAddr + 8, desc[2], lo, hi), lo, hi);
+        if (!tname || !*tname) continue;
+
+        // 模块名：parent 链上溯
+        NSString *module = @"Unknown";
+        {
+            uintptr_t pa = mfRelPtr(descAddr + 4, desc[1], lo, hi);
+            int depth = 0;
+            while (pa && depth++ < 8) {
+                const int32_t *pd = (const int32_t *)pa;
+                uint8_t pk = (uint32_t)pd[0] & 0x1F;
+                if (pk != 0 && pk != 1) break; // 只沿 Module/Extension 上溯
+                if (pk == 0) { // Module
+                    const char *mn = mfSafeStr(mfRelPtr(pa + 8, pd[2], lo, hi), lo, hi);
+                    if (mn) module = @(mn);
+                    break;
+                }
+                pa = mfRelPtr(pa + 4, pd[1], lo, hi);
+            }
+        }
+        (void)module; // v1: 按镜像归档即可，模块名留作后续分组
+
+        [out appendFormat:@"%@ %s {\n", kindName, tname];
+        // 字段描述符 @+16
+        uintptr_t fd = mfRelPtr(descAddr + 16, desc[4], lo, hi);
+        if (fd) {
+            uint16_t frecSize = *(const uint16_t *)(fd + 10);
+            uint32_t nf = *(const uint32_t *)(fd + 12);
+            if (nf > 4096) nf = 4096; // 防御
+            for (uint32_t f = 0; f < nf; f++) {
+                uintptr_t fr = fd + 16 + (uintptr_t)f * frecSize;
+                if (fr + 12 > hi) break;
+                const int32_t *fri = (const int32_t *)fr;
+                const char *fname = mfSafeStr(mfRelPtr(fr + 8, fri[2], lo, hi), lo, hi);
+                if (!fname) fname = "?";
+                const char *mty = mfSafeStr(mfRelPtr(fr + 4, fri[1], lo, hi), lo, hi);
+                NSString *ty = mty ? @(mty) : @"?";
+                [out appendFormat:@"    %@ %s: %@\n",
+                    (kind == 18 ? @"case" : @"var"), fname, ty];
+            }
+        }
+        [out appendString:@"}\n\n"];
+        count++;
+    }
+    if (outModuleCount) *outModuleCount = @(count);
+    return count ? out : nil;
+}
+
+// 扫全部镜像，产出 swift/<Image>.swift 条目
+static void mfDumpAllSwift(NSFileHandle *fh, NSMutableArray *cds, NSMutableData *scratch,
+                           NSMutableArray<NSString *> *modules) {
+    uint32_t ic = _dyld_image_count();
+    for (uint32_t i = 0; i < ic; i++) {
+        @autoreleasepool {
+            const struct mach_header *mh = _dyld_get_image_header(i);
+            if (!mh) continue;
+            const char *path = _dyld_get_image_name(i);
+            NSString *imgName = path ? [@(path) lastPathComponent] : [NSString stringWithFormat:@"img%u", i];
+            NSString *cnt = nil;
+            NSString *body = mfSwiftDumpImage(mh, (intptr_t)_dyld_get_image_vmaddr_slide(i), &cnt);
+            if (!body) continue;
+            NSString *header = [NSString stringWithFormat:@"// Swift types in %@ (%@ types)\n// 由 __swift5_types 元数据还原，字段类型为 mangled 原始串\n\n", imgName, cnt ?: @"0"];
+            NSString *full = [header stringByAppendingString:body];
+            [modules addObject:[NSString stringWithFormat:@"%@ (%@)", imgName, cnt]];
+            NSString *safeImg = [[imgName stringByReplacingOccurrencesOfString:@"/" withString:@"_"]
+                                  stringByReplacingOccurrencesOfString:@":" withString:@"_"];
+            mfZipAddStream(fh, cds, [NSString stringWithFormat:@"swift/%@.swift", safeImg],
+                           [full dataUsingEncoding:NSUTF8StringEncoding], scratch);
+        }
     }
 }
 
@@ -316,10 +459,24 @@ void mfClassDumpStartAction(UIProgressView *pv, UILabel *lb, UIButton *btn, UIVi
             }
         }
         free(classes);
-        mfLog(@"CLASSDUMP generated %u headers, writing central dir", (unsigned)cds.count);
+        mfLog(@"CLASSDUMP generated %u headers, scanning Swift metadata", (unsigned)cds.count);
 
+        dispatch_async(dispatch_get_main_queue(), ^{
+            lb.text = @"正在扫描 Swift 类型...";
+        });
+
+        // Swift 元数据阶段
+        NSMutableArray<NSString *> *swiftModules = [NSMutableArray array];
+        @try {
+            mfDumpAllSwift(fh, cds, scratch, swiftModules);
+            mfLog(@"CLASSDUMP swift modules with types: %lu", (unsigned long)swiftModules.count);
+        } @catch (NSException *ex) {
+            mfLog(@"CLASSDUMP swift phase failed: %@", ex.reason);
+        }
+
+        mfLog(@"CLASSDUMP writing central dir (%u entries)", (unsigned)cds.count);
         // finish 标记 + 中央目录
-        mfZipAddStream(fh, cds, @"finish.txt", [@"finish" dataUsingEncoding:NSUTF8StringEncoding], NULL, scratch);
+        mfZipAddStream(fh, cds, @"finish.txt", [@"finish" dataUsingEncoding:NSUTF8StringEncoding], scratch);
         BOOL ok = mfZipFinishStream(fh, cds);
         [fh closeFile];
 
@@ -339,21 +496,22 @@ void mfClassDumpStartAction(UIProgressView *pv, UILabel *lb, UIButton *btn, UIVi
         mfLog(@"CLASSDUMP done: %@ size=%@", finalPath, szAt[NSFileSize]);
 
         dispatch_async(dispatch_get_main_queue(), ^{
-            lb.text = [NSString stringWithFormat:@"✅ 完成：%u 类 → %@", cnt, [finalPath lastPathComponent]];
+            NSString *sw = swiftModules.count ? [NSString stringWithFormat:@"\nSwift 模块：%lu 个", (unsigned long)swiftModules.count] : @"";
+            lb.text = [NSString stringWithFormat:@"✅ 完成：%u 条目 → %@%@", cnt, [finalPath lastPathComponent], sw];
             btn.enabled = YES;
+            UIViewController *presenter = hostVC ?: g_mfPanelRootVC;
+            while (presenter.presentedViewController && presenter.presentedViewController != presenter)
+                presenter = presenter.presentedViewController;
             UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"ClassDump"
-                    message:[NSString stringWithFormat:@"已压缩为 zip\n%@", finalPath]
+                    message:[NSString stringWithFormat:@"已导出 %u 个条目%@\n\n选择「保存到文件」可存到 下载/任意位置", cnt, sw]
                     preferredStyle:UIAlertControllerStyleAlert];
-            [alert addAction:[UIAlertAction actionWithTitle:@"分享/保存" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-                UIActivityViewController *av = [[UIActivityViewController alloc]
-                        initWithActivityItems:@[[NSURL fileURLWithPath:finalPath]] applicationActivities:nil];
-                UIViewController *presenter = hostVC;
-                while (presenter.presentedViewController) presenter = presenter.presentedViewController;
-                [presenter presentViewController:av animated:YES completion:nil];
+            [alert addAction:[UIAlertAction actionWithTitle:@"保存到文件" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+                UIDocumentPickerViewController *dp =
+                    [[UIDocumentPickerViewController alloc] initWithURL:[NSURL fileURLWithPath:finalPath]
+                                                                 inMode:UIDocumentPickerModeExportToService];
+                [presenter presentViewController:dp animated:YES completion:nil];
             }]];
             [alert addAction:[UIAlertAction actionWithTitle:@"关闭" style:UIAlertActionStyleCancel handler:nil]];
-            UIViewController *presenter = hostVC ?: g_mfPanelRootVC;
-            while (presenter.presentedViewController) presenter = presenter.presentedViewController;
             [presenter presentViewController:alert animated:YES completion:nil];
         });
     });
@@ -389,7 +547,7 @@ void mfShowClassDumpPage(void) {
     lb.font = [UIFont systemFontOfSize:12];
     lb.textColor = [UIColor secondaryLabelColor];
     lb.numberOfLines = 3;
-    lb.text = @"输出到 Documents/classdump/*.zip";
+    lb.text = @"ObjC 全类 + Swift 类型 → zip\n输出 Documents/classdump，可保存到文件App";
     [page addSubview:lb];
 
     UIViewController *hostVC = g_mfPanelRootVC;
