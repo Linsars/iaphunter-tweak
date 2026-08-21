@@ -443,7 +443,7 @@ void mfClassDumpStartAction(UIProgressView *pv, UILabel *lb, UIButton *btn, UIVi
                     NSString *fname = [[name stringByReplacingOccurrencesOfString:@"/" withString:@"_"]
                                         stringByAppendingString:@".h"];
                     NSString *body = mfHeaderForClass(classes[i]);
-                    if (body) mfZipAddStream(fh, cds, fname, [body dataUsingEncoding:NSUTF8StringEncoding], NULL, scratch);
+                    if (body) mfZipAddStream(fh, cds, fname, [body dataUsingEncoding:NSUTF8StringEncoding], scratch);
                 } @catch (NSException *ex) {
                     mfLog(@"CLASSDUMP class %u failed: %@", i, ex.name);
                 }
