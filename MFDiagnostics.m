@@ -5,6 +5,12 @@
 #import "MFPanel.h"
 #import <Security/Security.h>
 #import <mach-o/dyld.h>
+// SecTask 私有 API（同 MFKeychainManager.m，SDK 未公开头文件）
+typedef struct CF_BRIDGED_TYPE(id) OpaqueSecTaskRef *SecTaskRef;
+extern SecTaskRef SecTaskCreateFromSelf(CFAllocatorRef allocator);
+extern CFTypeRef SecTaskCopyValueForEntitlement(SecTaskRef task, CFStringRef entitlement, CFErrorRef *error);
+// 本地 nlist_64（绕开 modules 与 loader.h 的定义冲突）
+struct mf_nlist_64 { uint32_t n_strx; uint8_t n_type; uint8_t n_sect; uint16_t n_desc; uint64_t n_value; };
 #include <sys/sysctl.h>
 #include <sys/types.h>
 #include <mach-o/loader.h>
@@ -328,7 +334,7 @@ NSString *mfMachOSymbols(void) {
     }
     if (!st.cmd) return @"⚠️ 无 LC_SYMTAB（stripped）";
     [r appendFormat:@"  符号总数: %u\n", st.nsyms];
-    struct nlist_64 nl;
+    struct mf_nlist_64 nl;
     int shown = 0;
     for (uint32_t i = 0; i < st.nsyms && shown < 50; i++) {
         memcpy(&nl, b + st.symoff + i * sizeof(nl), sizeof(nl));
@@ -418,7 +424,7 @@ void mfShowTextReportPage(NSString *title, NSString *text, NSString *exportName)
 
 #pragma mark - ====== 扫描页面 ======
 
-static void mfSecurityScanRun(int idx, UIButton *btn) {
+void mfSecurityScanRun(int idx, UIButton *btn) {
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSString *title, *report;
         if (idx < 0) { // 全扫
