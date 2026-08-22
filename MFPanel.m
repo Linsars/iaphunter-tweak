@@ -626,20 +626,34 @@ void mfShowProductPage(void) {
         presenter = presenter.presentedViewController;
     return presenter;
 }
-- (void)mfClassDumpSave:(UIButton *)btn {
+// 导出：分享面板自带"存储到文件"。关键：面板遮罩是手动 addSubview 到 keyWindow 的，
+// 会盖住 VC presentation 层级——展示期间临时隐藏遮罩，结束后恢复
+- (void)mfClassDumpExport:(UIButton *)btn {
     NSString *path = objc_getAssociatedObject(btn, "path");
-    if (!path || ![[NSFileManager defaultManager] fileExistsAtPath:path]) return;
-    UIDocumentPickerViewController *dp =
-        [[UIDocumentPickerViewController alloc] initWithURL:[NSURL fileURLWithPath:path]
-                                                     inMode:UIDocumentPickerModeExportToService];
-    [[self mfCDTopPresenter] presentViewController:dp animated:YES completion:nil];
-}
-- (void)mfClassDumpShare:(UIButton *)btn {
-    NSString *path = objc_getAssociatedObject(btn, "path");
-    if (!path || ![[NSFileManager defaultManager] fileExistsAtPath:path]) return;
+    if (!path || ![[NSFileManager defaultManager] fileExistsAtPath:path]) {
+        mfLog(@"CLASSDUMP export: path invalid %@", path);
+        return;
+    }
+    UIView *overlay = g_mfPanelOverlay;
     UIActivityViewController *av = [[UIActivityViewController alloc]
             initWithActivityItems:@[[NSURL fileURLWithPath:path]] applicationActivities:nil];
-    [[self mfCDTopPresenter] presentViewController:av animated:YES completion:nil];
+    av.completionWithItemsHandler = ^(UIActivityActivityType type, BOOL completed, NSArray *items, NSError *error) {
+        overlay.hidden = NO; // 恢复面板
+    };
+    overlay.hidden = YES;
+    UIViewController *presenter = [self mfCDTopPresenter];
+    if (!presenter || !presenter.view.window) { // 兜底：keyWindow rootVC
+        for (UIWindow *w in [UIApplication sharedApplication].windows)
+            if (w.isKeyWindow) { presenter = w.rootViewController; break; }
+        while (presenter.presentedViewController && presenter.presentedViewController != presenter)
+            presenter = presenter.presentedViewController;
+    }
+    if (presenter && presenter.view.window) {
+        [presenter presentViewController:av animated:YES completion:nil];
+    } else {
+        overlay.hidden = NO; // 实在没地方展示，恢复面板别把用户晾着
+        mfLog(@"CLASSDUMP export: no presenter available");
+    }
 }
 - (void)mfShowManualBuyPage { mfShowManualBuyPage(); }
 - (void)mfShowIconPage { mfShowIconPage(); }

@@ -510,13 +510,9 @@ void mfClassDumpStartAction(UIProgressView *pv, UILabel *lb, UIButton *btn, UIVi
         dispatch_async(dispatch_get_main_queue(), ^{
             NSString *sw = swiftModules.count ? [NSString stringWithFormat:@"\nSwift 模块：%lu 个", (unsigned long)swiftModules.count] : @"";
             NSString *szStr = szAt[NSFileSize] ? [NSString stringWithFormat:@"%.1f MB", [szAt[NSFileSize] doubleValue] / 1048576.0] : @"?";
-            lb.text = [NSString stringWithFormat:@"✅ 完成：%u 条目（%@）%@\n↓ 保存到文件可存到 下载/任意位置", cnt, szStr, sw];
+            lb.text = [NSString stringWithFormat:@"✅ 完成：%u 条目（%@）%@\n↓ 导出可存到 下载/任意位置", cnt, szStr, sw];
             btn.enabled = YES;
-            // 内联按钮：路径挂到两个按钮上，亮出操作行
-            if (actionRow.subviews.count >= 2) {
-                objc_setAssociatedObject(actionRow.subviews[0], "path", finalPath, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-                objc_setAssociatedObject(actionRow.subviews[1], "path", finalPath, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-            }
+            objc_setAssociatedObject(actionRow, "path", finalPath, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
             actionRow.hidden = NO;
         });
     });
@@ -555,33 +551,19 @@ void mfShowClassDumpPage(void) {
     lb.text = @"ObjC 全类 + Swift 类型 → zip\n输出 Documents/classdump，可保存到文件App";
     [page addSubview:lb];
 
-    // 完成后的内联操作行：保存到文件 / 分享（替代弹窗）
-    UIView *row = [[UIView alloc] initWithFrame:CGRectMake(16, 240, gw, 44)];
-    row.hidden = YES;
-    UIButton *saveBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    saveBtn.frame = CGRectMake(0, 0, gw / 2 - 6, 44);
-    saveBtn.backgroundColor = [UIColor systemGreenColor];
-    saveBtn.layer.cornerRadius = 10;
-    saveBtn.tintColor = UIColor.whiteColor;
-    saveBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-    [saveBtn setTitle:@"💾 保存到文件" forState:UIControlStateNormal];
-    [saveBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfClassDumpSave:") forControlEvents:UIControlEventTouchUpInside];
-    [row addSubview:saveBtn];
-    UIButton *shareBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    shareBtn.frame = CGRectMake(gw / 2 + 6, 0, gw / 2 - 6, 44);
-    shareBtn.backgroundColor = [UIColor secondarySystemFillColor];
-    shareBtn.layer.cornerRadius = 10;
-    shareBtn.tintColor = [UIColor labelColor];
-    shareBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-    [shareBtn setTitle:@"分享" forState:UIControlStateNormal];
-    [shareBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfClassDumpShare:") forControlEvents:UIControlEventTouchUpInside];
-    [row addSubview:shareBtn];
-    [page addSubview:row];
+    // 完成后的内联导出按钮（分享面板自带"存储到文件"）
+    UIButton *exportBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    exportBtn.frame = CGRectMake(16, 240, gw, 44);
+    exportBtn.backgroundColor = [UIColor systemGreenColor];
+    exportBtn.layer.cornerRadius = 10;
+    exportBtn.tintColor = UIColor.whiteColor;
+    exportBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
+    exportBtn.hidden = YES;
+    [exportBtn setTitle:@"📤 导出 zip（可存到文件App）" forState:UIControlStateNormal];
+    [exportBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfClassDumpExport:") forControlEvents:UIControlEventTouchUpInside];
+    [page addSubview:exportBtn];
 
-    objc_setAssociatedObject(btn, "trio", @[pv, lb, row], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    // 行内按钮互相找到对方（设置 path 时同步）
-    objc_setAssociatedObject(saveBtn, "peer", shareBtn, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    objc_setAssociatedObject(shareBtn, "peer", saveBtn, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(btn, "trio", @[pv, lb, exportBtn], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
     [btn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfClassDumpStart:") forControlEvents:UIControlEventTouchUpInside];
 
