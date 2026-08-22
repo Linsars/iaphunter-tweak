@@ -219,7 +219,7 @@ typedef struct { mflc lc; uint32_t ilocalsym, nlocalsym, iextdefsym, nextdefsym,
 typedef struct { const char *name; void *repl; void **orig; } MFRebindEnt;
 
 static void mfFishhookApply(MFRebindEnt *ents, int cnt) {
-    int bound = 0;
+    int bound = 0, sections = 0;
     uint32_t ic = _dyld_image_count();
     for (uint32_t img = 0; img < ic; img++) {
         @autoreleasepool {
@@ -265,10 +265,12 @@ static void mfFishhookApply(MFRebindEnt *ents, int cnt) {
                             }
                             const uint32_t *ind = inds + sct->reserved1;
                             void **slot = (void **)(sct->addr + slide);
+                            sections++;
                             for (uint32_t j = 0; j < sct->size / sizeof(void *); j++) {
                                 uint32_t si = ind[j];
                                 if (si == MF_IND_ABS || si == MF_IND_LOC || si >= sc->nsyms) continue;
                                 const char *nm = strs + syms[si].n_strx;
+                                if (nm[0] == '_') nm++; // Mach-O C 符号带前导下划线——v1.9.4 修复 0 命中根因
                                 for (int e = 0; e < cnt; e++) {
                                     if (strcmp(nm, ents[e].name)) continue;
                                     if (*ents[e].orig == NULL) *ents[e].orig = slot[j]; // 首个命中记录原函数
@@ -284,7 +286,8 @@ static void mfFishhookApply(MFRebindEnt *ents, int cnt) {
             }
         }
     }
-    mfLog(@"[crypto] GOT rebind: %d slots", bound);
+    mfLog(@"[crypto] GOT rebind: %d slots across %d ptr-sections", bound, sections);
+    if (!bound) mfLog(@"[crypto] ⚠️ 未命中任何槽位——检查符号名/段类型");
 }
 
 void mfInstallCryptoHooks(void) {
