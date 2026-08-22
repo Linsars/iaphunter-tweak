@@ -6,6 +6,14 @@
 
 #import "MFPanel.h"
 #import <CommonCrypto/CommonCrypto.h>
+// CCPaddingOptions 定义在 SPI 头，手动补齐（符号 libSystem 公开）
+typedef uint32_t CCPaddingOptions;
+#ifndef ccNoPadding
+#define ccNoPadding 0
+#endif
+#ifndef ccPKCS7Padding
+#define ccPKCS7Padding 1
+#endif
 
 #pragma mark - 算法表
 
@@ -117,14 +125,13 @@ static NSString *mfCryptoOutputViews(NSData *d) {
 
 static NSData *mfCryptoHashData(NSData *in, int algo) {
     unsigned char buf[CC_SHA512_DIGEST_LENGTH];
-    NSUInteger len = 0;
+    const void *data = in.bytes; CC_LONG n = (CC_LONG)in.length;
     switch (algo) {
-        case 10: len = CC_MD5(in.bytes, (CC_LONG)in.length, buf); break;
-        case 11: len = CC_SHA1(in.bytes, (CC_LONG)in.length, buf); break;
-        case 12: len = CC_SHA256(in.bytes, (CC_LONG)in.length, buf); break;
-        case 13: len = CC_SHA512(in.bytes, (CC_LONG)in.length, buf); break;
+        case 10: CC_MD5(data, n, buf);  return [NSData dataWithBytes:buf length:CC_MD5_DIGEST_LENGTH];
+        case 11: CC_SHA1(data, n, buf); return [NSData dataWithBytes:buf length:CC_SHA1_DIGEST_LENGTH];
+        case 12: CC_SHA256(data, n, buf); return [NSData dataWithBytes:buf length:CC_SHA256_DIGEST_LENGTH];
+        default: CC_SHA512(data, n, buf); return [NSData dataWithBytes:buf length:CC_SHA512_DIGEST_LENGTH];
     }
-    return len ? [NSData dataWithBytes:buf length:len] : nil;
 }
 
 static NSData *mfCryptoHmac(NSData *in, NSData *key, int algo) {
