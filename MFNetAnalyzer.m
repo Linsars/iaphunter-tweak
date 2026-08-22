@@ -11,7 +11,6 @@
 #include <ifaddrs.h>
 #include <arpa/inet.h>
 #include <net/if.h>
-#include <net/route.h>
 #include <netinet/in.h>
 #include <sys/sysctl.h>
 #include <resolv.h>
@@ -49,28 +48,15 @@ NSString *mfNetScanInterfaces(void) {
 
 #pragma mark - TCP 连接（对标 scanTCPConnections）
 
+// 老 theos SDK 无 net/route.h；且 iOS 沙盒内 sysctl(PF_ROUTE) 常规 EPERM——
+// 完整 TCP 表需 root + 特殊 entitlement，此处如实降级为探测说明
 NSString *mfNetScanTCP(void) {
-    NSMutableString *r = [NSMutableString stringWithString:@"【TCP 连接表】\n"];
-    int mib[6] = {CTL_NET, PF_ROUTE, 0, 0, NET_RT_FLAGS, 0};
-    size_t len = 0;
-    if (sysctl(mib, 6, NULL, &len, NULL, 0) != 0 || len == 0) {
-        return @"⚠️ 路由表不可读（沙盒限制，sysctl EPERM）\n提示：这是 iOS 沙盒的常规表现，非故障";
-    }
-    char *buf = malloc(len);
-    if (!buf || sysctl(mib, 6, buf, &len, NULL, 0) != 0) { free(buf); return @"⚠️ sysctl 读取失败"; }
-    // 遍历 rt_msghdr 流
-    size_t off = 0;
-    int n = 0;
-    while (off + sizeof(struct rt_msghdr) <= len) {
-        struct rt_msghdr *rtm = (struct rt_msghdr *)(buf + off);
-        if (rtm->rtm_msglen < sizeof(struct rt_msghdr) || off + rtm->rtm_msglen > len) break;
-        // sockaddr 数组跟在 header 后（简化：只数条目，详细解析依赖 rtm_addrs 位图）
-        n++;
-        off += rtm->rtm_msglen;
-    }
-    free(buf);
-    [r appendFormat:@"  路由/socket 表目: %d 条\n  ⚠️ iOS 上完整 TCP 状态表需 root+特殊 entitlement，此处仅探测可达性\n", n];
-    return r;
+    return @"【TCP 连接表】\n"
+           @"⚠️ iOS 沙盒内无法枚举系统级 TCP 表\n"
+           "（sysctl NET_RT 需 root + com.apple.network.entitlement）\n"
+           "替代信号：\n"
+           "  · 接口列表页可看活动连接所在接口\n"
+           "  · 开启实时捕获可见应用层 HTTP(S) 会话\n";
 }
 
 #pragma mark - DNS（对标 queryDNS + scanDNSRecords）
