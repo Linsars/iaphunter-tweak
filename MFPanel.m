@@ -645,6 +645,7 @@ void mfShowProductPage(void) {
 - (void)mfShowSecurityScanPage { mfShowSecurityScanPage(); }
 - (void)mfShowMachODeepPage { mfShowMachODeepPage(); }
 - (void)mfShowNetAnalyzerPage { mfShowNetAnalyzerPage(); }
+- (void)mfShowRuleManagerPage { mfShowRuleManagerPage(); }
 - (void)mfNetRun:(UIButton *)btn {
     btn.enabled = NO;
     NSString *kind = objc_getAssociatedObject(btn, "kind");
@@ -1373,7 +1374,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define MINISFIX_VERSION @"1.8.3"
+#define MINISFIX_VERSION @"1.8.4"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
