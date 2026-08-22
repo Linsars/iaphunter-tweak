@@ -263,7 +263,7 @@ void mfInstallCryptoHooks(void) {
 
 // Ctrl wrapper 调用
 void mfCryptoCapSwitchChanged(UISwitch *sw) {
-    mfSetPref(@"mfCryptoCapture", @(sw.on));
+    mfSetBoolPref(@"mfCryptoCapture", sw.on);
     if (sw.on) mfInstallCryptoHooks();
     mfToast(sw.on ? @"🔓 解密捕获已开启" : @"🔒 解密捕获已关闭");
 }
