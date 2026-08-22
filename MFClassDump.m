@@ -885,7 +885,6 @@ static NSArray<NSDictionary *> *mfCDScanHistory(void) {
 }
 
 void mfShowCDHistoryPage(void) {
-    mfExpandCardForPage();
     UIView *page = mfMakePage(@"📚 历史 dump", YES);
     CGFloat w = g_mfCardW;
 
