@@ -77,6 +77,67 @@ static CCCryptorStatus (*o_CCCryptorUpdate)(CCCryptorRef, const void *, size_t, 
 static CCCryptorStatus (*o_CCCryptorFinal)(CCCryptorRef, void *, size_t, size_t *);
 static void (*o_CCHmac)(CCHmacAlgorithm, const void *, size_t, const void *, size_t, void *);
 
+// ====== OpenSSL EVP（Python hashlib / libcrypto 路径——v1.9.5）======
+typedef void OpaqueEVPCTX; typedef void OpaqueEVPMD;
+static int (*o_EVP_EncryptUpdate)(OpaqueEVPCTX *, unsigned char *, int *, const unsigned char *, int);
+static int (*o_EVP_DecryptUpdate)(OpaqueEVPCTX *, unsigned char *, int *, const unsigned char *, int);
+static int (*o_EVP_CipherUpdate)(OpaqueEVPCTX *, unsigned char *, int *, const unsigned char *, int);
+static unsigned char *(*o_OSSLHMAC)(const OpaqueEVPMD *, const void *, int, const unsigned char *, size_t, unsigned char *, unsigned int *);
+
+static void mfRecordOSSLCrypto(NSString *dir, NSData *in, NSData *out) {
+    if (!mfCryptoEnabledState()) return;
+    @autoreleasepool {
+        MFCryptoRecord *r = [MFCryptoRecord new];
+        r.kind = @"OpenSSL";
+        r.dir = dir;
+        r.keyHex = @"(ctx 内部)";
+        r.ivHex = @"-";
+        r.input = in;
+        r.output = out;
+        r.ts = [NSDate date];
+        mfCryptoRecord(r);
+    }
+}
+static int my_EVP_EncryptUpdate(OpaqueEVPCTX *ctx, unsigned char *out, int *outl, const unsigned char *in, int inl) {
+    int rc = o_EVP_EncryptUpdate(ctx, out, outl, in, inl);
+    if (rc == 1 && mfCryptoEnabledState())
+        mfRecordOSSLCrypto(@"加密", [[NSData alloc] initWithBytes:in length:(NSUInteger)MAX(inl,0)],
+                           (outl && *outl > 0) ? [[NSData alloc] initWithBytes:out length:(NSUInteger)*outl] : nil);
+    return rc;
+}
+static int my_EVP_DecryptUpdate(OpaqueEVPCTX *ctx, unsigned char *out, int *outl, const unsigned char *in, int inl) {
+    int rc = o_EVP_DecryptUpdate(ctx, out, outl, in, inl);
+    if (rc == 1 && mfCryptoEnabledState())
+        mfRecordOSSLCrypto(@"解密", [[NSData alloc] initWithBytes:in length:(NSUInteger)MAX(inl,0)],
+                           (outl && *outl > 0) ? [[NSData alloc] initWithBytes:out length:(NSUInteger)*outl] : nil);
+    return rc;
+}
+static int my_EVP_CipherUpdate(OpaqueEVPCTX *ctx, unsigned char *out, int *outl, const unsigned char *in, int inl) {
+    int rc = o_EVP_CipherUpdate(ctx, out, outl, in, inl);
+    if (rc == 1 && mfCryptoEnabledState())
+        mfRecordOSSLCrypto(@"加解密", [[NSData alloc] initWithBytes:in length:(NSUInteger)MAX(inl,0)],
+                           (outl && *outl > 0) ? [[NSData alloc] initWithBytes:out length:(NSUInteger)*outl] : nil);
+    return rc;
+}
+static unsigned char *my_OSSLHMAC(const OpaqueEVPMD *md, const void *key, int keyLen,
+                                  const unsigned char *data, size_t dataLen,
+                                  unsigned char *mdOut, unsigned int *mdOutLen) {
+    unsigned char *rc = o_OSSLHMAC(md, key, keyLen, data, dataLen, mdOut, mdOutLen);
+    if (rc && mfCryptoEnabledState() && key) {
+        @autoreleasepool {
+            MFCryptoRecord *r = [MFCryptoRecord new];
+            r.kind = @"OSSL-HMAC";
+            r.dir = @"HMAC";
+            r.keyHex = mfHex([[NSData alloc] initWithBytes:key length:(NSUInteger)MIN(keyLen, 32)], 32);
+            r.input = [[NSData alloc] initWithBytes:data length:dataLen];
+            r.output = mdOutLen ? [[NSData alloc] initWithBytes:mdOut length:*mdOutLen] : nil;
+            r.ts = [NSDate date];
+            mfCryptoRecord(r);
+        }
+    }
+    return rc;
+}
+
 static NSString *mfAlgName(CCAlgorithm alg, CCMode mode) {
     NSString *a = alg == kCCAlgorithmAES ? @"AES" : alg == kCCAlgorithm3DES ? @"3DES" : alg == kCCAlgorithmDES ? @"DES" : alg == kCCAlgorithmRC4 ? @"RC4" : alg == kCCAlgorithmCAST ? @"CAST" : alg == kCCAlgorithmBlowfish ? @"Blowfish" : [NSString stringWithFormat:@"alg%d", alg];
     NSString *m = mode == kCCModeECB ? @"ECB" : mode == kCCModeCBC ? @"CBC" : mode == kCCModeCFB ? @"CFB" : mode == kCCModeCTR ? @"CTR" : @"";
@@ -301,13 +362,20 @@ void mfInstallCryptoHooks(void) {
             {"CCCryptorUpdate",       (void *)my_CCCryptorUpdate,          (void **)&o_CCCryptorUpdate},
             {"CCCryptorFinal",        (void *)my_CCCryptorFinal,           (void **)&o_CCCryptorFinal},
             {"CCHmac",                (void *)my_CCHmac,                   (void **)&o_CCHmac},
+            {"EVP_EncryptUpdate",     (void *)my_EVP_EncryptUpdate,        (void **)&o_EVP_EncryptUpdate},
+            {"EVP_DecryptUpdate",     (void *)my_EVP_DecryptUpdate,        (void **)&o_EVP_DecryptUpdate},
+            {"EVP_CipherUpdate",      (void *)my_EVP_CipherUpdate,         (void **)&o_EVP_CipherUpdate},
+            {"HMAC",                  (void *)my_OSSLHMAC,                 (void **)&o_OSSLHMAC},
         };
         o_CCCrypt = o_CCCryptorCreate = o_CCCryptorCreateWithMode = NULL;
         o_CCCryptorUpdate = o_CCCryptorFinal = o_CCHmac = NULL;
-        mfFishhookApply(ents, 6);
-        int ok = (o_CCCrypt?1:0)+(o_CCCryptorCreate?1:0)+(o_CCCryptorCreateWithMode?1:0)
-               + (o_CCCryptorUpdate?1:0)+(o_CCCryptorFinal?1:0)+(o_CCHmac?1:0);
-        mfLog(@"[crypto] hooks installed: %d/6 symbols resolved", ok);
+        o_EVP_EncryptUpdate = o_EVP_DecryptUpdate = o_EVP_CipherUpdate = o_OSSLHMAC = NULL;
+        mfFishhookApply(ents, 10);
+        mfLog(@"[crypto] resolved: CC=%d%d%d%d%d%d EVP=%d%d%d%d",
+              o_CCCrypt!=NULL, o_CCCryptorCreate!=NULL, o_CCCryptorCreateWithMode!=NULL,
+              o_CCCryptorUpdate!=NULL, o_CCCryptorFinal!=NULL, o_CCHmac!=NULL,
+              o_EVP_EncryptUpdate!=NULL, o_EVP_DecryptUpdate!=NULL,
+              o_EVP_CipherUpdate!=NULL, o_OSSLHMAC!=NULL);
         g_cryptoHookInstalled = YES;
     });
 }
