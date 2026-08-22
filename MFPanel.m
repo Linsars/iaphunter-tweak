@@ -126,6 +126,35 @@ UIView *mfMakePage(NSString *title, BOOL showBack) {
 }
 
 // 动态调整卡片高度（子页拉长 / 主页恢复紧凑）
+// 通用轻提示：keyWindow 浮层，1.4s 自动淡出
+void mfToast(NSString *msg) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIWindow *win = nil;
+        for (UIWindow *w in [UIApplication sharedApplication].windows)
+            if (w.isKeyWindow) { win = w; break; }
+        if (!win) return;
+        UILabel *lb = [[UILabel alloc] initWithFrame:CGRectMake(20, win.bounds.size.height - 160, win.bounds.size.width - 40, 40)];
+        lb.text = msg;
+        lb.font = [UIFont boldSystemFontOfSize:14];
+        lb.textAlignment = NSTextAlignmentCenter;
+        lb.textColor = UIColor.whiteColor;
+        lb.backgroundColor = [UIColor colorWithWhite:0 alpha:0.82];
+        lb.layer.cornerRadius = 12;
+        lb.layer.masksToBounds = YES;
+        lb.tag = 918273;
+        // 已有 toast 先撤
+        for (UIView *v in win.subviews) if (v.tag == 918273) [v removeFromSuperview];
+        [win addSubview:lb];
+        lb.alpha = 0;
+        [UIView animateWithDuration:0.18 animations:^{ lb.alpha = 1; } completion:^(BOOL f) {
+            [UIView animateWithDuration:0.25 delay:1.15 options:UIViewAnimationOptionCurveEaseIn animations:^{
+                lb.alpha = 0;
+                lb.transform = CGAffineTransformMakeTranslation(0, -10);
+            } completion:^(BOOL f2) { [lb removeFromSuperview]; }];
+        }];
+    });
+}
+
 void mfSetCardHeight(CGFloat h) {
     if (!g_mfCardView || !g_mfPanelOverlay) return;
     CGRect sb = g_mfPanelOverlay.bounds;
@@ -980,20 +1009,26 @@ void mfShowProductPage(void) {
 - (void)mfCryptoPickAlgo:(UIButton *)btn { mfCryptoPickAlgoAction(btn); }
 - (void)mfCryptoRun:(UIButton *)btn { mfCryptoRunAction(btn); }
 - (void)mfCryptoCopy:(UIButton *)btn { mfCryptoCopyAction(btn); }
-// 左滑操作入口
+// 左滑操作入口（记录挂在 self 的 "mfSwipeRec"，不依赖按钮参数）
 - (void)mfModifyResponseFromSwipe {
     MFNetRecord *rec = objc_getAssociatedObject(self, "mfSwipeRec");
-    if (!rec) return;
-    [(id)self performSelector:NSSelectorFromString(@"mfModifyResponse:") withObject:nil];
+    if (!rec) { mfToast(@"⚠️ 记录丢失"); return; }
+    NSString *pattern = rec.url ?: @"";
+    NSURL *u = [NSURL URLWithString:pattern];
+    if (u.host.length > 0) pattern = [NSString stringWithFormat:@"%@://%@", u.scheme ?: @"https", u.host];
+    mfShowRuleEditPage(pattern, @"replaceResp", -1, NO);
 }
 - (void)mfCopyRecordFromSwipe {
     MFNetRecord *rec = objc_getAssociatedObject(self, "mfSwipeRec");
     if (!rec) return;
-    NSString *text = [NSString stringWithFormat:@"%@ %ld\nURL: %@\n\n请求头:\n%@\n请求体:\n%@\n\n响应头:\n%@\n响应体:\n%@",
-        rec.method ?: @"?", (long)rec.status, rec.url ?: @"?",
-        rec.reqHeaders.description ?: @"", rec.reqBody ? [[NSString alloc] initWithData:rec.reqBody encoding:NSUTF8StringEncoding] ?: @"" : @"",
-        rec.respHeaders.description ?: @"", rec.respBody ? [[NSString alloc] initWithData:rec.respBody encoding:NSUTF8StringEncoding] ?: @"" : @""];
-    [UIPasteboard generalPasteboard].string = text;
+    NSMutableString *t = [NSMutableString stringWithFormat:@"%@ %ld\nURL: %@",
+        rec.method ?: @"?", (long)rec.status, rec.url ?: @"?"];
+    if (rec.reqHeaders) [t appendFormat:@"\n\n【请求头】\n%@", rec.reqHeaders];
+    if (rec.reqBody.length) { NSString *s = [[NSString alloc] initWithData:rec.reqBody encoding:NSUTF8StringEncoding]; if (s) [t appendFormat:@"\n\n【请求体】\n%@", s]; }
+    if (rec.respHeaders) [t appendFormat:@"\n\n【响应头】\n%@", rec.respHeaders];
+    if (rec.respBody.length) { NSString *s = [[NSString alloc] initWithData:rec.respBody encoding:NSUTF8StringEncoding]; if (s) [t appendFormat:@"\n\n【响应体】\n%@", s]; }
+    [UIPasteboard generalPasteboard].string = t;
+    mfToast(@"✅ 已复制整条记录");
 }
 
 @end
@@ -1288,7 +1323,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define MINISFIX_VERSION @"1.8.0"
+#define MINISFIX_VERSION @"1.8.1"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {

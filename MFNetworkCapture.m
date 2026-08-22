@@ -475,25 +475,7 @@ void mfShowCaptureDetailPage(MFNetRecord *rec) {
     mfExpandCardForPage();
     UIView *page = mfMakePage(@"请求详情", YES);
 
-    // 复制按钮（左上——远离右上角关闭 X，防误触）
-    UIButton *copyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    copyBtn.frame = CGRectMake(g_mfCardW - 136, 8, 56, 28);
-    [copyBtn setTitle:@"复制" forState:UIControlStateNormal];
-    copyBtn.titleLabel.font = [UIFont systemFontOfSize:13];
-    objc_setAssociatedObject(copyBtn, "rec", rec, OBJC_ASSOCIATION_RETAIN);
-    [copyBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfCopyRecord:") forControlEvents:UIControlEventTouchUpInside];
-    [page addSubview:copyBtn];
-
-    // 改响应按钮——用当前记录 URL 预填规则（跳规则编辑页）
-    UIButton *modBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    modBtn.frame = CGRectMake(g_mfCardW - 200, 8, 56, 28);
-    [modBtn setTitle:@"改响应" forState:UIControlStateNormal];
-    modBtn.titleLabel.font = [UIFont systemFontOfSize:13];
-    modBtn.tintColor = [UIColor systemOrangeColor];
-    objc_setAssociatedObject(modBtn, "rec", rec, OBJC_ASSOCIATION_RETAIN);
-    [modBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfModifyResponse:") forControlEvents:UIControlEventTouchUpInside];
-    [page addSubview:modBtn];
-
+    // 复制/改响应已移至列表左滑操作
     UIScrollView *sv = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 42, g_mfCardW, g_mfCardH - 42)];
     CGFloat y = 8;
 

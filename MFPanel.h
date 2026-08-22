@@ -20,6 +20,9 @@ extern UIVisualEffectView *g_mfCardView;
 extern CGFloat g_mfHomeCardH;
 void mfSetCardHeight(CGFloat h);
 
+// ====== 轻提示 ======
+void mfToast(NSString *msg);
+
 // ====== 日志 ======
 void mfLog(NSString *fmt, ...);
 #define MFLOG(fmt, ...) mfLog(fmt, ##__VA_ARGS__)
