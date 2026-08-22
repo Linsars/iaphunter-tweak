@@ -109,8 +109,13 @@ static NSString *mfScanEntitlements(void) {
     ];
     for (NSString *k in keys) {
         CFTypeRef v = SecTaskCopyValueForEntitlement(task, (__bridge CFStringRef)k, NULL);
-        dump(k, (__bridge_transfer id)v); // 手动管理：dump 后已 transfer
-        if (v) CFRelease(v);
+        // CFBridgingRelease 移交 ARC，绝不能再手动 CFRelease（双重释放=闪退）
+        id val = v ? CFBridgingRelease(v) : nil;
+        // 值类型兜底：非容器类型转 description
+        if (val && ![val isKindOfClass:[NSString class]] && ![val isKindOfClass:[NSArray class]] &&
+            ![val isKindOfClass:[NSNumber class]] && ![val isKindOfClass:[NSData class]])
+            val = [val description];
+        dump(k, val);
     }
     CFRelease(task);
     return r;
@@ -243,11 +248,20 @@ static NSData *mfMainBinaryData(void) {
     return p ? [NSData dataWithContentsOfFile:p options:NSDataReadingMappedAlways error:nil] : nil;
 }
 
+// 定长 char[N] 字段安全转 NSString（segname/sectname 不保证 \0 结尾，直接 %@ 会越界读）
+static NSString *mfFixedStr(const char *src, size_t n) {
+    char buf[17];
+    memcpy(buf, src, MIN(n, 16));
+    buf[MIN(n, 16)] = 0;
+    return [NSString stringWithUTF8String:buf] ?: @"?";
+}
+
 NSString *mfMachOSections(void) {
     NSMutableString *r = [NSMutableString stringWithString:@"【Sections】\n"];
     NSData *d = mfMainBinaryData();
     if (!d) return @"⚠️ 无法读取主二进制";
     const uint8_t *b = d.bytes;
+    const uint8_t *end = b + d.length;
     if (d.length < sizeof(struct mach_header_64) || *(const uint32_t *)b != MH_MAGIC_64)
         return @"⚠️ 非 64 位 Mach-O";
     struct mach_header_64 mh;
@@ -255,15 +269,19 @@ NSString *mfMachOSections(void) {
     [r appendFormat:@"  cputype=%x ncmds=%u filetype=%u\n", (unsigned)mh.cputype, mh.ncmds, (unsigned)mh.filetype];
     const uint8_t *p = b + sizeof(mh);
     for (uint32_t i = 0; i < mh.ncmds; i++) {
+        if (p + sizeof(struct load_command) > end) { [r appendString:@"  ⚠️ 越界截断\n"]; break; }
         struct load_command lc; memcpy(&lc, p, sizeof(lc));
-        if (lc.cmd == LC_SEGMENT_64) {
+        if (lc.cmdsize < sizeof(lc) || p + lc.cmdsize > end) { [r appendString:@"  ⚠️ cmdsize 异常截断\n"]; break; }
+        if (lc.cmd == LC_SEGMENT_64 && p + sizeof(struct segment_command_64) <= end) {
             struct segment_command_64 sg; memcpy(&sg, p, sizeof(sg));
-            [r appendFormat:@"▸ %@ (vmaddr=%llx)\n", sg.segname, sg.vmaddr];
+            [r appendFormat:@"▸ %@ (vmaddr=%llx)\n", mfFixedStr(sg.segname, 16), sg.vmaddr];
             const uint8_t *sp = p + sizeof(sg);
             for (uint32_t j = 0; j < sg.nsects; j++) {
+                if (sp + (j + 1) * sizeof(struct section_64) > end) break;
                 struct section_64 sec; memcpy(&sec, sp + j * sizeof(sec), sizeof(sec));
-                [r appendFormat:@"  · %-16.16s,%-16.16s off=%-6u size=%-7u flags=%x\n",
-                    sec.segname, sec.sectname, (unsigned)sec.offset, (unsigned)sec.size, (unsigned)sec.flags];
+                [r appendFormat:@"  · %@,%@ off=%-6u size=%-7u flags=%x\n",
+                    mfFixedStr(sec.segname, 16), mfFixedStr(sec.sectname, 16),
+                    (unsigned)sec.offset, (unsigned)sec.size, (unsigned)sec.flags];
             }
         }
         p += lc.cmdsize;
@@ -275,18 +293,24 @@ NSString *mfMachODylibs(void) {
     NSMutableString *r = [NSMutableString stringWithString:@"【Dylib 依赖】\n"];
     NSData *d = mfMainBinaryData();
     const uint8_t *b = d.bytes;
-    if (!d || *(const uint32_t *)b != MH_MAGIC_64) return @"⚠️ 解析失败";
+    const uint8_t *end = b + (d ? d.length : 0);
+    if (!d || d.length < sizeof(struct mach_header_64) || *(const uint32_t *)b != MH_MAGIC_64) return @"⚠️ 解析失败";
     struct mach_header_64 mh; memcpy(&mh, b, sizeof(mh));
     const uint8_t *p = b + sizeof(mh);
     int n = 0;
     for (uint32_t i = 0; i < mh.ncmds; i++) {
+        if (p + sizeof(struct load_command) > end) break;
         struct load_command lc; memcpy(&lc, p, sizeof(lc));
-        if (lc.cmd == LC_LOAD_WEAK_DYLIB || LC_LOAD_DYLIB == lc.cmd) {
+        if (lc.cmdsize < sizeof(lc) || p + lc.cmdsize > end) break;
+        if ((lc.cmd == LC_LOAD_WEAK_DYLIB || LC_LOAD_DYLIB == lc.cmd) && p + sizeof(struct dylib_command) <= end) {
             struct dylib_command dc; memcpy(&dc, p, sizeof(dc));
-            const char *nm = (const char *)p + dc.dylib.name.offset;
-            BOOL weak = lc.cmd == LC_LOAD_WEAK_DYLIB;
-            [r appendFormat:@"  %@ %s\n", weak ? @"🟡(weak)" : @"·", nm];
-            n++;
+            // name offset 指向 LC 内字符串区，校验后按 %s 打印（null-terminated 保证）
+            uint32_t noff = dc.dylib.name.offset;
+            if (noff > 0 && noff < lc.cmdsize) {
+                const char *nm = (const char *)p + noff;
+                [r appendFormat:@"  %@ %.200s\n", lc.cmd == LC_LOAD_WEAK_DYLIB ? @"🟡(weak)" : @"·", nm];
+                n++;
+            }
         }
         p += lc.cmdsize;
     }
@@ -297,7 +321,9 @@ NSString *mfMachODylibs(void) {
 NSString *mfMachOStrings(void) {
     NSMutableString *r = [NSMutableString stringWithString:@"【__cstring 抽样】\n"];
     unsigned long sz = 0;
-    const uint8_t *cs = getsectiondata(nil, "__TEXT", "__cstring", &sz); // nil=主镜像
+    // 必须传主镜像 header——getsectiondata(NULL) 是未定义行为（闪退点）
+    const struct mach_header_64 *hdr = _dyld_get_image_header(0);
+    const uint8_t *cs = hdr ? getsectiondata(hdr, "__TEXT", "__cstring", &sz) : NULL;
     if (!cs || !sz) return @"⚠️ __cstring 未找到";
     [r appendFormat:@"  段大小: %lu bytes\n", sz];
     // 抽样前 60 条可读字符串
@@ -306,7 +332,6 @@ NSString *mfMachOStrings(void) {
         const char *s = (const char *)cs + i;
         size_t len = strnlen(s, sz - i);
         if (len >= 6 && len <= 120 && isprint((unsigned char)s[0])) {
-            // 只显示含字母的可读串
             int alpha = 0;
             for (size_t k = 0; k < len && k < 40; k++) if (isalpha((unsigned char)s[k])) alpha++;
             if (alpha > len / 2) {
@@ -323,27 +348,36 @@ NSString *mfMachOSymbols(void) {
     NSMutableString *r = [NSMutableString stringWithString:@"【符号表概览】\n"];
     NSData *d = mfMainBinaryData();
     const uint8_t *b = d.bytes;
-    if (!d || *(const uint32_t *)b != MH_MAGIC_64) return @"⚠️ 解析失败";
+    const uint8_t *end = b + (d ? d.length : 0);
+    if (!d || d.length < sizeof(struct mach_header_64) || *(const uint32_t *)b != MH_MAGIC_64) return @"⚠️ 解析失败";
     struct mach_header_64 mh; memcpy(&mh, b, sizeof(mh));
     const uint8_t *p = b + sizeof(mh);
     struct symtab_command st = {0};
     for (uint32_t i = 0; i < mh.ncmds; i++) {
+        if (p + sizeof(struct load_command) > end) break;
         struct load_command lc; memcpy(&lc, p, sizeof(lc));
-        if (lc.cmd == LC_SYMTAB) memcpy(&st, p, sizeof(st));
+        if (lc.cmdsize < sizeof(lc) || p + lc.cmdsize > end) break;
+        if (lc.cmd == LC_SYMTAB && p + sizeof(st) <= end) memcpy(&st, p, sizeof(st));
         p += lc.cmdsize;
     }
     if (!st.cmd) return @"⚠️ 无 LC_SYMTAB（stripped）";
+    // symoff/stroff 边界校验后再解引用
+    if (st.symoff >= d.length || st.stroff >= d.length ||
+        (unsigned long long)st.symoff + (unsigned long long)st.nsyms * sizeof(struct mf_nlist_64) > d.length)
+        return @"⚠️ 符号表偏移越界（可能被 strip 工具破坏）";
     [r appendFormat:@"  符号总数: %u\n", st.nsyms];
     struct mf_nlist_64 nl;
     int shown = 0;
     for (uint32_t i = 0; i < st.nsyms && shown < 50; i++) {
         memcpy(&nl, b + st.symoff + i * sizeof(nl), sizeof(nl));
         if (!nl.n_strx) continue;
-        const char *s = (const char *)b + st.stroff + nl.n_strx;
-        if (isprint((unsigned char)s[0]) && strstr(s, "UCPT") == NULL) {
-            [r appendFormat:@"  %s\n", s];
-            shown++;
-        }
+        uint32_t off = st.stroff + nl.n_strx;
+        if (off >= d.length) continue;
+        const char *s = (const char *)b + off;
+        if (!isprint((unsigned char)s[0])) continue;
+        size_t slen = strnlen(s, d.length - off);
+        [r appendFormat:@"  %.*s\n", (int)MIN(slen, 120), s];
+        shown++;
     }
     if (st.nsyms > 50) [r appendFormat:@"  …（共 %u 条）\n", st.nsyms];
     return r;
