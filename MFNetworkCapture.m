@@ -773,32 +773,85 @@ static void mfShowRuleEditPageImpl(NSString *pattern, NSString *action, NSIntege
     [sv addSubview:quadSv];
     CGFloat qy = 8;
 
-    // 内联构建四个 text view（避免 block 语法在 C 编译器下报错）
-    #define BUILD_TV(label, text, outVar) \
-        UILabel *l##outVar = [UILabel new]; \
-        l##outVar.frame = CGRectMake(8, qy, 120, 20); \
-        l##outVar.text = label; \
-        l##outVar.font = [UIFont systemFontOfSize:11]; \
-        l##outVar.textColor = [UIColor systemBlueColor]; \
-        [quadSv addSubview:l##outVar]; \
-        qy += 22; \
-        UITextView *outVar = [[UITextView alloc] initWithFrame:CGRectMake(8, qy, g_mfCardW - 48, 90)]; \
-        outVar.text = text; \
-        outVar.font = [UIFont systemFontOfSize:11]; \
-        outVar.layer.borderWidth = 0.5; \
-        outVar.layer.borderColor = [UIColor systemGray3Color].CGColor; \
-        outVar.layer.cornerRadius = 6; \
-        outVar.backgroundColor = [UIColor systemBackgroundColor]; \
-        outVar.autocapitalizationType = UITextAutocapitalizationTypeNone; \
-        outVar.autocorrectionType = UITextAutocorrectionTypeNo; \
-        [quadSv addSubview:outVar]; \
-        qy += 98;
+    // reqHeaders
+    UILabel *l1 = [UILabel new];
+    l1.frame = CGRectMake(8, qy, 120, 20);
+    l1.text = @"请求 Headers (JSON)";
+    l1.font = [UIFont systemFontOfSize:11];
+    l1.textColor = [UIColor systemBlueColor];
+    [quadSv addSubview:l1];
+    qy += 22;
+    UITextView *reqHView = [[UITextView alloc] initWithFrame:CGRectMake(8, qy, g_mfCardW - 48, 90)];
+    reqHView.text = initReqH.count ? [initReqH description] : @"{}";
+    reqHView.font = [UIFont systemFontOfSize:11];
+    reqHView.layer.borderWidth = 0.5;
+    reqHView.layer.borderColor = [UIColor systemGray3Color].CGColor;
+    reqHView.layer.cornerRadius = 6;
+    reqHView.backgroundColor = [UIColor systemBackgroundColor];
+    reqHView.autocapitalizationType = UITextAutocapitalizationTypeNone;
+    reqHView.autocorrectionType = UITextAutocorrectionTypeNo;
+    [quadSv addSubview:reqHView];
+    qy += 98;
 
-    BUILD_TV(@"请求 Headers (JSON)", initReqH.count ? [initReqH description] : @"{}", reqHView);
-    BUILD_TV(@"响应 Headers (JSON)", initRespH.count ? [initRespH description] : @"{}", respHView);
-    BUILD_TV(@"请求 Body", initReqB, reqBView);
-    BUILD_TV(@"响应 Body", initRespB, respBView);
-    #undef BUILD_TV
+    // respHeaders
+    UILabel *l2 = [UILabel new];
+    l2.frame = CGRectMake(8, qy, 120, 20);
+    l2.text = @"响应 Headers (JSON)";
+    l2.font = [UIFont systemFontOfSize:11];
+    l2.textColor = [UIColor systemBlueColor];
+    [quadSv addSubview:l2];
+    qy += 22;
+    UITextView *respHView = [[UITextView alloc] initWithFrame:CGRectMake(8, qy, g_mfCardW - 48, 90)];
+    respHView.text = initRespH.count ? [initRespH description] : @"{}";
+    respHView.font = [UIFont systemFontOfSize:11];
+    respHView.layer.borderWidth = 0.5;
+    respHView.layer.borderColor = [UIColor systemGray3Color].CGColor;
+    respHView.layer.cornerRadius = 6;
+    respHView.backgroundColor = [UIColor systemBackgroundColor];
+    respHView.autocapitalizationType = UITextAutocapitalizationTypeNone;
+    respHView.autocorrectionType = UITextAutocorrectionTypeNo;
+    [quadSv addSubview:respHView];
+    qy += 98;
+
+    // reqBody
+    UILabel *l3 = [UILabel new];
+    l3.frame = CGRectMake(8, qy, 120, 20);
+    l3.text = @"请求 Body";
+    l3.font = [UIFont systemFontOfSize:11];
+    l3.textColor = [UIColor systemBlueColor];
+    [quadSv addSubview:l3];
+    qy += 22;
+    UITextView *reqBView = [[UITextView alloc] initWithFrame:CGRectMake(8, qy, g_mfCardW - 48, 90)];
+    reqBView.text = initReqB;
+    reqBView.font = [UIFont systemFontOfSize:11];
+    reqBView.layer.borderWidth = 0.5;
+    reqBView.layer.borderColor = [UIColor systemGray3Color].CGColor;
+    reqBView.layer.cornerRadius = 6;
+    reqBView.backgroundColor = [UIColor systemBackgroundColor];
+    reqBView.autocapitalizationType = UITextAutocapitalizationTypeNone;
+    reqBView.autocorrectionType = UITextAutocorrectionTypeNo;
+    [quadSv addSubview:reqBView];
+    qy += 98;
+
+    // respBody
+    UILabel *l4 = [UILabel new];
+    l4.frame = CGRectMake(8, qy, 120, 20);
+    l4.text = @"响应 Body";
+    l4.font = [UIFont systemFontOfSize:11];
+    l4.textColor = [UIColor systemBlueColor];
+    [quadSv addSubview:l4];
+    qy += 22;
+    UITextView *respBView = [[UITextView alloc] initWithFrame:CGRectMake(8, qy, g_mfCardW - 48, 90)];
+    respBView.text = initRespB;
+    respBView.font = [UIFont systemFontOfSize:11];
+    respBView.layer.borderWidth = 0.5;
+    respBView.layer.borderColor = [UIColor systemGray3Color].CGColor;
+    respBView.layer.cornerRadius = 6;
+    respBView.backgroundColor = [UIColor systemBackgroundColor];
+    respBView.autocapitalizationType = UITextAutocapitalizationTypeNone;
+    respBView.autocorrectionType = UITextAutocorrectionTypeNo;
+    [quadSv addSubview:respBView];
+    qy += 98;
 
     quadSv.contentSize = CGSizeMake(g_mfCardW - 32, qy + 8);
     y += 288;
