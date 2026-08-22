@@ -773,33 +773,33 @@ static void mfShowRuleEditPageImpl(NSString *pattern, NSString *action, NSIntege
     [sv addSubview:quadSv];
     CGFloat qy = 8;
 
-    // Helper: build one text view with label
-    auto buildTV = ^UITextView *(NSString *label, NSString *text) {
-        UILabel *l = [UILabel new];
-        l.frame = CGRectMake(8, qy, 120, 20);
-        l.text = label;
-        l.font = [UIFont systemFontOfSize:11];
-        l.textColor = [UIColor systemBlueColor];
-        [quadSv addSubview:l];
-        qy += 22;
-        UITextView *tv = [[UITextView alloc] initWithFrame:CGRectMake(8, qy, g_mfCardW - 48, 90)];
-        tv.text = text;
-        tv.font = [UIFont systemFontOfSize:11];
-        tv.layer.borderWidth = 0.5;
-        tv.layer.borderColor = [UIColor systemGray3Color].CGColor;
-        tv.layer.cornerRadius = 6;
-        tv.backgroundColor = [UIColor systemBackgroundColor];
-        tv.autocapitalizationType = UITextAutocapitalizationTypeNone;
-        tv.autocorrectionType = UITextAutocorrectionTypeNo;
-        [quadSv addSubview:tv];
+    // 内联构建四个 text view（避免 block 语法在 C 编译器下报错）
+    #define BUILD_TV(label, text, outVar) \
+        UILabel *l##outVar = [UILabel new]; \
+        l##outVar.frame = CGRectMake(8, qy, 120, 20); \
+        l##outVar.text = label; \
+        l##outVar.font = [UIFont systemFontOfSize:11]; \
+        l##outVar.textColor = [UIColor systemBlueColor]; \
+        [quadSv addSubview:l##outVar]; \
+        qy += 22; \
+        UITextView *outVar = [[UITextView alloc] initWithFrame:CGRectMake(8, qy, g_mfCardW - 48, 90)]; \
+        outVar.text = text; \
+        outVar.font = [UIFont systemFontOfSize:11]; \
+        outVar.layer.borderWidth = 0.5; \
+        outVar.layer.borderColor = [UIColor systemGray3Color].CGColor; \
+        outVar.layer.cornerRadius = 6; \
+        outVar.backgroundColor = [UIColor systemBackgroundColor]; \
+        outVar.autocapitalizationType = UITextAutocapitalizationTypeNone; \
+        outVar.autocorrectionType = UITextAutocorrectionTypeNo; \
+        [quadSv addSubview:outVar]; \
         qy += 98;
-        return tv;
-    };
 
-    UITextView *reqHView = buildTV(@"请求 Headers (JSON)", initReqH.count ? [initReqH description] : @"{}");
-    UITextView *respHView = buildTV(@"响应 Headers (JSON)", initRespH.count ? [initRespH description] : @"{}");
-    UITextView *reqBView = buildTV(@"请求 Body", initReqB);
-    UITextView *respBView = buildTV(@"响应 Body", initRespB);
+    BUILD_TV(@"请求 Headers (JSON)", initReqH.count ? [initReqH description] : @"{}", reqHView);
+    BUILD_TV(@"响应 Headers (JSON)", initRespH.count ? [initRespH description] : @"{}", respHView);
+    BUILD_TV(@"请求 Body", initReqB, reqBView);
+    BUILD_TV(@"响应 Body", initRespB, respBView);
+    #undef BUILD_TV
+
     quadSv.contentSize = CGSizeMake(g_mfCardW - 32, qy + 8);
     y += 288;
 
