@@ -157,7 +157,7 @@ static NSData *mfCryptoSymmetric(NSData *in, NSData *key, NSData *iv, int algo, 
     CCPaddingOptions pad = (algo == 2) ? ccNoPadding : ccPKCS7Padding;
     CCCryptorRef ref = NULL;
     CCCryptorStatus st = CCCryptorCreateWithMode(encrypt ? kCCEncrypt : kCCDecrypt, mode, kCCAlgorithmAES,
-        pad, iv.length ? iv.bytes : NULL, key.bytes, key.length, NULL, 0, 0, &ref);
+        pad, iv.length ? iv.bytes : NULL, key.bytes, key.length, NULL, 0, 0, 0, &ref);
     if (st != kCCSuccess || !ref) { *errOut = [NSString stringWithFormat:@"初始化失败 status=%d", st]; return nil; }
     NSMutableData *out = [NSMutableData dataWithLength:in.length + kCCBlockSizeAES128 + 16];
     size_t moved = 0, total = 0;
