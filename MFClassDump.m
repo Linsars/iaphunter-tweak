@@ -351,6 +351,9 @@ static NSString *mfSwiftDumpImage(const struct mach_header *mh, intptr_t slide, 
             if (lc->cmdsize < sizeof(struct load_command) || p + lc->cmdsize > cmdEnd) break;
             if (lc->cmd == LC_SEGMENT_64) {
                 const struct segment_command_64 *sg = (const struct segment_command_64 *)p;
+                // v1.9.2 关键修复：排除 __PAGEZERO（vmaddr=0, vmsize=4GB 未映射保留区）
+                // 把它算进聚合会把 lo 拉到 ~0，范围窗口失效，坏指针全数过检后踩未映射页
+                if (sg->vmaddr == 0 || sg->vmsize == 0) { p += lc->cmdsize; continue; }
                 uintptr_t a = (uintptr_t)sg->vmaddr + slide, b = a + sg->vmsize;
                 if (a < minA) minA = a;
                 if (b > maxA) maxA = b;
