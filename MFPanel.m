@@ -1349,7 +1349,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define MINISFIX_VERSION @"1.7.1"
+#define MINISFIX_VERSION @"1.7.2"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {

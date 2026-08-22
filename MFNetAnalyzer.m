@@ -34,7 +34,8 @@ NSString *mfNetScanInterfaces(void) {
         BOOL vpnLike = [name hasPrefix:@"utun"] || [name hasPrefix:@"ipsec"] || [name hasPrefix:@"tap"] || [name hasPrefix:@"ppp"];
         if (vpnLike) tun++;
         if ([name hasPrefix:@"en"]) en++;
-        [r appendFormat:@"  %@ %@  %@%@\n", up ? @"🟢" : @"⚪️", name, ip,
+        // ip 是 char[]，必须 %s——%@ 会把指针当对象解引用（闪退根因）
+        [r appendFormat:@"  %@ %@  %s%@\n", up ? @"🟢" : @"⚪️", name, ip,
             vpnLike ? @"  ← VPN/隧道" : @""];
     }
     freeifaddrs(ifs);
@@ -137,7 +138,29 @@ void mfShowNetAnalyzerPage(void) {
     UIView *page = mfMakePage(@"🌐 网络分析", YES);
     CGFloat gw = g_mfCardW - 32;
 
-    CGFloat y = 52;
+    // 顶部：实时捕获开关 + 捕获记录入口（从数据分析页并入——网络功能统一入口）
+    UILabel *capLb = [[UILabel alloc] initWithFrame:CGRectMake(16, 46, gw - 80, 24)];
+    capLb.text = @"⏺ 实时捕获 HTTP(S)";
+    capLb.font = [UIFont boldSystemFontOfSize:13];
+    capLb.textColor = [UIColor labelColor];
+    [page addSubview:capLb];
+    UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectMake(gw - 56, 44, 60, 31)];
+    sw.on = mfCaptureEnabledState();
+    objc_setAssociatedObject(sw, "key", @"mfCaptureEnabled", OBJC_ASSOCIATION_RETAIN);
+    [sw addTarget:g_mfCtrl action:NSSelectorFromString(@"mfCaptureSwitchChanged:") forControlEvents:UIControlEventValueChanged];
+    [page addSubview:sw];
+
+    UIButton *listBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    listBtn.frame = CGRectMake(16, 84, gw, 42);
+    listBtn.backgroundColor = [UIColor systemBlueColor];
+    listBtn.layer.cornerRadius = 10;
+    listBtn.tintColor = UIColor.whiteColor;
+    listBtn.titleLabel.font = [UIFont boldSystemFontOfSize:13];
+    [listBtn setTitle:@"📡 打开捕获记录列表" forState:UIControlStateNormal];
+    [listBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfShowNetworkCapturePage") forControlEvents:UIControlEventTouchUpInside];
+    [page addSubview:listBtn];
+
+    CGFloat y = 136;
     for (NSArray *it in mfNetItems) {
         UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
         b.frame = CGRectMake(16, y, gw, 44);

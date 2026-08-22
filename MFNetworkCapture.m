@@ -120,6 +120,9 @@ NSArray *mfCapturedRecordsSnapshot(void) {
     }
 }
 
+// 开关状态读取（MFNetAnalyzer 页面复用）
+BOOL mfCaptureEnabledState(void) { return g_captureEnabled; }
+
 // ====== 记录捕获 ======
 static void mfRecordCapture(MFNetRecord *rec) {
     if (!g_captureEnabled) return;
@@ -592,29 +595,17 @@ void mfShowNetworkCapturePage(void) {
     mfPushPage(page);
 }
 
-// ====== 数据分析页（捕获开关 + 解密工具箱入口） ======
+// ====== 数据分析页（6 宫格——网络功能已统一进「网络分析」） ======
 void mfShowDataAnalysisPage(void) {
     UIView *page = mfMakePage(@"数据分析", YES);
     CGFloat gw = (g_mfCardW - 32 - 12) / 2;
     CGFloat gy = 48;
-    gy = mfGridButton(page, 16, gy, gw, @"网络捕获", @"📡", @selector(mfShowNetworkCapturePage), NO, nil);
+    gy = mfGridButton(page, 16, gy, gw, @"网络分析", @"🌐", @selector(mfShowNetAnalyzerPage), NO, nil);
     gy = mfGridButton(page, 16 + gw + 12, gy - 92, gw, @"解密工具", @"🔐", @selector(mfShowCryptoPage), NO, nil);
     gy = mfGridButton(page, 16, gy, gw, @"ClassDump", @"📦", @selector(mfShowClassDumpPage), NO, nil);
     gy = mfGridButton(page, 16 + gw + 12, gy - 92, gw, @"Keychain 管理", @"🔑", @selector(mfShowKeychainManagerPage), NO, nil);
     gy = mfGridButton(page, 16, gy, gw, @"安全扫描", @"🛡️", @selector(mfShowSecurityScanPage), NO, nil);
     gy = mfGridButton(page, 16 + gw + 12, gy - 92, gw, @"MachO 深检", @"🔬", @selector(mfShowMachODeepPage), NO, nil);
-    gy = mfGridButton(page, 16, gy, gw, @"网络分析", @"🌐", @selector(mfShowNetAnalyzerPage), NO, nil);
-    // 捕获开关
-    UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectMake(16, gy, 60, 31)];
-    sw.on = g_captureEnabled;
-    objc_setAssociatedObject(sw, "key", @"mfCaptureEnabled", OBJC_ASSOCIATION_RETAIN);
-    [sw addTarget:g_mfCtrl action:NSSelectorFromString(@"mfCaptureSwitchChanged:") forControlEvents:UIControlEventValueChanged];
-    [page addSubview:sw];
-    UILabel *swLb = [[UILabel alloc] initWithFrame:CGRectMake(84, gy + 4, 160, 24)];
-    swLb.text = @"实时捕获网络请求";
-    swLb.font = [UIFont systemFontOfSize:14];
-    swLb.textColor = [UIColor labelColor];
-    [page addSubview:swLb];
     mfPushPage(page);
 }
 
