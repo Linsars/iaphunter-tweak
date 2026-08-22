@@ -113,6 +113,13 @@ void mfAddRule(NSString *pattern, NSString *matchType, NSString *action) {
     mfSaveRule(r, -1);
 }
 
+// 网络分析模块（MFNetAnalyzer.m）读捕获缓冲的只读快照
+NSArray *mfCapturedRecordsSnapshot(void) {
+    @synchronized (g_capturedRecords) {
+        return g_capturedRecords ? [g_capturedRecords copy] : @[];
+    }
+}
+
 // ====== 记录捕获 ======
 static void mfRecordCapture(MFNetRecord *rec) {
     if (!g_captureEnabled) return;
@@ -596,6 +603,7 @@ void mfShowDataAnalysisPage(void) {
     gy = mfGridButton(page, 16 + gw + 12, gy - 92, gw, @"Keychain 管理", @"🔑", @selector(mfShowKeychainManagerPage), NO, nil);
     gy = mfGridButton(page, 16, gy, gw, @"安全扫描", @"🛡️", @selector(mfShowSecurityScanPage), NO, nil);
     gy = mfGridButton(page, 16 + gw + 12, gy - 92, gw, @"MachO 深检", @"🔬", @selector(mfShowMachODeepPage), NO, nil);
+    gy = mfGridButton(page, 16, gy, gw, @"网络分析", @"🌐", @selector(mfShowNetAnalyzerPage), NO, nil);
     // 捕获开关
     UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectMake(16, gy, 60, 31)];
     sw.on = g_captureEnabled;

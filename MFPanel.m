@@ -615,6 +615,12 @@ void mfShowProductPage(void) {
 // 诊断（MFDiagnostics.m）
 - (void)mfShowSecurityScanPage { mfShowSecurityScanPage(); }
 - (void)mfShowMachODeepPage { mfShowMachODeepPage(); }
+- (void)mfShowNetAnalyzerPage { mfShowNetAnalyzerPage(); }
+- (void)mfNetRun:(UIButton *)btn {
+    btn.enabled = NO;
+    NSString *kind = objc_getAssociatedObject(btn, "kind");
+    mfNetAnalyzerRun(kind, btn);
+}
 - (void)mfSecScanRun:(UIButton *)btn {
     btn.enabled = NO;
     mfSecurityScanRun(btn.tag, btn);
@@ -1343,7 +1349,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define MINISFIX_VERSION @"1.6.1"
+#define MINISFIX_VERSION @"1.7.0"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {

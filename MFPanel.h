@@ -129,3 +129,8 @@ NSString *mfMachOStrings(void);
 NSString *mfMachOSymbols(void);
 NSString *mfMachORuntime(void);
 
+// ====== 网络分析（MFNetAnalyzer.m） ======
+void mfShowNetAnalyzerPage(void);           // 九项网络体检菜单页
+void mfNetAnalyzerRun(NSString *kind, UIButton *btn); // 分发到具体扫描
+NSArray *mfCapturedRecordsSnapshot(void);   // 捕获缓冲只读快照（定义在 MFNetworkCapture.m）
+

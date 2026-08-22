@@ -12,7 +12,7 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME = FolderX MinisFix AppStoreSpoof
 
 # FolderX（文件夹变色——原有功能不变）
-FolderX_FILES = $(filter-out MFPanel.m MFNetworkCapture.m MFJSRules.m MFAppStoreSpoof.m MFKeychainManager.m MFClassDump.m MFDiagnostics.m, $(wildcard *.xm *.m))
+FolderX_FILES = $(filter-out MFPanel.m MFNetworkCapture.m MFJSRules.m MFAppStoreSpoof.m MFKeychainManager.m MFClassDump.m MFDiagnostics.m MFNetAnalyzer.m, $(wildcard *.xm *.m))
 FolderX_FRAMEWORKS = UIKit Foundation SpringBoardServices
 FolderX_CFLAGS = -fno-objc-arc -fmodules
 FolderX_ARCHS = arm64 arm64e
@@ -20,7 +20,7 @@ FolderX_ARCHS = arm64 arm64e
 # IAPHunter 已合并进 MinisFix（SK hooks + IAP 收集 + 交易观察器）
 
 # MinisFix v5.0（新面板：数据分析/网络修改/Product + 诊断清理 + Keychain管理 + ClassDump）
-MinisFix_FILES = MFPanel.m MFNetworkCapture.m MFJSRules.m MFDiagnosticCleaner.m MFKeychainManager.m MFClassDump.m MFDiagnostics.m
+MinisFix_FILES = MFPanel.m MFNetworkCapture.m MFJSRules.m MFDiagnosticCleaner.m MFKeychainManager.m MFClassDump.m MFDiagnostics.m MFNetAnalyzer.m
 MinisFix_FRAMEWORKS = UIKit Foundation StoreKit JavaScriptCore Security CloudKit MobileCoreServices
 MinisFix_LDFLAGS = -weak_framework UIKit -weak_framework StoreKit -weak_framework JavaScriptCore -lz
 MinisFix_CFLAGS = -fobjc-arc -Wno-everything
