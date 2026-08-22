@@ -646,6 +646,13 @@ void mfShowProductPage(void) {
 - (void)mfShowMachODeepPage { mfShowMachODeepPage(); }
 - (void)mfShowNetAnalyzerPage { mfShowNetAnalyzerPage(); }
 - (void)mfShowRuleManagerPage { mfShowRuleManagerPage(); }
+// T1 解密捕获 / 方法监控
+- (void)mfShowCryptoCapturePage { mfShowCryptoCapturePage(); }
+- (void)mfCryptoSwitchChanged:(UISwitch *)sw { mfCryptoCapSwitchChanged(sw); }
+- (void)mfCryptoClearTapped { mfCryptoClearTapped(); }
+- (void)mfShowMethodTracePage { mfShowMethodTracePage(); }
+- (void)mfTraceToggleTapped { mfTraceToggleTapped(); }
+- (void)mfTraceClearTapped { mfTraceClearTapped(); }
 - (void)mfNetRun:(UIButton *)btn {
     btn.enabled = NO;
     NSString *kind = objc_getAssociatedObject(btn, "kind");
@@ -1374,7 +1381,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define MINISFIX_VERSION @"1.8.5"
+#define MINISFIX_VERSION @"1.9.0"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {

@@ -145,6 +145,21 @@ void mfCryptoPickAlgoAction(UIButton *btn);
 void mfCryptoRunAction(UIButton *btn);
 void mfCryptoCopyAction(UIButton *btn);
 
+// ====== T1 解密捕获（MFCryptoHooks.m） ======
+void mfShowCryptoCapturePage(void);          // 捕获列表页（含开关/清空）
+void mfCryptoCapSwitchChanged(UISwitch *sw); // C 函数，Ctrl wrapper 转发
+void mfCryptoClearTapped(void);
+BOOL mfCryptoEnabledState(void);             // 定义在 MFCryptoHooks.m
+NSArray *mfCryptoRecordsSnapshot(void);
+void mfInstallCryptoHooks(void);             // 首次开启时安装 CCCrypt/HMAC hooks
+
+// ====== T1 方法监控（MFMethodTrace.m） ======
+void mfShowMethodTracePage(void);
+BOOL mfTraceStart(NSString *className, NSString **errOut);
+void mfTraceStop(void);
+NSArray *mfTraceLines(void);
+BOOL mfTraceRunning(void);
+
 // ====== 网络分析（MFNetAnalyzer.m） ======
 void mfShowNetAnalyzerPage(void);           // 网络功能统一入口（含捕获开关）
 void mfNetAnalyzerRun(NSString *kind, UIButton *btn); // 分发到具体扫描
