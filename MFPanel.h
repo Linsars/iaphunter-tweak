@@ -123,4 +123,9 @@ void mfShowSecurityScanPage(void);        // 安全扫描八连扫
 void mfShowMachODeepPage(void);           // MachO 深检
 void mfShowTextReportPage(NSString *title, NSString *text, NSString *exportName); // 通用文本报告页
 void mfSecurityScanRun(int idx, UIButton *btn); // idx=-1 全扫
+NSString *mfMachOSections(void);
+NSString *mfMachODylibs(void);
+NSString *mfMachOStrings(void);
+NSString *mfMachOSymbols(void);
+NSString *mfMachORuntime(void);
 

@@ -648,8 +648,10 @@ void mfShowProductPage(void) {
     if (!text.length) return;
     NSString *tmpDir = [NSTemporaryDirectory() stringByAppendingPathComponent:@"mfdiag_share"];
     [[NSFileManager defaultManager] createDirectoryAtPath:tmpDir withIntermediateDirectories:YES attributes:nil error:nil];
+    NSDateFormatter *df = [[NSDateFormatter alloc] init];
+    df.dateFormat = @"yyyyMMdd_HHmmss";
     NSString *tmpFile = [tmpDir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@_%@.txt", name,
-        [NSDateFormatter new].localizedStringFromDate:[NSDate date] dateStyle:NSDateFormatterShortStyle timeStyle:NSDateFormatterShortStyle]]];
+        [df stringFromDate:[NSDate date]] ?: @"report"]];
     [text writeToFile:tmpFile atomically:YES encoding:NSUTF8StringEncoding error:nil];
     UIView *overlay = g_mfPanelOverlay;
     overlay.hidden = YES; // 面板遮罩会盖住 presentation
