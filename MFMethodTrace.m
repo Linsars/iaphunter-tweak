@@ -209,7 +209,6 @@ void mfTraceClearTapped(void) {
 }
 
 void mfShowMethodTracePage(void) {
-    mfExpandCardForPage();
     UIView *page = mfMakePage(@"🔍 方法监控", YES);
     CGFloat cw = g_mfCardW - 32;
 

@@ -274,7 +274,6 @@ void mfCryptoClearTapped(void) {
 }
 
 void mfShowCryptoCapturePage(void) {
-    mfExpandCardForPage();
     UIView *page = mfMakePage(@"🔓 解密捕获", YES);
 
     UILabel *lb = [[UILabel alloc] initWithFrame:CGRectMake(16, 46, g_mfCardW - 90, 24)];
