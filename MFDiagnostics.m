@@ -366,15 +366,9 @@ NSString *mfMachORuntime(void) {
     free(classes);
     unsigned protoCount = 0;
     Protocol *__unsafe_unretained *protos = objc_copyProtocolList(&protoCount);
-    NSMutableArray *myProtos = [NSMutableArray array];
-    for (unsigned i = 0; i < protoCount && myProtos.count < 40; i++) {
-        const char *img = protocol_getImageName(protos[i]);
-        if (img && strstr(img, myEx.UTF8String)) [myProtos addObject:[NSString stringWithUTF8String:protocol_getName(protos[i])]];
-    }
     if (protos) free(protos);
     [r appendFormat:@"  本 App 类数: %lu（全进程 %u）\n", (unsigned long)myClasses.count, total];
-    [r appendFormat:@"  本 App 协议: %lu（全进程 %u）\n", (unsigned long)myProtos.count, protoCount];
-    for (NSString *pn in myProtos) [r appendFormat:@"    @protocol %@\n", pn];
+    [r appendFormat:@"  全进程协议: %u\n", protoCount];
     // 类名抽样前 30
     NSArray *sorted = [myClasses.allObjects sortedArrayUsingSelector:@selector(compare:)];
     for (NSUInteger i = 0; i < sorted.count && i < 30; i++) [r appendFormat:@"    @interface %@\n", sorted[i]];
