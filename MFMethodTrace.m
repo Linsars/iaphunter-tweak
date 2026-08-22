@@ -46,7 +46,7 @@ static NSString *mfArgDesc(id a) {
         return s.length > 40 ? [[s substringToIndex:40] stringByAppendingString:@"…"] : s;
     }
     if ([a isKindOfClass:NSNumber.class]) return [(NSNumber *)a stringValue];
-    return [NSString stringWithFormat:@"<%@ %p>", NSStringFromClass(a.class), a];
+    return [NSString stringWithFormat:@"<%@ %p>", NSStringFromClass([a class]), a];
 }
 
 #define LOG_HEAD(self_, cmd_) \
