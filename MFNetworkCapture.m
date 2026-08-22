@@ -713,7 +713,7 @@ static void mfShowRuleEditPageImpl(NSString *pattern, NSString *action, NSIntege
     nameField.clearButtonMode = UITextFieldViewModeWhileEditing;
     nameField.autocapitalizationType = UITextAutocapitalizationTypeNone;
     [sv addSubview:nameField];
-    y += 52;
+    y += 72;
 
     // 匹配方式分段
     UILabel *mLabel = [UILabel new];
