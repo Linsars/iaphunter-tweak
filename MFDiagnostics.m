@@ -3,6 +3,8 @@
 // 实现全部自研。零第三方依赖。
 
 #import "MFPanel.h"
+#import <Security/Security.h>
+#import <mach-o/dyld.h>
 #include <sys/sysctl.h>
 #include <sys/types.h>
 #include <mach-o/loader.h>
@@ -155,7 +157,7 @@ static NSString *mfScanPrivacy(void) {
         [r appendFormat:@"  PrivacyInfo.xcprivacy 存在\n"];
         for (NSDictionary *a in m[@"NSPrivacyAccessedAPITypes"] ?: @[])
             [r appendFormat:@"    • %@ (reasons: %@)\n", a[@"NSPrivacyAccessedAPIType"], a[@"NSPrivacyAccessedAPITypeReasons"]];
-        [r appendFormat:@"  收集数据类型：%lu 项\n", (unsigned long)(m[@"NSPrivacyCollectedDataTypes"]).count];
+        [r appendFormat:@"  收集数据类型：%lu 项\n", (unsigned long)[(NSArray *)m[@"NSPrivacyCollectedDataTypes"] count]];
         [r appendFormat:@"  追踪声明: %@\n", m[@"NSPrivacyTracking"] ? @"是" : @"否"];
     } else {
         [r appendString:@"  ⚪️ 无 PrivacyInfo.xcprivacy（iOS17 前构建或未提供）\n"];
@@ -235,7 +237,7 @@ static NSData *mfMainBinaryData(void) {
     return p ? [NSData dataWithContentsOfFile:p options:NSDataReadingMappedAlways error:nil] : nil;
 }
 
-static NSString *mfMachOSections(void) {
+NSString *mfMachOSections(void) {
     NSMutableString *r = [NSMutableString stringWithString:@"【Sections】\n"];
     NSData *d = mfMainBinaryData();
     if (!d) return @"⚠️ 无法读取主二进制";
@@ -263,7 +265,7 @@ static NSString *mfMachOSections(void) {
     return r;
 }
 
-static NSString *mfMachODylibs(void) {
+NSString *mfMachODylibs(void) {
     NSMutableString *r = [NSMutableString stringWithString:@"【Dylib 依赖】\n"];
     NSData *d = mfMainBinaryData();
     const uint8_t *b = d.bytes;
@@ -286,7 +288,7 @@ static NSString *mfMachODylibs(void) {
     return r;
 }
 
-static NSString *mfMachOStrings(void) {
+NSString *mfMachOStrings(void) {
     NSMutableString *r = [NSMutableString stringWithString:@"【__cstring 抽样】\n"];
     unsigned long sz = 0;
     const uint8_t *cs = getsectiondata(nil, "__TEXT", "__cstring", &sz); // nil=主镜像
@@ -311,7 +313,7 @@ static NSString *mfMachOStrings(void) {
     return r;
 }
 
-static NSString *mfMachOSymbols(void) {
+NSString *mfMachOSymbols(void) {
     NSMutableString *r = [NSMutableString stringWithString:@"【符号表概览】\n"];
     NSData *d = mfMainBinaryData();
     const uint8_t *b = d.bytes;
@@ -341,7 +343,7 @@ static NSString *mfMachOSymbols(void) {
     return r;
 }
 
-static NSString *mfMachORuntime(void) {
+NSString *mfMachORuntime(void) {
     NSMutableString *r = [NSMutableString stringWithString:@"【ObjC 运行时】\n"];
     unsigned total = objc_getClassList(NULL, 0);
     __unsafe_unretained Class *classes = (__unsafe_unretained Class *)malloc(total * sizeof(Class));
