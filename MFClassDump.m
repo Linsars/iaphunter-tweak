@@ -306,12 +306,20 @@ static uintptr_t mfRelPtr(uintptr_t slotAddr, int32_t off, uintptr_t lo, uintptr
     uintptr_t t = slotAddr + (uintptr_t)(int64_t)off;
     return (t >= lo && t < hi) ? t : 0;
 }
+// 读地址前先验证「要读的长度」落在镜像范围内——v1.9.1 崩溃修复：
+// 只验目标地址不验读取长度，desc/fd 靠近段尾时 int32/NUL 扫描跨未映射页直接 SIGBUS
+static BOOL mfRangeOK(uintptr_t addr, uintptr_t len, uintptr_t lo, uintptr_t hi) {
+    return addr >= lo && len > 0 && addr <= hi && len <= hi - addr;
+}
 static const char *mfSafeStr(uintptr_t addr, uintptr_t lo, uintptr_t hi) {
-    if (!addr || addr >= hi - 1) return NULL;
+    if (!mfRangeOK(addr, 1, lo, hi)) return NULL;
     const char *s = (const char *)addr;
     // 粗略可读性校验
     if (*s && !(*s >= 32 && *s < 127) && (unsigned char)*s < 0xC0) return NULL;
-    return s;
+    // NUL 必须在 256 字节内且不出镜像边界，否则视为坏串
+    uintptr_t cap = MIN((uintptr_t)256, hi - addr);
+    for (uintptr_t i = 0; i < cap; i++) if (s[i] == '\0') return s;
+    return NULL;
 }
 
 static NSString *mfSwiftKindName(uint8_t kind) {
@@ -334,8 +342,13 @@ static NSString *mfSwiftDumpImage(const struct mach_header *mh, intptr_t slide, 
         uintptr_t minA = ~0ull, maxA = 0;
         const struct mach_header_64 *h64 = (const struct mach_header_64 *)mh;
         const uint8_t *p = (const uint8_t *)(h64 + 1);
+        // v1.9.1 崩溃修复：load commands 遍历加边界 + cmdsize 合法性校验，
+        // 否则畸形镜像会让 p 跑飞到未映射页（SIGSEGV，@try 接不住）
+        const uint8_t *cmdEnd = (const uint8_t *)mh + sizeof(struct mach_header_64) + h64->sizeofcmds;
         for (uint32_t i = 0; i < h64->ncmds; i++) {
+            if (p + sizeof(struct load_command) > cmdEnd) break;
             const struct load_command *lc = (const struct load_command *)p;
+            if (lc->cmdsize < sizeof(struct load_command) || p + lc->cmdsize > cmdEnd) break;
             if (lc->cmd == LC_SEGMENT_64) {
                 const struct segment_command_64 *sg = (const struct segment_command_64 *)p;
                 uintptr_t a = (uintptr_t)sg->vmaddr + slide, b = a + sg->vmsize;
@@ -355,6 +368,8 @@ static NSString *mfSwiftDumpImage(const struct mach_header *mh, intptr_t slide, 
     for (size_t i = 0; i < n; i++) {
         uintptr_t descAddr = mfRelPtr((uintptr_t)&rels[i], rels[i], lo, hi);
         if (!descAddr) continue;
+        // v1.9.1：读 desc[0..4] 前验证 20 字节在镜像内
+        if (!mfRangeOK(descAddr, 20, lo, hi)) continue;
         const int32_t *desc = (const int32_t *)descAddr;
         uint32_t flags = (uint32_t)desc[0];
         uint8_t kind = flags & 0x1F;
@@ -369,6 +384,7 @@ static NSString *mfSwiftDumpImage(const struct mach_header *mh, intptr_t slide, 
             uintptr_t pa = mfRelPtr(descAddr + 4, desc[1], lo, hi);
             int depth = 0;
             while (pa && depth++ < 8) {
+                if (!mfRangeOK(pa, 12, lo, hi)) break; // 读 pd[0..2] 前验长
                 const int32_t *pd = (const int32_t *)pa;
                 uint8_t pk = (uint32_t)pd[0] & 0x1F;
                 if (pk != 0 && pk != 1) break; // 只沿 Module/Extension 上溯
@@ -385,13 +401,13 @@ static NSString *mfSwiftDumpImage(const struct mach_header *mh, intptr_t slide, 
         [out appendFormat:@"%@ %s {\n", kindName, tname];
         // 字段描述符 @+16
         uintptr_t fd = mfRelPtr(descAddr + 16, desc[4], lo, hi);
-        if (fd) {
+        if (fd && mfRangeOK(fd, 16, lo, hi)) { // 读 frecSize/nf 前验长
             uint16_t frecSize = *(const uint16_t *)(fd + 10);
             uint32_t nf = *(const uint32_t *)(fd + 12);
             if (nf > 4096) nf = 4096; // 防御
-            for (uint32_t f = 0; f < nf; f++) {
+            for (uint32_t f = 0; f < nf && frecSize > 0; f++) { // frecSize==0 防死循环
                 uintptr_t fr = fd + 16 + (uintptr_t)f * frecSize;
-                if (fr + 12 > hi) break;
+                if (!mfRangeOK(fr, 12, lo, hi)) break;
                 const int32_t *fri = (const int32_t *)fr;
                 const char *fname = mfSafeStr(mfRelPtr(fr + 8, fri[2], lo, hi), lo, hi);
                 if (!fname) fname = "?";
