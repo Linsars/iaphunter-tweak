@@ -612,6 +612,63 @@ void mfShowProductPage(void) {
 - (void)mfCopyKeychainAction { mfCopyKeychainAction(); }
 - (void)mfShowRestorePromptAction { mfShowRestorePromptAction(); }
 - (void)mfFetchCloudKitRecordIDAuto { mfFetchCloudKitRecordIDAuto(); }
+// 诊断（MFDiagnostics.m）
+- (void)mfShowSecurityScanPage { mfShowSecurityScanPage(); }
+- (void)mfShowMachODeepPage { mfShowMachODeepPage(); }
+- (void)mfSecScanRun:(UIButton *)btn {
+    btn.enabled = NO;
+    mfSecurityScanRun(btn.tag, btn);
+}
+- (void)mfMachORun:(UIButton *)btn {
+    btn.enabled = NO;
+    NSString *kind = objc_getAssociatedObject(btn, "kind");
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSString *report = nil, *title = nil;
+        if ([kind isEqualToString:@"sec"]) { report = mfMachOSections(); title = @"Sections 全览"; }
+        else if ([kind isEqualToString:@"dylib"]) { report = mfMachODylibs(); title = @"Dylib 依赖"; }
+        else if ([kind isEqualToString:@"str"]) { report = mfMachOStrings(); title = @"__cstring 抽样"; }
+        else if ([kind isEqualToString:@"sym"]) { report = mfMachOSymbols(); title = @"符号表概览"; }
+        else if ([kind isEqualToString:@"rt"]) { report = mfMachORuntime(); title = @"ObjC 运行时归属"; }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            btn.enabled = YES;
+            if (!report) return;
+            mfShowTextReportPage(title, report, @"MachODeep");
+        });
+    });
+}
+- (void)mfDiagCopy:(UIButton *)btn {
+    UIView *page = objc_getAssociatedObject(btn, "page");
+    NSString *text = objc_getAssociatedObject(page, "text");
+    if (text.length) [UIPasteboard generalPasteboard].string = text;
+}
+- (void)mfDiagShare:(UIButton *)btn {
+    UIView *page = objc_getAssociatedObject(btn, "page");
+    NSString *text = objc_getAssociatedObject(page, "text");
+    NSString *name = objc_getAssociatedObject(page, "name") ?: @"report";
+    if (!text.length) return;
+    NSString *tmpDir = [NSTemporaryDirectory() stringByAppendingPathComponent:@"mfdiag_share"];
+    [[NSFileManager defaultManager] createDirectoryAtPath:tmpDir withIntermediateDirectories:YES attributes:nil error:nil];
+    NSString *tmpFile = [tmpDir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@_%@.txt", name,
+        [NSDateFormatter new].localizedStringFromDate:[NSDate date] dateStyle:NSDateFormatterShortStyle timeStyle:NSDateFormatterShortStyle]]];
+    [text writeToFile:tmpFile atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    UIView *overlay = g_mfPanelOverlay;
+    overlay.hidden = YES; // 面板遮罩会盖住 presentation
+    UIActivityViewController *av = [[UIActivityViewController alloc]
+            initWithActivityItems:@[[NSURL fileURLWithPath:tmpFile]] applicationActivities:nil];
+    av.completionWithItemsHandler = ^(UIActivityType type, BOOL completed, NSArray *items, NSError *error) {
+        overlay.hidden = NO;
+        [[NSFileManager defaultManager] removeItemAtPath:tmpDir error:nil];
+    };
+    UIViewController *presenter = g_mfPanelRootVC;
+    while (presenter.presentedViewController && presenter.presentedViewController != presenter)
+        presenter = presenter.presentedViewController;
+    if (!presenter || !presenter.view.window)
+        for (UIWindow *w in [UIApplication sharedApplication].windows)
+            if (w.isKeyWindow) { presenter = w.rootViewController; break; }
+    if (presenter && presenter.view.window) [presenter presentViewController:av animated:YES completion:nil];
+    else overlay.hidden = NO;
+}
+
 // ClassDump（数据分析板块）
 - (void)mfShowClassDumpPage { mfShowClassDumpPage(); }
 - (void)mfClassDumpStart:(UIButton *)btn {
@@ -1284,7 +1341,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define MINISFIX_VERSION @"1.5.3"
+#define MINISFIX_VERSION @"1.6.0"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {

@@ -118,3 +118,9 @@ NSData *mfZipReadEntry(NSString *path, const MFZipEnt *e);     // 按需解压�
 void mfShowCDBrowserPage(NSString *zipPath);                   // 文件列表 + 搜索
 void mfShowCDFilePage(NSString *zipPath, NSString *entry);     // 单文件查看 + 文内搜索
 
+// ====== 诊断（MFDiagnostics.m） ======
+void mfShowSecurityScanPage(void);        // 安全扫描八连扫
+void mfShowMachODeepPage(void);           // MachO 深检
+void mfShowTextReportPage(NSString *title, NSString *text, NSString *exportName); // 通用文本报告页
+void mfSecurityScanRun(int idx, UIButton *btn); // idx=-1 全扫
+
