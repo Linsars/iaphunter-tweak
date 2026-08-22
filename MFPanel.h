@@ -129,6 +129,12 @@ NSString *mfMachOStrings(void);
 NSString *mfMachOSymbols(void);
 NSString *mfMachORuntime(void);
 
+// ====== 解密工具箱 v2（MFCryptoToolbox.m） ======
+void mfShowCryptoToolboxPage(void);
+void mfCryptoPickAlgoAction(UIButton *btn);
+void mfCryptoRunAction(UIButton *btn);
+void mfCryptoCopyAction(UIButton *btn);
+
 // ====== 网络分析（MFNetAnalyzer.m） ======
 void mfShowNetAnalyzerPage(void);           // 网络功能统一入口（含捕获开关）
 void mfNetAnalyzerRun(NSString *kind, UIButton *btn); // 分发到具体扫描

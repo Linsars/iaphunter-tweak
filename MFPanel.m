@@ -976,87 +976,26 @@ void mfShowProductPage(void) {
 }
 
 // Crypto 工具箱
-- (void)mfCryptoRun:(UIButton *)b {
-    UIView *top = [g_mfPages lastObject];
-    UITextView *input = objc_getAssociatedObject(top, "input");
-    UITextField *key = objc_getAssociatedObject(top, "key");
-    UITextField *iv = objc_getAssociatedObject(top, "iv");
-    UISegmentedControl *algo = objc_getAssociatedObject(top, "algo");
-    UITextView *output = objc_getAssociatedObject(top, "output");
-    BOOL encrypt = [objc_getAssociatedObject(b, "mode") intValue] == 1;
-    NSInteger sel = algo.selectedSegmentIndex;
-    NSString *inputText = input.text;
-    
-    if (sel == 2) {  // Base64
-        if (encrypt) {
-            output.text = [[inputText dataUsingEncoding:NSUTF8StringEncoding] base64EncodedStringWithOptions:0];
-        } else {
-            NSData *d = [[NSData alloc] initWithBase64EncodedString:inputText options:0];
-            output.text = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding] ?: d.description;
-        }
-        return;
-    }
-    if (sel == 3) {  // Hex
-        if (encrypt) {
-            NSData *d = [inputText dataUsingEncoding:NSUTF8StringEncoding];
-            NSMutableString *hex = [NSMutableString string];
-            const Byte *bytes = d.bytes;
-            for (NSUInteger i = 0; i < d.length; i++) [hex appendFormat:@"%02x", bytes[i]];
-            output.text = hex;
-        } else {
-            NSMutableData *d = [NSMutableData data];
-            for (NSInteger i = 0; i < inputText.length; i += 2) {
-                unsigned int b = 0;
-                NSScanner *sc = [NSScanner scannerWithString:[inputText substringWithRange:NSMakeRange(i, MIN(2, inputText.length - i))]];
-                [sc scanHexInt:&b];
-                [d appendBytes:&b length:1];
-            }
-            output.text = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding] ?: d.description;
-        }
-        return;
-    }
-    
-    // AES-CBC / AES-ECB
-    NSData *keyData = [key.text dataUsingEncoding:NSUTF8StringEncoding];
-    if (keyData.length == 0) { output.text = @"请输入密钥"; return; }
-    // 填充密钥到 32 字节（AES-256）
-    NSMutableData *paddedKey = [NSMutableData dataWithLength:32];
-    [paddedKey replaceBytesInRange:NSMakeRange(0, MIN(keyData.length, 32)) withBytes:keyData.bytes];
-    
-    NSData *ivData = nil;
-    if (sel == 0 && iv.text.length > 0) {  // CBC 需要 IV
-        NSData *rawIV = [iv.text dataUsingEncoding:NSUTF8StringEncoding];
-        ivData = [NSMutableData dataWithLength:16];
-        [(NSMutableData *)ivData replaceBytesInRange:NSMakeRange(0, MIN(rawIV.length, 16)) withBytes:rawIV.bytes];
-    }
-    
-    NSData *inputData = [inputText dataUsingEncoding:NSUTF8StringEncoding];
-    NSMutableData *outData = [NSMutableData dataWithLength:inputData.length + kCCBlockSizeAES128];
-    size_t outLen = 0;
-    CCCryptorStatus status = CCCrypt(
-        encrypt ? kCCEncrypt : kCCDecrypt,
-        kCCAlgorithmAES,
-        sel == 0 ? kCCOptionPKCS7Padding : (kCCOptionPKCS7Padding | kCCOptionECBMode),
-        paddedKey.bytes, 32,
-        sel == 0 ? ivData.bytes : NULL,
-        inputData.bytes, inputData.length,
-        outData.mutableBytes, outData.length, &outLen);
-    
-    if (status == kCCSuccess) {
-        outData.length = outLen;
-        if (encrypt) {
-            NSMutableString *hex = [NSMutableString string];
-            const Byte *bytes = outData.bytes;
-            for (NSUInteger i = 0; i < outLen; i++) [hex appendFormat:@"%02x", bytes[i]];
-            output.text = [NSString stringWithFormat:@"加密结果(Hex):\n%@", hex];
-        } else {
-            NSString *dec = [[NSString alloc] initWithData:outData encoding:NSUTF8StringEncoding];
-            output.text = [NSString stringWithFormat:@"解密结果:\n%@", dec ?: outData.description];
-        }
-    } else {
-        output.text = [NSString stringWithFormat:@"错误: %d", status];
-    }
+// Crypto 工具箱 v2（MFCryptoToolbox.m）
+- (void)mfCryptoPickAlgo:(UIButton *)btn { mfCryptoPickAlgoAction(btn); }
+- (void)mfCryptoRun:(UIButton *)btn { mfCryptoRunAction(btn); }
+- (void)mfCryptoCopy:(UIButton *)btn { mfCryptoCopyAction(btn); }
+// 左滑操作入口
+- (void)mfModifyResponseFromSwipe {
+    MFNetRecord *rec = objc_getAssociatedObject(self, "mfSwipeRec");
+    if (!rec) return;
+    [(id)self performSelector:NSSelectorFromString(@"mfModifyResponse:") withObject:nil];
 }
+- (void)mfCopyRecordFromSwipe {
+    MFNetRecord *rec = objc_getAssociatedObject(self, "mfSwipeRec");
+    if (!rec) return;
+    NSString *text = [NSString stringWithFormat:@"%@ %ld\nURL: %@\n\n请求头:\n%@\n请求体:\n%@\n\n响应头:\n%@\n响应体:\n%@",
+        rec.method ?: @"?", (long)rec.status, rec.url ?: @"?",
+        rec.reqHeaders.description ?: @"", rec.reqBody ? [[NSString alloc] initWithData:rec.reqBody encoding:NSUTF8StringEncoding] ?: @"" : @"",
+        rec.respHeaders.description ?: @"", rec.respBody ? [[NSString alloc] initWithData:rec.respBody encoding:NSUTF8StringEncoding] ?: @"" : @""];
+    [UIPasteboard generalPasteboard].string = text;
+}
+
 @end
 
 // ====== 主面板（四板块双列网格） ======
@@ -1349,7 +1288,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define MINISFIX_VERSION @"1.7.2"
+#define MINISFIX_VERSION @"1.8.0"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {

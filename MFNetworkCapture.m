@@ -545,56 +545,86 @@ void mfShowCaptureDetailPage(MFNetRecord *rec) {
     mfPushPage(page);
 }
 
+// ====== 捕获列表控制器（UITableView + 左滑操作） ======
+@interface MFCaptureList : NSObject <UITableViewDataSource, UITableViewDelegate>
+@property (copy) NSArray *records;
+@end
+@implementation MFCaptureList
+- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s { return (NSInteger)self.records.count; }
+- (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
+    static NSString *id_ = @"mfcaprow";
+    UITableViewCell *c = [tv dequeueReusableCellWithIdentifier:id_];
+    if (!c) c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:id_];
+    MFNetRecord *rec = self.records[ip.row];
+    NSString *u = rec.url.length > 64 ? [rec.url substringToIndex:64] : rec.url;
+    c.textLabel.text = u;
+    c.textLabel.font = [UIFont systemFontOfSize:11];
+    c.textLabel.textColor = [UIColor systemBlueColor];
+    c.detailTextLabel.text = [NSString stringWithFormat:@"%@ %ld | %@", rec.method ?: @"?", (long)rec.status, rec.summary ?: @""];
+    c.detailTextLabel.font = [UIFont systemFontOfSize:10];
+    c.detailTextLabel.textColor = [UIColor secondaryLabelColor];
+    c.backgroundColor = UIColor.clearColor;
+    return c;
+}
+- (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
+    [tv deselectRowAtIndexPath:ip animated:YES];
+    mfShowCaptureDetailPage(self.records[ip.row]);
+}
+// 左滑操作：改响应 / 复制（对标系统邮件式 swipe actions）
+- (UISwipeActionsConfiguration *)tableView:(UITableView *)tv trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)ip {
+    MFNetRecord *rec = self.records[ip.row];
+    __block UIButton *synthetic = [UIButton buttonWithType:UIButtonTypeSystem]; // 复用 Ctrl 取参通道
+    objc_setAssociatedObject(synthetic, "rec", rec, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
+    UIContextualAction *mod = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleNormal
+        title:@"改响应" handler:^(UIContextualAction *a, UIView *v, void (^done)(BOOL)) {
+            objc_setAssociatedObject(g_mfCtrl, "mfSwipeRec", rec, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            [(id)g_mfCtrl performSelector:NSSelectorFromString(@"mfModifyResponseFromSwipe")];
+            done(YES);
+        }];
+    mod.backgroundColor = [UIColor systemOrangeColor];
+
+    UIContextualAction *copy = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleNormal
+        title:@"复制" handler:^(UIContextualAction *a, UIView *v, void (^done)(BOOL)) {
+            objc_setAssociatedObject(g_mfCtrl, "mfSwipeRec", rec, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            [(id)g_mfCtrl performSelector:NSSelectorFromString(@"mfCopyRecordFromSwipe")];
+            done(YES);
+        }];
+    copy.backgroundColor = [UIColor systemBlueColor];
+
+    return [UISwipeActionsConfiguration configurationWithActions:@[copy, mod]];
+}
+@end
+
 void mfShowNetworkCapturePage(void) {
     mfExpandCardForPage();
-    UIView *page = mfMakePage(@"网络捕获", YES);
-    UIScrollView *sv = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 42, g_mfCardW, g_mfCardH - 42)];
-    
-    if (!g_capturedRecords || g_capturedRecords.count == 0) {
-        UILabel *e = [[UILabel alloc] initWithFrame:CGRectMake(16, 60, g_mfCardW - 32, 40)];
-        e.text = @"暂无捕获记录\n请先在数据分析页打开捕获开关";
+    UIView *page = mfMakePage(@"📡 网络捕获", YES);
+
+    UITableView *tb = [[UITableView alloc] initWithFrame:CGRectMake(0, 42, g_mfCardW, g_mfCardH - 42) style:UITableViewStylePlain];
+    tb.backgroundColor = UIColor.clearColor;
+    tb.rowHeight = 58;
+
+    MFCaptureList *ctl = [MFCaptureList new];
+    @synchronized (g_capturedRecords) {
+        ctl.records = g_capturedRecords ? [g_capturedRecords copy] : @[];
+    }
+    tb.dataSource = ctl; tb.delegate = ctl;
+    objc_setAssociatedObject(page, "ctl", ctl, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
+    if (!ctl.records.count) {
+        UILabel *e = [[UILabel alloc] initWithFrame:CGRectMake(16, 60, g_mfCardW - 32, 60)];
+        e.text = @"暂无捕获记录\n到「网络分析」打开实时捕获开关";
         e.numberOfLines = 0;
         e.textAlignment = NSTextAlignmentCenter;
         e.font = [UIFont systemFontOfSize:13];
         e.textColor = [UIColor secondaryLabelColor];
-        [sv addSubview:e];
-    } else {
-        CGFloat y = 8;
-        @synchronized (g_capturedRecords) {
-            for (MFNetRecord *rec in g_capturedRecords) {
-                UIView *row = [[UIView alloc] initWithFrame:CGRectMake(12, y, g_mfCardW - 24, 56)];
-                row.backgroundColor = [UIColor secondarySystemBackgroundColor];
-                row.layer.cornerRadius = 10;
-                
-                UILabel *url = [[UILabel alloc] initWithFrame:CGRectMake(10, 4, row.bounds.size.width - 20, 18)];
-                url.font = [UIFont systemFontOfSize:11];
-                url.textColor = [UIColor systemBlueColor];
-                NSString *fullUrl = rec.url;
-                if (fullUrl.length > 60) fullUrl = [fullUrl substringToIndex:60];
-                url.text = fullUrl;
-                [row addSubview:url];
-                
-                UILabel *info = [[UILabel alloc] initWithFrame:CGRectMake(10, 24, row.bounds.size.width - 20, 28)];
-                info.font = [UIFont systemFontOfSize:10];
-                info.textColor = [UIColor secondaryLabelColor];
-                info.numberOfLines = 2;
-                info.text = [NSString stringWithFormat:@"%@ %ld | %@", rec.method, (long)rec.status, rec.summary ?: @""];
-                [row addSubview:info];
-                
-                [sv addSubview:row];
-                // 点击行 → 详情页
-                UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:g_mfCtrl action:NSSelectorFromString(@"mfShowCaptureDetail:")];
-                objc_setAssociatedObject(tap, "rec", rec, OBJC_ASSOCIATION_RETAIN);
-                [row addGestureRecognizer:tap];
-                y += 62;
-            }
-        }
-        sv.contentSize = CGSizeMake(g_mfCardW, y + 16);
+        e.userInteractionEnabled = NO;
+        [tb addSubview:e];
     }
-    [page addSubview:sv];
+
+    [page addSubview:tb];
     mfPushPage(page);
 }
-
 // ====== 数据分析页（6 宫格——网络功能已统一进「网络分析」） ======
 void mfShowDataAnalysisPage(void) {
     UIView *page = mfMakePage(@"数据分析", YES);
@@ -610,66 +640,7 @@ void mfShowDataAnalysisPage(void) {
 }
 
 // ====== CryptoToolbox 页面 ======
-void mfShowCryptoToolboxPage(void) {
-    UIView *page = mfMakePage(@"解密工具", YES);
-    // 输入框
-    UITextView *input = [[UITextView alloc] initWithFrame:CGRectMake(12, 48, g_mfCardW - 24, 80)];
-    input.font = [UIFont systemFontOfSize:13];
-    input.backgroundColor = [UIColor secondarySystemBackgroundColor];
-    input.layer.cornerRadius = 10;
-    input.text = @"在此输入要解密的内容…";
-    [page addSubview:input];
-    objc_setAssociatedObject(page, "input", input, OBJC_ASSOCIATION_RETAIN);
-    // 密钥
-    UITextField *key = [[UITextField alloc] initWithFrame:CGRectMake(12, 136, g_mfCardW - 24, 36)];
-    key.borderStyle = UITextBorderStyleRoundedRect;
-    key.placeholder = @"密钥 (Key, Hex 或 Base64)";
-    key.font = [UIFont systemFontOfSize:13];
-    [page addSubview:key];
-    objc_setAssociatedObject(page, "key", key, OBJC_ASSOCIATION_RETAIN);
-    // IV
-    UITextField *iv = [[UITextField alloc] initWithFrame:CGRectMake(12, 178, g_mfCardW - 24, 36)];
-    iv.borderStyle = UITextBorderStyleRoundedRect;
-    iv.placeholder = @"IV (可选, Hex 或 Base64)";
-    iv.font = [UIFont systemFontOfSize:13];
-    [page addSubview:iv];
-    objc_setAssociatedObject(page, "iv", iv, OBJC_ASSOCIATION_RETAIN);
-    // 算法选择
-    UISegmentedControl *algo = [[UISegmentedControl alloc] initWithItems:@[@"AES-CBC", @"AES-ECB", @"Base64", @"Hex"]];
-    algo.frame = CGRectMake(12, 222, g_mfCardW - 24, 32);
-    algo.selectedSegmentIndex = 0;
-    [page addSubview:algo];
-    objc_setAssociatedObject(page, "algo", algo, OBJC_ASSOCIATION_RETAIN);
-    // 加密/解密按钮
-    UIButton *decBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    decBtn.frame = CGRectMake(12, 262, (g_mfCardW - 24 - 8) / 2, 38);
-    decBtn.backgroundColor = [UIColor systemBlueColor];
-    decBtn.layer.cornerRadius = 10;
-    [decBtn setTitle:@"解密" forState:UIControlStateNormal];
-    [decBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    objc_setAssociatedObject(decBtn, "mode", @(0), OBJC_ASSOCIATION_RETAIN);
-    [decBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfCryptoRun:") forControlEvents:UIControlEventTouchUpInside];
-    [page addSubview:decBtn];
-    
-    UIButton *encBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    encBtn.frame = CGRectMake(12 + (g_mfCardW - 24 - 8) / 2 + 8, 262, (g_mfCardW - 24 - 8) / 2, 38);
-    encBtn.backgroundColor = [UIColor systemGreenColor];
-    encBtn.layer.cornerRadius = 10;
-    [encBtn setTitle:@"加密" forState:UIControlStateNormal];
-    [encBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    objc_setAssociatedObject(encBtn, "mode", @(1), OBJC_ASSOCIATION_RETAIN);
-    [encBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfCryptoRun:") forControlEvents:UIControlEventTouchUpInside];
-    [page addSubview:encBtn];
-    // 输出
-    UITextView *output = [[UITextView alloc] initWithFrame:CGRectMake(12, 308, g_mfCardW - 24, 80)];
-    output.font = [UIFont systemFontOfSize:13];
-    output.backgroundColor = [UIColor secondarySystemBackgroundColor];
-    output.layer.cornerRadius = 10;
-    output.editable = NO;
-    [page addSubview:output];
-    objc_setAssociatedObject(page, "output", output, OBJC_ASSOCIATION_RETAIN);
-    mfPushPage(page);
-}
+// 解密工具箱 v2 已迁移至 MFCryptoToolbox.m
 
 // ====== 规则编辑页（新建/编辑共用） ======
 // index<0 新建；>=0 编辑 g_rewriteRules[index]
