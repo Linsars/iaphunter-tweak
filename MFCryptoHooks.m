@@ -79,7 +79,7 @@ static void (*o_CCHmac)(CCHmacAlgorithm, const void *, size_t, const void *, siz
 
 static NSString *mfAlgName(CCAlgorithm alg, CCMode mode) {
     NSString *a = alg == kCCAlgorithmAES ? @"AES" : alg == kCCAlgorithm3DES ? @"3DES" : alg == kCCAlgorithmDES ? @"DES" : alg == kCCAlgorithmRC4 ? @"RC4" : alg == kCCAlgorithmCAST ? @"CAST" : alg == kCCAlgorithmBlowfish ? @"Blowfish" : [NSString stringWithFormat:@"alg%d", alg];
-    NSString *m = mode == kCCModeECB ? @"ECB" : mode == kCCModeCBC ? @"CBC" : mode == kCCModeCFB ? @"CFB" : mode == kCCModeCTR ? @"CTR" : mode == kCCModeGCM ? @"GCM" : @"";
+    NSString *m = mode == kCCModeECB ? @"ECB" : mode == kCCModeCBC ? @"CBC" : mode == kCCModeCFB ? @"CFB" : mode == kCCModeCTR ? @"CTR" : @"";
     return m.length ? [NSString stringWithFormat:@"%@-%@", a, m] : a;
 }
 
@@ -95,7 +95,7 @@ static CCCryptorStatus my_CCCrypt(CCOperation op, CCAlgorithm alg, CCOptions opt
         MFCryptoRecord *r = [MFCryptoRecord new];
         r.kind = mfAlgName(alg, opts & kCCOptionECBMode ? kCCModeECB : kCCModeCBC);
         r.dir = op == kCCEncrypt ? @"加密" : @"解密";
-        r.keyHex = mfHex((__bridge NSData *)[[NSData alloc] initWithBytes:key length:keyLen], 32);
+        r.keyHex = mfHex([[NSData alloc] initWithBytes:key length:keyLen], 32);
         r.ivHex = iv ? mfHex([[NSData alloc] initWithBytes:iv length:MIN(keyLen == 24 ? 8 : 16, (NSUInteger)16)], 16) : @"(无)";
         r.input = [[NSData alloc] initWithBytes:dataIn length:dataInLen];
         if (dataOutMoved && *dataOutMoved > 0) r.output = [[NSData alloc] initWithBytes:dataOut length:*dataOutMoved];
