@@ -920,7 +920,7 @@ void mfShowProductPage(void) {
     if (vc) [vc presentViewController:alert animated:YES completion:nil];
 }
 
-// 保存规则（编辑页）
+// 保存规则（旧版编辑页，兼容保留）
 - (void)mfSaveRuleTapped:(UIButton *)btn {
     UISegmentedControl *matchSeg = objc_getAssociatedObject(btn, "seg");
     UISegmentedControl *actSeg = objc_getAssociatedObject(btn, "seg2");
@@ -954,15 +954,66 @@ void mfShowProductPage(void) {
         r.appBundle = mfCurrentBundleId();
     }
     mfSaveRule(r, index);
-    // 保存后返回并刷新列表
-    mfPopPage();               // 弹掉编辑页
-    if (fromList) {
-        mfPopPage();           // 弹掉列表页
-        mfShowNetworkModifyPage();
-    }
+    mfPopPage();
+    if (fromList) { mfPopPage(); mfShowNetworkModifyPage(); }
 }
 
-// 添加规则（列表页）——走完整编辑页
+// 保存规则（新版增强编辑页：四象限 + direction + reject）
+- (void)mfSaveRuleFromEditor:(UIButton *)btn {
+    UISegmentedControl *matchSeg = objc_getAssociatedObject(btn, "seg");
+    UISegmentedControl *dirSeg = objc_getAssociatedObject(btn, "seg2");
+    UISwitch *rejectSw = objc_getAssociatedObject(btn, "rsw");
+    UITextField *patField = objc_getAssociatedObject(btn, "f1");
+    UITextField *nameField = objc_getAssociatedObject(btn, "f2");
+    UITextView *reqHView = objc_getAssociatedObject(btn, "tv1");
+    UITextView *respHView = objc_getAssociatedObject(btn, "tv2");
+    UITextView *reqBView = objc_getAssociatedObject(btn, "tv3");
+    UITextView *respBView = objc_getAssociatedObject(btn, "tv4");
+    NSInteger index = [objc_getAssociatedObject(btn, "idx") integerValue];
+    BOOL fromList = [objc_getAssociatedObject(btn, "fromList") boolValue];
+
+    NSString *pattern = [patField.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (pattern.length == 0) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"提示" message:@"请填写匹配的 URL" preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
+        [g_mfPanelRootVC presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+    NSString *matchType = matchSeg.selectedSegmentIndex == 1 ? @"url" : (matchSeg.selectedSegmentIndex == 2 ? @"regex" : @"contain");
+    NSString *direction = dirSeg.selectedSegmentIndex == 1 ? @"request" : (dirSeg.selectedSegmentIndex == 2 ? @"response" : @"");
+    BOOL reject = rejectSw.on;
+
+    // 解析 JSON Headers（失败回退空字典）
+    NSDictionary *reqH = @{}, *respH = @{};
+    @try { reqH = [NSJSONSerialization JSONObjectWithData:[reqHView.text dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil]; } @catch (...) {}
+    @try { respH = [NSJSONSerialization JSONObjectWithData:[respHView.text dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil]; } @catch (...) {}
+
+    MFRewriteRule *r = [MFRewriteRule new];
+    r.pattern = pattern;
+    r.matchType = matchType;
+    r.action = reject ? @"block" : @"replaceResp";  // legacy 兼容
+    r.urlReplace = @"";
+    r.bodyReplace = respBView.text ?: @"";
+    r.headerReplaces = @{};
+    r.enabled = YES;
+    r.direction = direction;
+    r.reject = reject;
+    r.name = nameField.text ?: @"";
+    r.reqHeaders = reqH;
+    r.respHeaders = respH;
+    r.reqBody = reqBView.text ?: @"";
+    r.respBody = respBView.text ?: @"";
+    if (index >= 0 && index < (NSInteger)g_rewriteRules.count) {
+        r.appBundle = ((MFRewriteRule *)g_rewriteRules[index]).appBundle;
+    } else {
+        r.appBundle = mfCurrentBundleId();
+    }
+    mfSaveRule(r, index);
+    mfPopPage();
+    if (fromList) { mfPopPage(); mfShowNetworkModifyPage(); }
+}
+
+// 添加规则（列表页）——走增强编辑页
 - (void)mfAddRuleTapped {
     mfShowRuleEditPage(nil, @"replaceResp", -1, YES);
 }

@@ -93,11 +93,18 @@ void mfShowCaptureDetailPage(MFNetRecord *rec);
 @interface MFRewriteRule : NSObject
 @property (copy) NSString *pattern;
 @property (copy) NSString *matchType;    // url / regex / contain
-@property (copy) NSString *action;       // block / replaceReq / replaceResp
+@property (copy) NSString *action;       // block / replaceReq / replaceResp  (legacy)
 @property (copy) NSString *urlReplace;
-@property (copy) NSString *bodyReplace;
-@property (copy) NSDictionary *headerReplaces;
-@property BOOL enabled;
+@property (copy) NSString *bodyReplace;  // legacy
+@property (copy) NSDictionary *headerReplaces; // legacy
+@property (copy) NSString *direction;    // request / response / nil(双向)
+@property (assign) BOOL reject;          // 屏蔽/拒绝（替代旧 block）
+@property (copy) NSString *name;         // 规则备注
+@property (copy) NSDictionary *reqHeaders;
+@property (copy) NSDictionary *respHeaders;
+@property (copy) NSString *reqBody;
+@property (copy) NSString *respBody;
+@property (assign) BOOL enabled;
 @property (copy) NSString *appBundle;
 - (NSDictionary *)toDict;
 + (instancetype)fromDict:(NSDictionary *)d;
