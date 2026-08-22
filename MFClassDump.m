@@ -616,6 +616,17 @@ void mfShowClassDumpPage(void) {
     [browseBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfCDBrowserOpen:") forControlEvents:UIControlEventTouchUpInside];
     [page addSubview:browseBtn];
 
+    // 历史记录（v1.9.3：zip 持久化管理，免重复 dump 积压垃圾）
+    UIButton *histBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    histBtn.frame = CGRectMake(16, 344, gw, 44);
+    histBtn.backgroundColor = [UIColor systemOrangeColor];
+    histBtn.layer.cornerRadius = 10;
+    histBtn.tintColor = UIColor.whiteColor;
+    histBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
+    [histBtn setTitle:@"📚 历史 dump 管理" forState:UIControlStateNormal];
+    [histBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfShowCDHistoryPage") forControlEvents:UIControlEventTouchUpInside];
+    [page addSubview:histBtn];
+
     objc_setAssociatedObject(btn, "trio", @[pv, lb, exportBtn, browseBtn], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
     [btn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfClassDumpStart:") forControlEvents:UIControlEventTouchUpInside];
@@ -754,6 +765,24 @@ NSData *mfZipReadEntry(NSString *path, const MFZipEnt *e) {
     [tv deselectRowAtIndexPath:ip animated:YES];
     mfShowCDFilePage(self.zipPath, self.viewNames[ip.row]);
 }
+// 左滑「监控」——类名预填进方法监控页（v1.9.3，免手输）
+- (UISwipeActionsConfiguration *)tableView:(UITableView *)tv trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)ip {
+    NSString *entry = self.viewNames[ip.row];
+    __block NSString *cls = entry.lastPathComponent;
+    BOOL isSwift = [entry hasPrefix:@"swift/"];
+    UIContextualAction *trace = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleNormal
+        title:@"🔍 监控" handler:^(UIContextualAction *a, UIView *v, void (^done)(BOOL)) {
+            if (!isSwift) {
+                cls = [cls stringByDeletingPathExtension];
+                mfTraceSetPrefill(cls);
+            }
+            mfToast(isSwift ? @"⚠️ Swift 条目无法直接转 ObjC 监控" : [NSString stringWithFormat:@"🔍 已预填 %@", cls]);
+            if (!isSwift) mfShowMethodTracePage();
+            done(YES);
+        }];
+    trace.backgroundColor = [UIColor systemPurpleColor];
+    return [UISwipeActionsConfiguration configurationWithActions:@[trace]];
+}
 - (void)searchBar:(UISearchBar *)sb textDidChange:(NSString *)text { [self applyFilter:text]; }
 - (void)searchBarSearchButtonClicked:(UISearchBar *)sb { [sb resignFirstResponder]; }
 @end
@@ -790,6 +819,106 @@ void mfShowCDBrowserPage(NSString *zipPath) {
     [page addSubview:tb];
     mfPushPage(page);
     [ctl loadIndex];
+}
+
+// ====== 历史 dump 管理（v1.9.3：列表/浏览/删除） ======
+@interface MFCDHistoryList : NSObject <UITableViewDataSource, UITableViewDelegate>
+@property (copy) NSArray<NSDictionary *> *items; // @{path, name, sizeStr, dateStr}
+@end
+@implementation MFCDHistoryList
+- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s { return (NSInteger)self.items.count; }
+- (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
+    static NSString *id_ = @"mfcdhist";
+    UITableViewCell *c = [tv dequeueReusableCellWithIdentifier:id_];
+    if (!c) c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:id_];
+    NSDictionary *it = self.items[ip.row];
+    c.textLabel.text = it[@"name"];
+    c.textLabel.font = [UIFont systemFontOfSize:12];
+    c.detailTextLabel.text = [NSString stringWithFormat:@"%@ · %@", it[@"sizeStr"], it[@"dateStr"]];
+    c.detailTextLabel.font = [UIFont systemFontOfSize:10];
+    c.detailTextLabel.textColor = [UIColor secondaryLabelColor];
+    c.backgroundColor = UIColor.clearColor;
+    return c;
+}
+- (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
+    [tv deselectRowAtIndexPath:ip animated:YES];
+    mfShowCDBrowserPage(self.items[ip.row][@"path"]);
+}
+- (UISwipeActionsConfiguration *)tableView:(UITableView *)tv trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)ip {
+    NSDictionary *it = self.items[ip.row];
+    __weak typeof(self) ws = self;
+    UIContextualAction *del = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleDestructive
+        title:@"🗑 删除" handler:^(UIContextualAction *a, UIView *v, void (^done)(BOOL)) {
+            NSError *err = nil;
+            [[NSFileManager defaultManager] removeItemAtPath:it[@"path"] error:&err];
+            mfToast(err ? @"⚠️ 删除失败" : @"🗑️ 已删除");
+            NSMutableArray *arr = [ws.items mutableCopy];
+            [arr removeObjectAtIndex:ip.row];
+            ws.items = arr;
+            [tv deleteRowsAtIndexPaths:@[ip] withRowAnimation:UITableViewRowAnimationAutomatic];
+            done(YES);
+        }];
+    return [UISwipeActionsConfiguration configurationWithActions:@[del]];
+}
+@end
+
+static NSArray<NSDictionary *> *mfCDScanHistory(void) {
+    NSString *dir = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0]
+                        stringByAppendingPathComponent:@"classdump"];
+    NSArray *files = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:dir error:nil];
+    NSMutableArray<NSDictionary *> *out = [NSMutableArray new];
+    NSDateFormatter *df = [NSDateFormatter new];
+    df.dateFormat = @"MM-dd HH:mm";
+    for (NSString *f in files) {
+        if (![f.pathExtension isEqualToString:@"zip"]) continue;
+        NSString *p = [dir stringByAppendingPathComponent:f];
+        NSDictionary *at = [[NSFileManager defaultManager] attributesOfItemAtPath:p error:nil];
+        unsigned long long sz = at.fileSize;
+        NSString *szs = sz > 1048576 ? [NSString stringWithFormat:@"%.1f MB", sz / 1048576.0] : [NSString stringWithFormat:@"%llu KB", sz / 1024];
+        NSDate *mt = at.fileModificationDate ?: [NSDate distantPast];
+        [out addObject:@{@"path": p, @"name": f, @"sizeStr": szs, @"dateStr": [df stringFromDate:mt], @"mtime": @(mt.timeIntervalSince1970)}];
+    }
+    [out sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+        return [b[@"mtime"] compare:a[@"mtime"]]; // 新的在前
+    }];
+    return out;
+}
+
+void mfShowCDHistoryPage(void) {
+    mfExpandCardForPage();
+    UIView *page = mfMakePage(@"📚 历史 dump", YES);
+    CGFloat w = g_mfCardW;
+
+    UILabel *status = [[UILabel alloc] initWithFrame:CGRectMake(16, 44, w - 32, 18)];
+    status.font = [UIFont systemFontOfSize:11];
+    status.textColor = [UIColor secondaryLabelColor];
+    [page addSubview:status];
+
+    MFCDHistoryList *ds = [MFCDHistoryList new];
+    ds.items = mfCDScanHistory();
+    unsigned long long total = 0;
+    for (NSDictionary *it in ds.items) total += [[[NSFileManager defaultManager] attributesOfItemAtPath:it[@"path"] error:nil] fileSize];
+    status.text = [NSString stringWithFormat:@"%lu 个 zip · 共 %.1f MB · 点击浏览 / 左滑删除",
+        (unsigned long)ds.items.count, total / 1048576.0];
+
+    UITableView *tb = [[UITableView alloc] initWithFrame:CGRectMake(0, 66, w, g_mfCardH - 66) style:UITableViewStylePlain];
+    tb.backgroundColor = UIColor.clearColor;
+    tb.rowHeight = 56;
+    tb.dataSource = ds; tb.delegate = ds;
+    objc_setAssociatedObject(page, "hists", ds, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [page addSubview:tb];
+
+    if (!ds.items.count) {
+        UILabel *e = [[UILabel alloc] initWithFrame:CGRectMake(16, 120, w - 32, 60)];
+        e.text = @"暂无历史记录\n先执行一次 ClassDump";
+        e.textAlignment = NSTextAlignmentCenter;
+        e.numberOfLines = 2;
+        e.textColor = [UIColor tertiaryLabelColor];
+        e.font = [UIFont systemFontOfSize:13];
+        [page addSubview:e];
+    }
+
+    mfPushPage(page);
 }
 
 // ====== 详情页（对标 ETextVC：全文查看 + 文内搜索 + 复制 + 分享） ======

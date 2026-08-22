@@ -166,6 +166,9 @@ static UIButton *g_traceToggleBtn = nil;
 static NSTimer *g_traceTimer = nil;
 static UITextField *g_traceClsField = nil;
 static UITextField *g_traceFilterField = nil;
+static NSString *g_tracePrefillCls = nil;
+
+void mfTraceSetPrefill(NSString *cls) { g_tracePrefillCls = [cls copy]; }
 
 void mfTraceRefreshUI(void) {
     if (!g_traceTV) return;
@@ -224,6 +227,7 @@ void mfShowMethodTracePage(void) {
     g_traceClsField.borderStyle = UITextBorderStyleRoundedRect;
     g_traceClsField.autocapitalizationType = UITextAutocapitalizationTypeNone;
     g_traceClsField.autocorrectionType = UITextAutocorrectionTypeNo;
+    if (g_tracePrefillCls) { g_traceClsField.text = g_tracePrefillCls; g_tracePrefillCls = nil; }
     [page addSubview:g_traceClsField];
 
     UILabel *lb2 = [[UILabel alloc] initWithFrame:CGRectMake(16, 110, cw, 20)];

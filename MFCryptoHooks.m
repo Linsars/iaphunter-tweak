@@ -195,30 +195,117 @@ static CCCryptorStatus my_CCCryptorCreateWithMode(CCOperation op, CCMode mode, C
     return st;
 }
 
-#pragma mark - 安装
+#pragma mark - 安装（mini-fishhook GOT 重绑，零外部依赖）
+
+// App 对系统 C 函数(CCCrypt 等)的调用全部经 __DATA/__DATA_CONST 符号指针槽位，
+// 改槽位即 hook——不依赖 MSHookFunction/ellekit 符号导出。
+// v1.9.3 修复根因：dlsym(RTLD_DEFAULT,"MSHookFunction") 在 ellekit rootless 下搜不到，捕获从未生效。
+
+#include <mach-o/dyld.h>
+#include <mach-o/loader.h>
+#include <mach/mach.h>
+
+// 自定义结构体——<mach-o/dyld.h> 与 modules 的 nlist_64 冲突是老坑，全部手写
+typedef struct { uint32_t n_strx; uint8_t n_type; uint8_t n_sect; uint16_t n_desc; uint64_t n_value; } mfnl;
+typedef struct { uint32_t cmd, cmdsize; } mflc;
+typedef struct { uint32_t cmd, cmdsize; char segname[16]; uint64_t vmaddr, vmsize, fileoff, filesize; uint32_t maxprot, initprot, nsects, flags; } mfseg;
+typedef struct { char sectname[16], segname[16]; uint64_t addr, size; uint32_t offset, align, reloff, nreloc, flags, reserved1, reserved2, reserved3; } mfsect;
+typedef struct { mflc lc; uint32_t symoff, nsyms, stroff, strsize; } mfsymcmd;
+typedef struct { mflc lc; uint32_t ilocalsym, nlocalsym, iextdefsym, nextdefsym, iundefsym, nundefsym, tocoff, ntoc, modtaboff, nmodtab, extrefsymoff, nextrefsyms, indirectsymoff, nindirectsyms, extreloff, nextrel, locreloff, nlocrel; } mfdysym;
+
+#define MF_IND_ABS  0x40000000u
+#define MF_IND_LOC  0x80000000u
+
+typedef struct { const char *name; void *repl; void **orig; } MFRebindEnt;
+
+static void mfFishhookApply(MFRebindEnt *ents, int cnt) {
+    int bound = 0;
+    uint32_t ic = _dyld_image_count();
+    for (uint32_t img = 0; img < ic; img++) {
+        @autoreleasepool {
+            const struct mach_header_64 *mh = (const struct mach_header_64 *)_dyld_get_image_header(img);
+            if (!mh || mh->magic != MH_MAGIC_64) continue;
+            intptr_t slide = _dyld_get_image_vmaddr_slide(img);
+            const mfseg *linkedit = NULL;
+            const mfsymcmd *sc = NULL;
+            const mfdysym *dsc = NULL;
+            const uint8_t *p = (const uint8_t *)(mh + 1);
+            const uint8_t *end = p + mh->sizeofcmds;
+            while (p + sizeof(mflc) <= end) {
+                const mflc *lc = (const mflc *)p;
+                if (lc->cmdsize < sizeof(mflc) || p + lc->cmdsize > end) break;
+                if (lc->cmd == LC_SEGMENT_64 && !strcmp(((const mfseg *)p)->segname, "__LINKEDIT")) linkedit = (const mfseg *)p;
+                else if (lc->cmd == LC_SYMTAB) sc = (const mfsymcmd *)p;
+                else if (lc->cmd == LC_DYSYMTAB) dsc = (const mfdysym *)p;
+                p += lc->cmdsize;
+            }
+            if (!linkedit || !sc || !dsc || !dsc->indirectsymoff || !sc->nsyms) continue;
+            uintptr_t lebase = (uintptr_t)linkedit->vmaddr - linkedit->fileoff + slide;
+            const mfnl *syms = (const mfnl *)(lebase + sc->symoff);
+            const char *strs = (const char *)(lebase + sc->stroff);
+            const uint32_t *inds = (const uint32_t *)(lebase + dsc->indirectsymoff);
+
+            // 第二遍：__DATA / __DATA_CONST 的符号指针段
+            p = (const uint8_t *)(mh + 1);
+            while (p + sizeof(mflc) <= end) {
+                const mflc *lc = (const mflc *)p;
+                if (lc->cmdsize < sizeof(mflc) || p + lc->cmdsize > end) break;
+                if (lc->cmd == LC_SEGMENT_64) {
+                    const mfseg *sg = (const mfseg *)p;
+                    if (!strcmp(sg->segname, "__DATA") || !strcmp(sg->segname, "__DATA_CONST")) {
+                        BOOL unprotected = NO;
+                        const mfsect *sec = (const mfsect *)(sg + 1);
+                        for (uint32_t s2 = 0; s2 < sg->nsects; s2++) {
+                            const mfsect *sct = &sec[s2];
+                            uint32_t type = sct->flags & 0x7;
+                            if (type != S_NON_LAZY_SYMBOL_POINTERS && type != S_LAZY_SYMBOL_POINTERS) continue;
+                            if (!unprotected && sg->segname[6] == '_' /* __DATA_CONST */) {
+                                unprotected = YES;
+                                mach_vm_protect(mach_task_self(), (mach_vm_address_t)(sct->addr + slide), sct->size, 0, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
+                            }
+                            const uint32_t *ind = inds + sct->reserved1;
+                            void **slot = (void **)(sct->addr + slide);
+                            for (uint32_t j = 0; j < sct->size / sizeof(void *); j++) {
+                                uint32_t si = ind[j];
+                                if (si == MF_IND_ABS || si == MF_IND_LOC || si >= sc->nsyms) continue;
+                                const char *nm = strs + syms[si].n_strx;
+                                for (int e = 0; e < cnt; e++) {
+                                    if (strcmp(nm, ents[e].name)) continue;
+                                    if (*ents[e].orig == NULL) *ents[e].orig = slot[j]; // 首个命中记录原函数
+                                    slot[j] = ents[e].repl;                             // 所有命中槽位都换
+                                    bound++;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                p += lc->cmdsize;
+            }
+        }
+    }
+    mfLog(@"[crypto] GOT rebind: %d slots", bound);
+}
 
 void mfInstallCryptoHooks(void) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         g_streamMap = [NSMutableDictionary new];
-        void (*hook)(void *, void *, void **) = (void (*)(void *, void *, void **))dlsym(RTLD_DEFAULT, "MSHookFunction");
-        if (!hook) { mfLog(@"[crypto] MSHookFunction 不可用（ellekit 未注入？），解密捕获禁用"); return; }
-
-        void *f;
-        f = dlsym(RTLD_DEFAULT, "CCCrypt");
-        if (f) { hook(f, (void *)my_CCCrypt, (void **)&o_CCCrypt); }
-        f = dlsym(RTLD_DEFAULT, "CCCryptorCreateWithMode");
-        if (f) { hook(f, (void *)my_CCCryptorCreateWithMode, (void **)&o_CCCryptorCreateWithMode); }
-        f = dlsym(RTLD_DEFAULT, "CCCryptorCreate");
-        if (f) { hook(f, (void *)my_CCCryptorCreate, (void **)&o_CCCryptorCreate); }
-        f = dlsym(RTLD_DEFAULT, "CCCryptorUpdate");
-        if (f) { hook(f, (void *)my_CCCryptorUpdate, (void **)&o_CCCryptorUpdate); }
-        f = dlsym(RTLD_DEFAULT, "CCCryptorFinal");
-        if (f) { hook(f, (void *)my_CCCryptorFinal, (void **)&o_CCCryptorFinal); }
-        f = dlsym(RTLD_DEFAULT, "CCHmac");
-        if (f) { hook(f, (void *)my_CCHmac, (void **)&o_CCHmac); }
+        MFRebindEnt ents[] = {
+            {"CCCrypt",               (void *)my_CCCrypt,                  (void **)&o_CCCrypt},
+            {"CCCryptorCreate",       (void *)my_CCCryptorCreate,          (void **)&o_CCCryptorCreate},
+            {"CCCryptorCreateWithMode",(void *)my_CCCryptorCreateWithMode, (void **)&o_CCCryptorCreateWithMode},
+            {"CCCryptorUpdate",       (void *)my_CCCryptorUpdate,          (void **)&o_CCCryptorUpdate},
+            {"CCCryptorFinal",        (void *)my_CCCryptorFinal,           (void **)&o_CCCryptorFinal},
+            {"CCHmac",                (void *)my_CCHmac,                   (void **)&o_CCHmac},
+        };
+        o_CCCrypt = o_CCCryptorCreate = o_CCCryptorCreateWithMode = NULL;
+        o_CCCryptorUpdate = o_CCCryptorFinal = o_CCHmac = NULL;
+        mfFishhookApply(ents, 6);
+        int ok = (o_CCCrypt?1:0)+(o_CCCryptorCreate?1:0)+(o_CCCryptorCreateWithMode?1:0)
+               + (o_CCCryptorUpdate?1:0)+(o_CCCryptorFinal?1:0)+(o_CCHmac?1:0);
+        mfLog(@"[crypto] hooks installed: %d/6 symbols resolved", ok);
         g_cryptoHookInstalled = YES;
-        mfLog(@"[crypto] hooks installed (MSHookFunction via ellekit)");
     });
 }
 

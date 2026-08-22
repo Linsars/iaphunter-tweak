@@ -171,7 +171,18 @@ void mfShowNetAnalyzerPage(void) {
     [ruleBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfShowRuleManagerPage") forControlEvents:UIControlEventTouchUpInside];
     [page addSubview:ruleBtn];
 
-    CGFloat y = 186;
+    // 解密捕获入口（v1.9.3 自数据分析迁入——抓包场景同源）
+    UIButton *decBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    decBtn.frame = CGRectMake(16, 184, gw, 42);
+    decBtn.backgroundColor = [UIColor systemPurpleColor];
+    decBtn.layer.cornerRadius = 10;
+    decBtn.tintColor = UIColor.whiteColor;
+    decBtn.titleLabel.font = [UIFont boldSystemFontOfSize:13];
+    [decBtn setTitle:@"🔓 解密捕获（CCCrypt/HMAC）" forState:UIControlStateNormal];
+    [decBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfShowCryptoCapturePage") forControlEvents:UIControlEventTouchUpInside];
+    [page addSubview:decBtn];
+
+    CGFloat y = 236;
     for (NSArray *it in mfNetItems) {
         UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
         b.frame = CGRectMake(16, y, gw, 44);

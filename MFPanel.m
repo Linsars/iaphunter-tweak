@@ -651,6 +651,7 @@ void mfShowProductPage(void) {
 - (void)mfCryptoSwitchChanged:(UISwitch *)sw { mfCryptoCapSwitchChanged(sw); }
 - (void)mfCryptoClearTapped { mfCryptoClearTapped(); }
 - (void)mfShowMethodTracePage { mfShowMethodTracePage(); }
+- (void)mfShowCDHistoryPage { mfShowCDHistoryPage(); }
 - (void)mfTraceToggleTapped { mfTraceToggleTapped(); }
 - (void)mfTraceClearTapped { mfTraceClearTapped(); }
 - (void)mfNetRun:(UIButton *)btn {
@@ -1381,7 +1382,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define MINISFIX_VERSION @"1.9.2"
+#define MINISFIX_VERSION @"1.9.3"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {

@@ -126,6 +126,7 @@ typedef struct { uint32_t localOff; uint32_t csize; uint32_t usize; uint16_t met
 NSDictionary *mfZipBuildIndex(NSString *path);                 // @{name: NSValue(MFZipEnt)}
 NSData *mfZipReadEntry(NSString *path, const MFZipEnt *e);     // 按需解压单条目
 void mfShowCDBrowserPage(NSString *zipPath);                   // 文件列表 + 搜索
+void mfShowCDHistoryPage(void);                                // 历史 dump 管理（浏览/删除）
 void mfShowCDFilePage(NSString *zipPath, NSString *entry);     // 单文件查看 + 文内搜索
 
 // ====== 诊断（MFDiagnostics.m） ======
@@ -155,6 +156,7 @@ void mfInstallCryptoHooks(void);             // 首次开启时安装 CCCrypt/HM
 
 // ====== T1 方法监控（MFMethodTrace.m） ======
 void mfShowMethodTracePage(void);
+void mfTraceSetPrefill(NSString *cls);                         // 左滑头文件预填类名
 BOOL mfTraceStart(NSString *className, NSString **errOut);
 void mfTraceStop(void);
 NSArray *mfTraceLines(void);
