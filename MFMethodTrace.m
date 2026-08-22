@@ -42,9 +42,10 @@ static NSString *mfNow(void) { return [_g_traceDF() stringFromDate:[NSDate date]
 static NSString *mfArgDesc(id a) {
     if (!a) return @"nil";
     if ([a isKindOfClass:NSString.class]) {
-        return a.length > 40 ? [[(NSString *)a substringToIndex:40] stringByAppendingString:@"…"] : a;
+        NSString *s = (NSString *)a;
+        return s.length > 40 ? [[s substringToIndex:40] stringByAppendingString:@"…"] : s;
     }
-    if ([a isKindOfClass:NSNumber.class]) return [a stringValue];
+    if ([a isKindOfClass:NSNumber.class]) return [(NSNumber *)a stringValue];
     return [NSString stringWithFormat:@"<%@ %p>", NSStringFromClass(a.class), a];
 }
 
