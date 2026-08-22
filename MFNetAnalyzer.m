@@ -13,7 +13,6 @@
 #include <net/if.h>
 #include <netinet/in.h>
 #include <sys/sysctl.h>
-#include <resolv.h>
 
 NSString *mfNetScanHTTP(void);
 NSString *mfNetScanCurl(void);
@@ -63,19 +62,17 @@ NSString *mfNetScanTCP(void) {
 
 NSString *mfNetScanDNS(void) {
     NSMutableString *r = [NSMutableString stringWithString:@"【DNS 解析器】\n"];
-    res_state st = calloc(1, sizeof(struct __res_state));
-    if (res_ninit(st) == 0) {
-        [r appendString:@"  nameserver:\n"];
-        for (int i = 0; i < MAXNS && st->nsaddr_list[i].sin_addr.s_addr; i++) {
-            char ip[INET_ADDRSTRLEN] = "?";
-            inet_ntop(AF_INET, &st->nsaddr_list[i].sin_addr, ip, sizeof(ip));
-            [r appendFormat:@"    · %s\n", ip];
+    // 老 SDK 链不到 res_9_* 符号——改读 /etc/resolv.conf
+    NSString *rc = [NSString stringWithContentsOfFile:@"/etc/resolv.conf" encoding:NSUTF8StringEncoding error:nil];
+    if (rc.length) {
+        [r appendString:@"  resolv.conf:\n"];
+        for (NSString *line in [rc componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]) {
+            if ([line hasPrefix:@"nameserver"] || [line hasPrefix:@"search"])
+                [r appendFormat:@"    %@\n", line];
         }
-        res_nclose(st);
     } else {
-        [r appendString:@"  ⚠️ res_ninit 失败\n"];
+        [r appendString:@"  ⚪️ resolv.conf 不可读（配置由 mDNSResponder 托管）\n"];
     }
-    free(st);
     // 连通性测试
     [r appendString:@"【解析测试】\n"];
     for (NSString *host in @[@"apple.com", @"google.com"]) {
