@@ -59,9 +59,9 @@ void mfShowKeychainManagerPage(void);       // Keychain 主页
 void mfShowKeychainListPageAction(void);    // 查看列表
 void mfCopyKeychainAction(void);            // 导出到剪贴板
 
-// ClassDump（MFClassDump.m）— v1.4.0 数据分析板块
+// ClassDump（MFClassDump.m）— v1.5.0 数据分析板块
 void mfShowClassDumpPage(void);             // ClassDump 页
-void mfClassDumpStartAction(UIProgressView *pv, UILabel *lb, UIButton *btn, UIViewController *hostVC);
+void mfClassDumpStartAction(UIProgressView *pv, UILabel *lb, UIButton *btn, UIView *actionRow);
 void mfShowRestorePromptAction(void);       // 从剪贴板恢复
 void mfShowKeychainDetail(NSDictionary *item); // 详情 (由 MFPanelCtrl 转发)
 

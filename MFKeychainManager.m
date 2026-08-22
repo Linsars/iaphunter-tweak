@@ -17,7 +17,7 @@ extern UIViewController *g_mfPanelRootVC;
 extern void mfLog(NSString *fmt, ...);  // 使用面板统一日志
 
 // ====== 工具函数 ======
-#define MFKEYCHAIN_VERSION @"1.3.0"
+#define MFKEYCHAIN_VERSION @"1.5.0"
 
 static void mfKLog(NSString *fmt, ...) {
     va_list args;

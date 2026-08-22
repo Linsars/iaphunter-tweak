@@ -194,6 +194,18 @@ static void mfZipTime(uint16_t *t, uint16_t *dt) {
     *dt = (uint16_t)(((tmv.tm_year + 1900 - 1980) << 9) | ((tmv.tm_mon + 1) << 5) | tmv.tm_mday);
 }
 
+// RAW deflate（ZIP 要求裸流；compress2 的 zlib 包装会导致解压失败）
+static BOOL mfRawDeflate(const uint8_t *src, uLong srcLen, uint8_t *dst, uLongf *dstLen) {
+    z_stream zs; memset(&zs, 0, sizeof(zs));
+    if (deflateInit2(&zs, Z_BEST_SPEED, Z_DEFLATED, -15, 8, Z_DEFAULT_STRATEGY) != Z_OK) return NO;
+    zs.next_in = (Bytef *)src; zs.avail_in = (uInt)srcLen;
+    zs.next_out = dst; zs.avail_out = (uInt)*dstLen;
+    int rc = deflate(&zs, Z_FINISH);
+    *dstLen = zs.total_out;
+    deflateEnd(&zs);
+    return rc == Z_STREAM_END;
+}
+
 // 流式写单条目到文件句柄，CD 记录进数组（最后统一追加）
 static BOOL mfZipAddStream(NSFileHandle *fh, NSMutableArray *cds, NSString *name, NSData *data,
                            NSMutableData *scratch) {
@@ -201,12 +213,12 @@ static BOOL mfZipAddStream(NSFileHandle *fh, NSMutableArray *cds, NSString *name
         uint16_t mtime, mdate; mfZipTime(&mtime, &mdate);
         uint32_t crc = (uint32_t)crc32(0, data.bytes, (uInt)data.length);
 
-        // deflate 到复用 scratch 缓冲，避免每类 malloc/free 大块
+        // 裸 deflate 到复用 scratch 缓冲
         uLongf bound = compressBound(data.length);
         if (scratch.length < bound) [scratch setLength:bound];
         uLongf csz = scratch.length;
-        int rc = compress2(scratch.mutableBytes, &csz, data.bytes, data.length, Z_BEST_SPEED);
-        BOOL stored = (rc != Z_OK || csz >= data.length);
+        int ok = mfRawDeflate(data.bytes, data.length, scratch.mutableBytes, &csz);
+        BOOL stored = (!ok || csz >= data.length);
         uint16_t method = stored ? 0 : 8;
         uint32_t finalSize = stored ? (uint32_t)data.length : (uint32_t)csz;
 
@@ -402,7 +414,7 @@ static void mfDumpAllSwift(NSFileHandle *fh, NSMutableArray *cds, NSMutableData 
 }
 
 // ====== 主流程（流式落盘：内存峰值 = 单类头文件，防 jetsam） ======
-void mfClassDumpStartAction(UIProgressView *pv, UILabel *lb, UIButton *btn, UIViewController *hostVC) {
+void mfClassDumpStartAction(UIProgressView *pv, UILabel *lb, UIButton *btn, UIView *actionRow) {
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
         unsigned total = 0;
         Class *classes = objc_copyClassList(&total);
@@ -497,22 +509,15 @@ void mfClassDumpStartAction(UIProgressView *pv, UILabel *lb, UIButton *btn, UIVi
 
         dispatch_async(dispatch_get_main_queue(), ^{
             NSString *sw = swiftModules.count ? [NSString stringWithFormat:@"\nSwift 模块：%lu 个", (unsigned long)swiftModules.count] : @"";
-            lb.text = [NSString stringWithFormat:@"✅ 完成：%u 条目 → %@%@", cnt, [finalPath lastPathComponent], sw];
+            NSString *szStr = szAt[NSFileSize] ? [NSString stringWithFormat:@"%.1f MB", [szAt[NSFileSize] doubleValue] / 1048576.0] : @"?";
+            lb.text = [NSString stringWithFormat:@"✅ 完成：%u 条目（%@）%@\n↓ 保存到文件可存到 下载/任意位置", cnt, szStr, sw];
             btn.enabled = YES;
-            UIViewController *presenter = hostVC ?: g_mfPanelRootVC;
-            while (presenter.presentedViewController && presenter.presentedViewController != presenter)
-                presenter = presenter.presentedViewController;
-            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"ClassDump"
-                    message:[NSString stringWithFormat:@"已导出 %u 个条目%@\n\n选择「保存到文件」可存到 下载/任意位置", cnt, sw]
-                    preferredStyle:UIAlertControllerStyleAlert];
-            [alert addAction:[UIAlertAction actionWithTitle:@"保存到文件" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-                UIDocumentPickerViewController *dp =
-                    [[UIDocumentPickerViewController alloc] initWithURL:[NSURL fileURLWithPath:finalPath]
-                                                                 inMode:UIDocumentPickerModeExportToService];
-                [presenter presentViewController:dp animated:YES completion:nil];
-            }]];
-            [alert addAction:[UIAlertAction actionWithTitle:@"关闭" style:UIAlertActionStyleCancel handler:nil]];
-            [presenter presentViewController:alert animated:YES completion:nil];
+            // 内联按钮：路径挂到两个按钮上，亮出操作行
+            if (actionRow.subviews.count >= 2) {
+                objc_setAssociatedObject(actionRow.subviews[0], "path", finalPath, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                objc_setAssociatedObject(actionRow.subviews[1], "path", finalPath, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            }
+            actionRow.hidden = NO;
         });
     });
 }
@@ -527,7 +532,7 @@ void mfShowClassDumpPage(void) {
     info.numberOfLines = 2;
     info.font = [UIFont systemFontOfSize:12];
     info.textColor = [UIColor secondaryLabelColor];
-    info.text = [NSString stringWithFormat:@"%@\n%u 个 ObjC 类待导出", bid, objc_getClassList(NULL, 0)];
+    info.text = [NSString stringWithFormat:@"%@\n%u 个 ObjC 类待导出（含 Swift 类型）", bid, objc_getClassList(NULL, 0)];
     [page addSubview:info];
 
     UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -550,8 +555,34 @@ void mfShowClassDumpPage(void) {
     lb.text = @"ObjC 全类 + Swift 类型 → zip\n输出 Documents/classdump，可保存到文件App";
     [page addSubview:lb];
 
-    UIViewController *hostVC = g_mfPanelRootVC;
-    objc_setAssociatedObject(btn, "trio", @[pv, lb], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    // 完成后的内联操作行：保存到文件 / 分享（替代弹窗）
+    UIView *row = [[UIView alloc] initWithFrame:CGRectMake(16, 240, gw, 44)];
+    row.hidden = YES;
+    UIButton *saveBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    saveBtn.frame = CGRectMake(0, 0, gw / 2 - 6, 44);
+    saveBtn.backgroundColor = [UIColor systemGreenColor];
+    saveBtn.layer.cornerRadius = 10;
+    saveBtn.tintColor = UIColor.whiteColor;
+    saveBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
+    [saveBtn setTitle:@"💾 保存到文件" forState:UIControlStateNormal];
+    [saveBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfClassDumpSave:") forControlEvents:UIControlEventTouchUpInside];
+    [row addSubview:saveBtn];
+    UIButton *shareBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    shareBtn.frame = CGRectMake(gw / 2 + 6, 0, gw / 2 - 6, 44);
+    shareBtn.backgroundColor = [UIColor secondarySystemFillColor];
+    shareBtn.layer.cornerRadius = 10;
+    shareBtn.tintColor = [UIColor labelColor];
+    shareBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
+    [shareBtn setTitle:@"分享" forState:UIControlStateNormal];
+    [shareBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfClassDumpShare:") forControlEvents:UIControlEventTouchUpInside];
+    [row addSubview:shareBtn];
+    [page addSubview:row];
+
+    objc_setAssociatedObject(btn, "trio", @[pv, lb, row], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    // 行内按钮互相找到对方（设置 path 时同步）
+    objc_setAssociatedObject(saveBtn, "peer", shareBtn, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(shareBtn, "peer", saveBtn, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
     [btn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfClassDumpStart:") forControlEvents:UIControlEventTouchUpInside];
 
     mfPushPage(page);

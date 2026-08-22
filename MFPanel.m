@@ -616,9 +616,30 @@ void mfShowProductPage(void) {
 - (void)mfShowClassDumpPage { mfShowClassDumpPage(); }
 - (void)mfClassDumpStart:(UIButton *)btn {
     NSArray *trio = objc_getAssociatedObject(btn, "trio");
-    if (!trio || trio.count < 2) return;
+    if (!trio || trio.count < 3) return;
     btn.enabled = NO;
-    mfClassDumpStartAction(trio[0], trio[1], btn, g_mfPanelRootVC);
+    mfClassDumpStartAction(trio[0], trio[1], btn, trio[2]);
+}
+- (UIViewController *)mfCDTopPresenter {
+    UIViewController *presenter = g_mfPanelRootVC;
+    while (presenter.presentedViewController && presenter.presentedViewController != presenter)
+        presenter = presenter.presentedViewController;
+    return presenter;
+}
+- (void)mfClassDumpSave:(UIButton *)btn {
+    NSString *path = objc_getAssociatedObject(btn, "path");
+    if (!path || ![[NSFileManager defaultManager] fileExistsAtPath:path]) return;
+    UIDocumentPickerViewController *dp =
+        [[UIDocumentPickerViewController alloc] initWithURL:[NSURL fileURLWithPath:path]
+                                                     inMode:UIDocumentPickerModeExportToService];
+    [[self mfCDTopPresenter] presentViewController:dp animated:YES completion:nil];
+}
+- (void)mfClassDumpShare:(UIButton *)btn {
+    NSString *path = objc_getAssociatedObject(btn, "path");
+    if (!path || ![[NSFileManager defaultManager] fileExistsAtPath:path]) return;
+    UIActivityViewController *av = [[UIActivityViewController alloc]
+            initWithActivityItems:@[[NSURL fileURLWithPath:path]] applicationActivities:nil];
+    [[self mfCDTopPresenter] presentViewController:av animated:YES completion:nil];
 }
 - (void)mfShowManualBuyPage { mfShowManualBuyPage(); }
 - (void)mfShowIconPage { mfShowIconPage(); }
