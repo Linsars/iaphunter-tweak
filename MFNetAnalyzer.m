@@ -64,9 +64,9 @@ NSString *mfNetScanDNS(void) {
         int count = 0;
         for (struct addrinfo *ai = res; ai; ai = ai->ai_next) count++;
         if (res) freeaddrinfo(res);
-        [r appendFormat:@"  %@ %-12s → %s (%d 地址)\n",
+        [r appendFormat:@"  %@ %-12s → %@ (%d 地址)\n",
             rc2 == 0 ? @"✅" : @"🔴", host.UTF8String,
-            rc2 == 0 ? @"解析成功" : gai_strerror(rc2), count];
+            rc2 == 0 ? @"解析成功" : [NSString stringWithUTF8String:gai_strerror(rc2)], count];
     }
     return r;
 }
