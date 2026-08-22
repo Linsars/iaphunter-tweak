@@ -620,6 +620,50 @@ void mfShowProductPage(void) {
     btn.enabled = NO;
     mfClassDumpStartAction(trio[0], trio[1], btn, trio[2]);
 }
+// 浏览头文件：列表页（zip 按需解压，不落双份盘）
+- (void)mfCDBrowserOpen:(UIButton *)btn {
+    NSString *path = objc_getAssociatedObject(btn, "path");
+    if (!path || ![[NSFileManager defaultManager] fileExistsAtPath:path]) return;
+    mfShowCDBrowserPage(path);
+}
+// 详情页复制全文（viewer 从 sender associated 取）
+- (void)mfCDFileCopy:(UIButton *)btn {
+    id viewer = objc_getAssociatedObject(btn, "viewer");
+    NSString *content = [viewer valueForKey:@"content"];
+    if (content.length) [UIPasteboard generalPasteboard].string = content;
+}
+// 详情页分享单文件（解压到临时目录 → 分享面板 → 清理）
+- (void)mfCDFileShare:(UIButton *)btn {
+    id viewer = objc_getAssociatedObject(btn, "viewer");
+    NSString *zipPath = [viewer valueForKey:@"zipPath"];
+    NSString *entryName = [viewer valueForKey:@"entryName"];
+    NSDictionary *idx = mfZipBuildIndex(zipPath);
+    NSValue *v = idx[entryName];
+    if (!v) return;
+    MFZipEnt e; [v getValue:&e];
+    NSData *data = mfZipReadEntry(zipPath, &e);
+    if (!data) return;
+    NSString *tmpDir = [NSTemporaryDirectory() stringByAppendingPathComponent:@"mfcd_share"];
+    [[NSFileManager defaultManager] createDirectoryAtPath:tmpDir withIntermediateDirectories:YES attributes:nil error:nil];
+    NSString *tmpFile = [tmpDir stringByAppendingPathComponent:entryName.lastPathComponent];
+    [data writeToFile:tmpFile atomically:YES];
+    UIView *overlay = g_mfPanelOverlay;
+    overlay.hidden = YES; // 面板遮罩会盖住 presentation
+    UIActivityViewController *av = [[UIActivityViewController alloc]
+            initWithActivityItems:@[[NSURL fileURLWithPath:tmpFile]] applicationActivities:nil];
+    av.completionWithItemsHandler = ^(UIActivityType type, BOOL completed, NSArray *items, NSError *error) {
+        overlay.hidden = NO;
+        [[NSFileManager defaultManager] removeItemAtPath:tmpDir error:nil];
+    };
+    UIViewController *presenter = g_mfPanelRootVC;
+    while (presenter.presentedViewController && presenter.presentedViewController != presenter)
+        presenter = presenter.presentedViewController;
+    if (!presenter || !presenter.view.window)
+        for (UIWindow *w in [UIApplication sharedApplication].windows)
+            if (w.isKeyWindow) { presenter = w.rootViewController; break; }
+    if (presenter && presenter.view.window) [presenter presentViewController:av animated:YES completion:nil];
+    else overlay.hidden = NO;
+}
 - (UIViewController *)mfCDTopPresenter {
     UIViewController *presenter = g_mfPanelRootVC;
     while (presenter.presentedViewController && presenter.presentedViewController != presenter)
@@ -1240,7 +1284,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define MINISFIX_VERSION @"1.5.0"
+#define MINISFIX_VERSION @"1.5.3"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {

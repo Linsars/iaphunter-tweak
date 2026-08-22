@@ -110,3 +110,11 @@ void mfDiagnosticCleanupFromSettings(void);
 // ====== Keychain 管理（MFKeychainManager.m） ======
 void mfShowKeychainManagerPage(void);
 void mfCopyICloudRecordIDFromCell(UIViewController *vc, UIView *cell);
+
+// ====== ClassDump 浏览器（MFClassDump.m） ======
+typedef struct { uint32_t localOff; uint32_t csize; uint32_t usize; uint16_t method; } MFZipEnt;
+NSDictionary *mfZipBuildIndex(NSString *path);                 // @{name: NSValue(MFZipEnt)}
+NSData *mfZipReadEntry(NSString *path, const MFZipEnt *e);     // 按需解压单条目
+void mfShowCDBrowserPage(NSString *zipPath);                   // 文件列表 + 搜索
+void mfShowCDFilePage(NSString *zipPath, NSString *entry);     // 单文件查看 + 文内搜索
+

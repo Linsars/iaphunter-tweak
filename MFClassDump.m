@@ -178,6 +178,9 @@ static NSString *mfHeaderForClass(Class cls) {
 // ====== 最小 ZIP writer（deflate via zlib）======
 static void mfPut16(NSMutableData *d, uint16_t v) { [d appendBytes:&v length:2]; }
 static void mfPut32(NSMutableData *d, uint32_t v) { [d appendBytes:&v length:4]; }
+static void mfPut64(NSMutableData *d, uint64_t v) { [d appendBytes:&v length:8]; }
+static uint16_t mfLE16(const uint8_t *p) { return (uint16_t)(p[0] | (p[1] << 8)); }
+static uint32_t mfLE32(const uint8_t *p) { return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24); }
 
 // 中央目录记录：必须用 ObjC 对象持有 name（NSValue+裸结构体会 UAF，v2 闪退根因）
 @interface MFCDRec : NSObject
@@ -264,9 +267,25 @@ static BOOL mfZipFinishStream(NSFileHandle *fh, NSMutableArray *cds) {
         }
         [fh writeData:cd];
         uint32_t cdSize = (uint32_t)cd.length;
+        // ZIP64：条目数超 uint16 时必须补 ZIP64 EOCD，否则严格工具只见 65535 截断后的残缺列表
+        BOOL need64 = cds.count > 0xFFFF || cdOff > 0xFFFFFFFFULL || cdSize > 0xFFFFFFFFULL;
+        if (need64) {
+            uint64_t z64Off = fh.offsetInFile;
+            NSMutableData *z = [NSMutableData dataWithCapacity:56];
+            mfPut32(z, 0x06064b50); mfPut64(z, 44);
+            mfPut16(z, 45); mfPut16(z, 45); mfPut32(z, 0); mfPut32(z, 0);
+            mfPut64(z, cds.count); mfPut64(z, cds.count);
+            mfPut64(z, cdSize); mfPut64(z, cdOff);
+            [fh writeData:z];
+            NSMutableData *loc = [NSMutableData dataWithCapacity:20];
+            mfPut32(loc, 0x07064b50); mfPut32(loc, 0);
+            mfPut64(loc, z64Off); mfPut32(loc, 1);
+            [fh writeData:loc];
+        }
         NSMutableData *eo = [NSMutableData dataWithCapacity:22];
         mfPut32(eo, 0x06054b50); mfPut16(eo, 0); mfPut16(eo, 0);
-        mfPut16(eo, (uint16_t)cds.count); mfPut16(eo, (uint16_t)cds.count);
+        uint16_t eCnt = need64 ? 0xFFFF : (uint16_t)cds.count;
+        mfPut16(eo, eCnt); mfPut16(eo, eCnt);
         mfPut32(eo, cdSize); mfPut32(eo, cdOff); mfPut16(eo, 0);
         [fh writeData:eo];
         return YES;
@@ -512,8 +531,12 @@ void mfClassDumpStartAction(UIProgressView *pv, UILabel *lb, UIButton *btn, UIVi
             NSString *szStr = szAt[NSFileSize] ? [NSString stringWithFormat:@"%.1f MB", [szAt[NSFileSize] doubleValue] / 1048576.0] : @"?";
             lb.text = [NSString stringWithFormat:@"✅ 完成：%u 条目（%@）%@\n↓ 导出可存到 下载/任意位置", cnt, szStr, sw];
             btn.enabled = YES;
-            objc_setAssociatedObject(actionRow, "path", finalPath, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-            actionRow.hidden = NO;
+            // path 挂到导出 + 浏览两个按钮
+            NSArray *trio = objc_getAssociatedObject(btn, "trio");
+            UIButton *exBtn = trio.count > 2 ? trio[2] : nil;
+            UIButton *brBtn = trio.count > 3 ? trio[3] : nil;
+            if (exBtn) { objc_setAssociatedObject(exBtn, "path", finalPath, OBJC_ASSOCIATION_RETAIN_NONATOMIC); exBtn.hidden = NO; }
+            if (brBtn) { objc_setAssociatedObject(brBtn, "path", finalPath, OBJC_ASSOCIATION_RETAIN_NONATOMIC); brBtn.hidden = NO; }
         });
     });
 }
@@ -563,9 +586,318 @@ void mfShowClassDumpPage(void) {
     [exportBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfClassDumpExport:") forControlEvents:UIControlEventTouchUpInside];
     [page addSubview:exportBtn];
 
-    objc_setAssociatedObject(btn, "trio", @[pv, lb, exportBtn], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    UIButton *browseBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    browseBtn.frame = CGRectMake(16, 292, gw, 44);
+    browseBtn.backgroundColor = [UIColor systemIndigoColor];
+    browseBtn.layer.cornerRadius = 10;
+    browseBtn.tintColor = UIColor.whiteColor;
+    browseBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
+    browseBtn.hidden = YES;
+    [browseBtn setTitle:@"📖 浏览头文件" forState:UIControlStateNormal];
+    [browseBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfCDBrowserOpen:") forControlEvents:UIControlEventTouchUpInside];
+    [page addSubview:browseBtn];
+
+    objc_setAssociatedObject(btn, "trio", @[pv, lb, exportBtn, browseBtn], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
     [btn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfClassDumpStart:") forControlEvents:UIControlEventTouchUpInside];
 
     mfPushPage(page);
+}
+
+// ====== ZIP 读取器（浏览头文件：central directory 索引 + 按需 inflate，不落双份盘） ======
+// MFZipEnt 定义在 MFPanel.h（MFPanel.m 的 Ctrl 方法也要用）
+
+// 索引：不信任 EOCD 条目计数（uint16 截断坑），直接扫 [cdOff, cdOff+cdSize) 区间
+NSDictionary *mfZipBuildIndex(NSString *path) {
+    FILE *f = fopen(path.fileSystemRepresentation, "rb");
+    if (!f) return nil;
+    fseek(f, 0, SEEK_END);
+    long fsz = ftell(f);
+    long scan = fsz < 66000 ? fsz : 66000;
+    uint8_t *buf = malloc(scan);
+    if (!buf || fseek(f, fsz - scan, SEEK_SET) != 0 || fread(buf, 1, scan, f) != (size_t)scan) { free(buf); fclose(f); return nil; }
+    long eocd = -1;
+    for (long i = scan - 22; i >= 0; i--)
+        if (buf[i] == 'P' && buf[i+1] == 'K' && buf[i+2] == 5 && buf[i+3] == 6) { eocd = i; break; }
+    if (eocd < 0) { free(buf); fclose(f); return nil; }
+    uint32_t cdSize = mfLE32(buf + eocd + 12), cdOff = mfLE32(buf + eocd + 16);
+    free(buf);
+    if (cdSize == 0 || cdSize > fsz || cdOff >= (unsigned long long)fsz) { fclose(f); return nil; }
+    // 兼容 ZIP64：EOCD 字段为哨兵值时经 locator 找 ZIP64 record 读真实值
+    if (cdOff == 0xFFFFFFFFu || cdSize == 0xFFFFFFFFu) {
+        uint8_t *b2 = malloc(scan);
+        fseek(f, fsz - scan, SEEK_SET);
+        size_t rd = fread(b2, 1, scan, f);
+        long zl = -1;
+        for (long i = eocd - 20; i >= 0 && i < (long)rd - 19; i--)
+            if (b2[i] == 'P' && b2[i+1] == 'K' && b2[i+2] == 6 && b2[i+3] == 7) { zl = i; break; }
+        if (zl >= 0) {
+            uint64_t z64Off = 0;
+            memcpy(&z64Off, b2 + zl + 8, 8);
+            uint8_t zr[56];
+            fseek(f, (long)z64Off, SEEK_SET);
+            if (fread(zr, 1, 56, f) == 56 && !memcmp(zr, "PK\x06\x06", 4)) {
+                memcpy(&cdSize, zr + 40, 8); memcpy(&cdOff, zr + 48, 8);
+            }
+        }
+        free(b2);
+    }
+    uint8_t *cd = malloc(cdSize);
+    if (!cd || fseek(f, (long)cdOff, SEEK_SET) != 0 || fread(cd, 1, cdSize, f) != (size_t)cdSize) { free(cd); fclose(f); return nil; }
+    NSMutableDictionary *idx = [NSMutableDictionary dictionaryWithCapacity:70000];
+    long p = 0;
+    while (p + 46 <= (long)cdSize && !memcmp(cd + p, "PK\x01\x02", 4)) {
+        uint16_t method = mfLE16(cd + p + 10);
+        uint32_t csize = mfLE32(cd + p + 20), usize = mfLE32(cd + p + 24);
+        uint16_t nameLen = mfLE16(cd + p + 28), extraLen = mfLE16(cd + p + 30), commLen = mfLE16(cd + p + 32);
+        uint32_t off = mfLE32(cd + p + 42);
+        NSString *name = [[NSString alloc] initWithBytes:cd + p + 46 length:nameLen encoding:NSUTF8StringEncoding];
+        if (name.length) {
+            MFZipEnt e = { off, csize, usize, method };
+            idx[name] = [NSValue valueWithBytes:&e objCType:@encode(MFZipEnt)];
+        }
+        p += 46 + nameLen + extraLen + commLen;
+    }
+    free(cd); fclose(f);
+    return idx;
+}
+
+NSData *mfZipReadEntry(NSString *path, const MFZipEnt *e) {
+    FILE *f = fopen(path.fileSystemRepresentation, "rb");
+    if (!f) return nil;
+    uint8_t lh[30];
+    if (fseek(f, (long)e->localOff, SEEK_SET) != 0 || fread(lh, 1, 30, f) != 30 || memcmp(lh, "PK\x03\x04", 4)) { fclose(f); return nil; }
+    uint16_t nameLen = mfLE16(lh + 26), extraLen = mfLE16(lh + 28);
+    fseek(f, (long)nameLen + extraLen, SEEK_CUR);
+    uint8_t *cb = malloc(e->csize);
+    if (!cb || fread(cb, 1, e->csize, f) != (size_t)e->csize) { free(cb); fclose(f); return nil; }
+    fclose(f);
+    NSData *comp = [NSData dataWithBytesNoCopy:cb length:e->csize freeWhenDone:YES];
+    if (e->method == 0) return comp; // stored
+    NSMutableData *out = [NSMutableData dataWithLength:e->usize];
+    z_stream zs = {0};
+    if (inflateInit2(&zs, -15) != Z_OK) return nil;
+    zs.next_in = (Bytef *)comp.bytes; zs.avail_in = e->csize;
+    zs.next_out = out.mutableBytes; zs.avail_out = e->usize;
+    int rc = inflate(&zs, Z_FINISH);
+    inflateEnd(&zs);
+    if (rc != Z_STREAM_END) return nil;
+    return out;
+}
+
+// ====== 列表页（对标 EListVC：搜索过滤 + 点击进详情） ======
+@interface MFCDBrowser : NSObject <UITableViewDataSource, UITableViewDelegate, UISearchBarDelegate>
+@property (copy) NSString *zipPath;
+@property (strong) NSMutableArray<NSString *> *allNames;
+@property (copy) NSArray<NSString *> *viewNames;
+@property (strong) UITableView *table;
+@property (strong) UILabel *status;
+@end
+@implementation MFCDBrowser
+- (void)loadIndex {
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSDictionary *idx = mfZipBuildIndex(self.zipPath);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (!idx.count) { self.status.text = @"⚠️ 索引解析失败"; return; }
+            self.allNames = [idx.allKeys sortedArrayUsingSelector:@selector(compare:)].mutableCopy;
+            self.viewNames = self.allNames;
+            self.status.text = [NSString stringWithFormat:@"%lu 个文件", (unsigned long)self.viewNames.count];
+            [self.table reloadData];
+        });
+    });
+}
+- (void)applyFilter:(NSString *)q {
+    NSString *query = [q stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSArray<NSString *> *res = query.length ? [self.allNames filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"SELF CONTAINS[cd] %@", query]] : self.allNames;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self.viewNames = res;
+            self.status.text = [NSString stringWithFormat:@"%lu 个文件", (unsigned long)res.count];
+            [self.table reloadData];
+            if (self.table.numberOfSections > 0 && res.count) [self.table scrollToRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:0] atScrollPosition:UITableViewScrollPositionTop animated:NO];
+        });
+    });
+}
+- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s { return (NSInteger)self.viewNames.count; }
+- (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
+    static NSString *id_ = @"mfcdrow";
+    UITableViewCell *c = [tv dequeueReusableCellWithIdentifier:id_];
+    if (!c) c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:id_];
+    NSString *n = self.viewNames[ip.row];
+    c.textLabel.text = n.lastPathComponent;
+    c.textLabel.font = [UIFont systemFontOfSize:13];
+    c.detailTextLabel.text = [n hasPrefix:@"swift/"] ? @"swift" : n.stringByDeletingLastPathComponent;
+    c.detailTextLabel.font = [UIFont systemFontOfSize:10];
+    c.detailTextLabel.textColor = [UIColor secondaryLabelColor];
+    return c;
+}
+- (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
+    [tv deselectRowAtIndexPath:ip animated:YES];
+    mfShowCDFilePage(self.zipPath, self.viewNames[ip.row]);
+}
+- (void)searchBar:(UISearchBar *)sb textDidChange:(NSString *)text { [self applyFilter:text]; }
+- (void)searchBarSearchButtonClicked:(UISearchBar *)sb { [sb resignFirstResponder]; }
+@end
+
+void mfShowCDBrowserPage(NSString *zipPath) {
+    UIView *page = mfMakePage(@"📖 头文件", YES);
+    CGFloat w = g_mfCardW;
+
+    UILabel *status = [[UILabel alloc] initWithFrame:CGRectMake(16, 44, w - 32, 18)];
+    status.font = [UIFont systemFontOfSize:11];
+    status.textColor = [UIColor secondaryLabelColor];
+    status.text = @"正在读取索引...";
+    status.userInteractionEnabled = NO;
+    [page addSubview:status];
+
+    UISearchBar *sb = [[UISearchBar alloc] initWithFrame:CGRectMake(8, 64, w - 16, 36)];
+    sb.placeholder = @"搜索类名 / 文件名";
+    sb.searchBarStyle = UISearchBarStyleMinimal;
+    sb.delegate = nil; // 由 controller 接管
+    [page addSubview:sb];
+
+    UITableView *tb = [[UITableView alloc] initWithFrame:CGRectMake(0, 102, w, g_mfCardH - 102) style:UITableViewStylePlain];
+    tb.backgroundColor = UIColor.clearColor;
+
+    MFCDBrowser *ctl = [MFCDBrowser new];
+    ctl.zipPath = zipPath;
+    ctl.table = tb;
+    ctl.status = status;
+    tb.dataSource = ctl; tb.delegate = ctl;
+    sb.delegate = ctl;
+    objc_setAssociatedObject(page, "ctl", ctl, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(sb, "keep", ctl, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
+    [page addSubview:tb];
+    mfPushPage(page);
+    [ctl loadIndex];
+}
+
+// ====== 详情页（对标 ETextVC：全文查看 + 文内搜索 + 复制 + 分享） ======
+@interface MFCDFileViewer : NSObject <UISearchBarDelegate>
+@property (copy) NSString *zipPath;
+@property (copy) NSString *entryName;
+@property (strong) UITextView *tv;
+@property (strong) UILabel *hitLabel;
+@property (copy) NSString *content;
+@property (strong) NSMutableArray<NSValue *> *hits;
+@property (assign) NSInteger hitIdx;
+@end
+@implementation MFCDFileViewer
+- (void)load {
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSDictionary *idx = mfZipBuildIndex(self.zipPath);
+        NSValue *v = idx[self.entryName];
+        NSData *data = v ? nil : nil;
+        if (v) {
+            MFZipEnt e; [v getValue:&e];
+            data = mfZipReadEntry(self.zipPath, &e);
+        }
+        NSString *txt = data ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding]
+                             ?: [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : @"⚠️ 解压失败";
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self.content = txt ?: @"";
+            self.tv.text = self.content;
+        });
+    });
+}
+- (void)jumpTo:(NSInteger)i {
+    if (!self.hits.count) return;
+    NSInteger j = ((i % (NSInteger)self.hits.count) + self.hits.count) % self.hits.count;
+    self.hitIdx = j;
+    NSRange r = [self.hits[j] rangeValue];
+    [self.tv scrollRangeToVisible:r];
+    self.tv.selectedRange = r;
+    self.hitLabel.text = [NSString stringWithFormat:@"%ld/%lu", (long)(j + 1), (unsigned long)self.hits.count];
+}
+- (void)findHits:(NSString *)q {
+    self.hits = [NSMutableArray array];
+    self.hitIdx = -1;
+    if (q.length && self.content) {
+        NSString *c = self.content;
+        NSRange r = NSMakeRange(0, c.length);
+        @autoreleasepool {
+            while (r.location != NSNotFound && self.hits.count < 500) {
+                NSRange f = [c rangeOfString:q options:NSCaseInsensitiveSearch range:r];
+                if (f.location == NSNotFound) break;
+                [self.hits addObject:[NSValue valueWithRange:f]];
+                r = NSMakeRange(f.location + f.length, c.length - f.location - f.length);
+                if ((NSInteger)r.length < 0) break;
+            }
+        }
+    }
+    self.hitLabel.text = self.hits.count ? [NSString stringWithFormat:@"1/%lu", (unsigned long)self.hits.count] : @"0";
+    if (self.hits.count) [self jumpTo:0]; else self.hitLabel.text = @"0";
+}
+- (void)next:(UIButton *)b { [self jumpTo:self.hitIdx + 1]; }
+- (void)prev:(UIButton *)b { [self jumpTo:self.hitIdx - 1]; }
+- (void)searchBar:(UISearchBar *)sb textDidChange:(NSString *)t { [self findHits:t]; }
+- (void)searchBarSearchButtonClicked:(UISearchBar *)sb { [sb resignFirstResponder]; }
+@end
+
+// 复制/分享逻辑在 MFPanel.m 的 Ctrl 方法里实现（从 sender 的 "viewer" associated 取上下文）
+
+void mfShowCDFilePage(NSString *zipPath, NSString *entryName) {
+    UIView *page = mfMakePage(entryName.lastPathComponent, YES);
+    CGFloat w = g_mfCardW;
+
+    UITextView *tv = [[UITextView alloc] initWithFrame:CGRectMake(0, 42, w, g_mfCardH - 130)];
+    tv.editable = NO;
+    tv.font = [UIFont fontWithName:@"Menlo-Regular" size:10] ?: [UIFont monospacedSystemFontOfSize:10 weight:UIFontWeightRegular];
+    tv.backgroundColor = UIColor.clearColor;
+    tv.autocorrectionType = UITextAutocorrectionTypeNo;
+    [page addSubview:tv];
+
+    // 底部工具行：文内搜索 ‹ n/m › | 复制 | 分享
+    CGFloat by = g_mfCardH - 84;
+    UISearchBar *sb = [[UISearchBar alloc] initWithFrame:CGRectMake(4, by, w - 190, 36)];
+    sb.placeholder = @"文内搜索";
+    sb.searchBarStyle = UISearchBarStyleMinimal;
+    [page addSubview:sb];
+
+    UIButton *prevB = [UIButton buttonWithType:UIButtonTypeSystem];
+    prevB.frame = CGRectMake(w - 184, by + 2, 30, 30);
+    [prevB setTitle:@"‹" forState:UIControlStateNormal];
+    prevB.titleLabel.font = [UIFont boldSystemFontOfSize:18];
+    [page addSubview:prevB];
+
+    UILabel *hitLb = [[UILabel alloc] initWithFrame:CGRectMake(w - 154, by + 6, 44, 22)];
+    hitLb.font = [UIFont systemFontOfSize:11];
+    hitLb.textColor = [UIColor secondaryLabelColor];
+    hitLb.textAlignment = NSTextAlignmentCenter;
+    hitLb.text = @"0";
+    [page addSubview:hitLb];
+
+    UIButton *nextB = [UIButton buttonWithType:UIButtonTypeSystem];
+    nextB.frame = CGRectMake(w - 112, by + 2, 30, 30);
+    [nextB setTitle:@"›" forState:UIControlStateNormal];
+    nextB.titleLabel.font = [UIFont boldSystemFontOfSize:18];
+    [page addSubview:nextB];
+
+    UIButton *copyB = [UIButton buttonWithType:UIButtonTypeSystem];
+    copyB.frame = CGRectMake(w - 78, by + 2, 34, 30);
+    [copyB setTitle:@"📋" forState:UIControlStateNormal];
+    [page addSubview:copyB];
+
+    UIButton *shareB = [UIButton buttonWithType:UIButtonTypeSystem];
+    shareB.frame = CGRectMake(w - 42, by + 2, 38, 30);
+    [shareB setTitle:@"⤴" forState:UIControlStateNormal];
+    shareB.titleLabel.font = [UIFont systemFontOfSize:17];
+    [page addSubview:shareB];
+
+    MFCDFileViewer *ctl = [MFCDFileViewer new];
+    ctl.zipPath = zipPath;
+    ctl.entryName = entryName;
+    ctl.tv = tv; ctl.hitLabel = hitLb; ctl.hits = [NSMutableArray array];
+    sb.delegate = ctl;
+    [prevB addTarget:ctl action:NSSelectorFromString(@"prev:") forControlEvents:UIControlEventTouchUpInside];
+    [nextB addTarget:ctl action:NSSelectorFromString(@"next:") forControlEvents:UIControlEventTouchUpInside];
+    objc_setAssociatedObject(page, "ctl", ctl, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(copyB, "viewer", ctl, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(shareB, "viewer", ctl, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [copyB addTarget:g_mfCtrl action:NSSelectorFromString(@"mfCDFileCopy:") forControlEvents:UIControlEventTouchUpInside];
+    [shareB addTarget:g_mfCtrl action:NSSelectorFromString(@"mfCDFileShare:") forControlEvents:UIControlEventTouchUpInside];
+
+    mfPushPage(page);
+    [ctl load];
 }
