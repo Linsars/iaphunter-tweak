@@ -637,7 +637,7 @@ void mfShowProductPage(void) {
     UIView *overlay = g_mfPanelOverlay;
     UIActivityViewController *av = [[UIActivityViewController alloc]
             initWithActivityItems:@[[NSURL fileURLWithPath:path]] applicationActivities:nil];
-    av.completionWithItemsHandler = ^(UIActivityActivityType type, BOOL completed, NSArray *items, NSError *error) {
+    av.completionWithItemsHandler = ^(UIActivityType type, BOOL completed, NSArray *items, NSError *error) {
         overlay.hidden = NO; // 恢复面板
     };
     overlay.hidden = YES;
