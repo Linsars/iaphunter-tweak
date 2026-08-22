@@ -150,4 +150,5 @@ void mfShowNetAnalyzerPage(void);           // 网络功能统一入口（含捕
 void mfNetAnalyzerRun(NSString *kind, UIButton *btn); // 分发到具体扫描
 BOOL mfCaptureEnabledState(void);           // 定义在 MFNetworkCapture.m
 NSArray *mfCapturedRecordsSnapshot(void);   // 捕获缓冲只读快照，同上
+void mfShowRuleManagerPage(void);           // 规则管理（拦截/改包）
 

@@ -999,3 +999,128 @@ void mfShowNetworkModifyPage(void) {
     [page addSubview:sv];
     mfPushPage(page);
 }
+
+// ====== 规则管理页（UITableView + 左滑操作，对标捕获列表） ======
+@interface MFRuleManagerList : NSObject <UITableViewDataSource, UITableViewDelegate>
+@property (copy) NSArray *rules;
+@end
+@implementation MFRuleManagerList
+- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s { return (NSInteger)self.rules.count; }
+- (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
+    static NSString *id_ = @"mfruletrow";
+    UITableViewCell *c = [tv dequeueReusableCellWithIdentifier:id_];
+    if (!c) c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:id_];
+    MFRewriteRule *rule = self.rules[ip.row];
+    // 主标题：name 或 pattern
+    c.textLabel.text = rule.name.length ? rule.name : rule.pattern;
+    c.textLabel.font = [UIFont systemFontOfSize:12];
+    c.textLabel.textColor = rule.enabled ? [UIColor labelColor] : [UIColor secondaryLabelColor];
+    // 副标题：matchType | direction | action
+    NSString *dirStr = rule.direction.length ? rule.direction : @"双向";
+    NSString *actName = rule.reject ? @"屏蔽" :
+        ([rule.action isEqualToString:@"replaceReq"] ? @"替换请求" : @"替换响应");
+    NSString *detail = [NSString stringWithFormat:@"%@ | %@ | %@", rule.matchType, dirStr, actName];
+    if (rule.reject) detail = [detail stringByAppendingString:@" ⛔"];
+    c.detailTextLabel.text = detail;
+    c.detailTextLabel.font = [UIFont systemFontOfSize:10];
+    c.detailTextLabel.textColor = [UIColor tertiaryLabelColor];
+    c.backgroundColor = UIColor.clearColor;
+    return c;
+}
+- (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
+    [tv deselectRowAtIndexPath:ip animated:YES];
+    // 点击行直接编辑
+    MFRewriteRule *rule = self.rules[ip.row];
+    NSInteger idx = [g_rewriteRules indexOfObject:rule];
+    mfShowRuleEditPage(nil, nil, idx, YES);
+}
+// 左滑操作：启用/禁用、编辑、删除
+- (UISwipeActionsConfiguration *)tableView:(UITableView *)tv trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)ip {
+    MFRewriteRule *rule = self.rules[ip.row];
+    NSInteger idx = [g_rewriteRules indexOfObject:rule];
+    __block UIButton *synthetic = [UIButton buttonWithType:UIButtonTypeSystem];
+    objc_setAssociatedObject(synthetic, "idx", @(idx), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
+    // 启用/禁用
+    UIContextualAction *toggle = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleNormal
+        title:rule.enabled ? @"禁用" : @"启用" handler:^(UIContextualAction *a, UIView *v, void (^done)(BOOL)) {
+            rule.enabled = !rule.enabled;
+            mfSaveRule(rule, idx);
+            mfToast(rule.enabled ? @"✅ 已启用" : @"⏸️ 已禁用");
+            [tv reloadRowsAtIndexPaths:@[ip] withRowAnimation:UITableViewRowAnimationNone];
+            done(YES);
+        }];
+    toggle.backgroundColor = rule.enabled ? [UIColor systemOrangeColor] : [UIColor systemGreenColor];
+
+    // 编辑
+    UIContextualAction *edit = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleNormal
+        title:@"编辑" handler:^(UIContextualAction *a, UIView *v, void (^done)(BOOL)) {
+            mfShowRuleEditPage(nil, nil, idx, YES);
+            done(YES);
+        }];
+    edit.backgroundColor = [UIColor systemBlueColor];
+
+    // 删除
+    UIContextualAction *del = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleDestructive
+        title:@"删除" handler:^(UIContextualAction *a, UIView *v, void (^done)(BOOL)) {
+            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"删除规则"
+                message:[NSString stringWithFormat:@"确定删除这条规则？\n%@", rule.pattern]
+                preferredStyle:UIAlertControllerStyleAlert];
+            [alert addAction:[UIAlertAction actionWithTitle:@"删除" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *a) {
+                mfRemoveRule(idx);
+                mfToast(@"🗑️ 已删除");
+            }]];
+            [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+            [g_mfPanelRootVC presentViewController:alert animated:YES completion:nil];
+            done(YES);
+        }];
+    del.backgroundColor = [UIColor systemRedColor];
+
+    return [UISwipeActionsConfiguration configurationWithActions:@[del, edit, toggle]];
+}
+@end
+
+// 规则管理页面入口（网络分析页调用）
+void mfShowRuleManagerPage(void) {
+    mfLoadRules();
+    mfExpandCardForPage();
+    UIView *page = mfMakePage(@"🔧 规则管理", YES);
+    // 说明：有规则即生效，无全局开关
+    UILabel *note = [[UILabel alloc] initWithFrame:CGRectMake(16, 44, g_mfCardW - 32, 30)];
+    note.font = [UIFont systemFontOfSize:11];
+    note.textColor = [UIColor tertiaryLabelColor];
+    note.numberOfLines = 2;
+    note.text = @"有规则即生效（仅作用于当前 App：%@）\n左滑：删除 / 编辑 / 启用禁用";
+    note.text = [NSString stringWithFormat:note.text, mfCurrentBundleId()];
+    [page addSubview:note];
+
+    // 筛选当前 app 的规则
+    NSMutableArray *myRules = [NSMutableArray new];
+    for (MFRewriteRule *r in g_rewriteRules) {
+        if (r.appBundle.length == 0 || [r.appBundle isEqualToString:mfCurrentBundleId()]) [myRules addObject:r];
+    }
+
+    // UITableView
+    UITableView *tv = [[UITableView alloc] initWithFrame:CGRectMake(0, 80, g_mfCardW, g_mfCardH - 80) style:UITableViewStylePlain];
+    tv.backgroundColor = UIColor.clearColor;
+    tv.separatorStyle = UITableViewCellSeparatorStyleNone;
+    tv.rowHeight = 64;
+    MFRuleManagerList *dataSource = [MFRuleManagerList new];
+    dataSource.rules = myRules;
+    tv.dataSource = dataSource;
+    tv.delegate = dataSource;
+    objc_setAssociatedObject(page, "mfRuleDataSource", dataSource, OBJC_ASSOCIATION_RETAIN);
+    [page addSubview:tv];
+
+    // 添加规则按钮（固定在底部）
+    UIButton *addBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    addBtn.frame = CGRectMake(12, g_mfCardH - 60, g_mfCardW - 24, 40);
+    addBtn.backgroundColor = [UIColor systemBlueColor];
+    addBtn.layer.cornerRadius = 10;
+    [addBtn setTitle:@"+ 添加规则" forState:UIControlStateNormal];
+    [addBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    [addBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfAddRuleTapped") forControlEvents:UIControlEventTouchUpInside];
+    [page addSubview:addBtn];
+
+    mfPushPage(page);
+}

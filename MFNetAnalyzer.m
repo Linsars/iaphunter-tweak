@@ -138,7 +138,7 @@ void mfShowNetAnalyzerPage(void) {
     UIView *page = mfMakePage(@"🌐 网络分析", YES);
     CGFloat gw = g_mfCardW - 32;
 
-    // 顶部：实时捕获开关 + 捕获记录入口（从数据分析页并入——网络功能统一入口）
+    // 顶部：实时捕获开关 + 捕获记录入口 + 规则管理入口
     UILabel *capLb = [[UILabel alloc] initWithFrame:CGRectMake(16, 46, gw - 80, 24)];
     capLb.text = @"⏺ 实时捕获 HTTP(S)";
     capLb.font = [UIFont boldSystemFontOfSize:13];
@@ -160,7 +160,18 @@ void mfShowNetAnalyzerPage(void) {
     [listBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfShowNetworkCapturePage") forControlEvents:UIControlEventTouchUpInside];
     [page addSubview:listBtn];
 
-    CGFloat y = 136;
+    // 规则管理入口
+    UIButton *ruleBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    ruleBtn.frame = CGRectMake(16, 134, gw, 42);
+    ruleBtn.backgroundColor = [UIColor systemOrangeColor];
+    ruleBtn.layer.cornerRadius = 10;
+    ruleBtn.tintColor = UIColor.whiteColor;
+    ruleBtn.titleLabel.font = [UIFont boldSystemFontOfSize:13];
+    [ruleBtn setTitle:@"🔧 规则管理（拦截/改包）" forState:UIControlStateNormal];
+    [ruleBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfShowRuleManagerPage") forControlEvents:UIControlEventTouchUpInside];
+    [page addSubview:ruleBtn];
+
+    CGFloat y = 186;
     for (NSArray *it in mfNetItems) {
         UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
         b.frame = CGRectMake(16, y, gw, 44);

@@ -1,5 +1,5 @@
 // MFPanel.m — IAP工具箱 v5.0 面板控制器 + 导航系统 + 主面板
-// 主页双列网格：数据分析 📡 / 网络修改 🔧 / Product 🛍️
+// 主页双列网格：数据分析 📡 / Product 🛍️
 
 #import "MFPanel.h"
 #import <CommonCrypto/CommonCrypto.h>
@@ -1151,10 +1151,9 @@ static void iaphShowPanel(UIViewController *vc) {
         CGFloat gy = 48;
         gy = mfGridButton(home, 16, gy, gw, @"数据分析", @"📡", @selector(mfShowDataAnalysisPage), NO, nil);
         mfLog(@"PANEL STEP 7a: dataAnalysis btn");
-        gy = mfGridButton(home, 16 + gw + 12, gy - 92, gw, @"网络修改", @"🔧", @selector(mfShowNetworkModifyPage), NO, nil);
-        mfLog(@"PANEL STEP 7b: networkModify btn");
-        gy = mfGridButton(home, 16, gy, gw, @"Product", @"🛍️", @selector(mfShowProductPage), NO, nil);
-        mfLog(@"PANEL STEP 7c: product btn");
+        gy = mfGridButton(home, 16 + gw + 12, gy - 92, gw, @"Product", @"🛍️", @selector(mfShowProductPage), NO, nil);
+        mfLog(@"PANEL STEP 7b: product btn");
+        // 网络修改已并入网络分析 → 规则管理 (v1.8.3)
         // Keychain 已并入 数据分析 板块 (v1.4.0)
 
         [overlay addSubview:card];
@@ -1374,7 +1373,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define MINISFIX_VERSION @"1.8.1"
+#define MINISFIX_VERSION @"1.8.3"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
