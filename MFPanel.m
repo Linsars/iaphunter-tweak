@@ -550,6 +550,7 @@ void mfShowScanPage(void) {
                     mfLog(@"scan done: verified=%lu total=%lu",
                         (unsigned long)verifiedPrices.count, (unsigned long)merged.count);
                 });
+        });
     });
 }
 
