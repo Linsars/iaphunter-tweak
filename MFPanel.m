@@ -316,6 +316,28 @@ static NSArray *mfScanLocalProductIDs(void) {
     return [[found allObjects] sortedArrayUsingSelector:@selector(compare:)];
 }
 
+// ====== 命名惯例组合候选(v1.9.7):bundle 前缀 × 常见内购后缀,交给 SKProductsRequest 验证 ======
+static NSArray *mfGenerateComboPIDs(void) {
+    NSString *bid = [[NSBundle mainBundle] bundleIdentifier] ?: @"";
+    NSArray *seg = [bid componentsSeparatedByString:@"."];
+    if (seg.count < 2) return @[];
+    NSString *host = [NSString stringWithFormat:@"%@.%@", seg[0], seg[1]];
+    NSArray *kw = @[@"premium", @"pro", @"vip", @"plus", @"unlock", @"full", @"paid",
+        @"lifetime", @"donate", @"donation", @"subscription", @"sub", @"weekly", @"monthly",
+        @"yearly", @"annual", @"month", @"year", @"week", @"gold", @"coins", @"credits",
+        @"gems", @"tokens", @"pack", @"upgrade", @"access", @"member", @"tier", @"basic"];
+    NSMutableSet *set = [NSMutableSet set];
+    [set addObject:[NSString stringWithFormat:@"%@.iap", host]];
+    [set addObject:[NSString stringWithFormat:@"%@.purchase", host]];
+    for (NSString *k in kw) {
+        [set addObject:[NSString stringWithFormat:@"%@.%@", host, k]];
+        [set addObject:[NSString stringWithFormat:@"%@.iap.%@", host, k]];
+        [set addObject:[NSString stringWithFormat:@"%@.subscription.%@", host, k]];
+    }
+    return set.allObjects;
+}
+
+
 // 扫描单个文件：提取所有 com.xxx.xxx.xxx 格式的字符串（3段以上点分）
 // 后续由 SKProductsRequest 验证哪些是真正的 product ID
 static NSSet *mfScanFileForPIDs(NSString *path) {
@@ -469,7 +491,8 @@ void mfShowScanPage(void) {
         mfLog(@"scan local candidates: %d", (int)localCandidates.count);
 
         // 2. 在线查询
-        mfLog(@"[iap] local=%d → online query…", (int)localCandidates.count);
+        NSArray *comboPIDs = mfGenerateComboPIDs();
+        mfLog(@"[iap] local=%d combo=%lu → online query…", (int)localCandidates.count, (unsigned long)comboPIDs.count);
         dispatch_async(dispatch_get_main_queue(), ^{ mfProbeStoreKit2(); });
         mfFetchIAPList(^(NSArray *onlineItems, NSString *err) {
             if (err || !onlineItems.count) mfLog(@"[iap] online query dead: %@", err ?: @"0 items");
@@ -479,9 +502,13 @@ void mfShowScanPage(void) {
             }
 
             // 3. 本地候选中排除在线已有的，剩下的用 SKProductsRequest 验证
+            NSMutableSet *seen = [NSMutableSet setWithArray:localCandidates];
             NSMutableArray *toVerify = [NSMutableArray array];
             for (NSString *pid in localCandidates) {
                 if (!onlineMap[pid]) [toVerify addObject:pid];
+            }
+            for (NSString *pid in comboPIDs) {
+                if (!onlineMap[pid] && ![seen containsObject:pid]) { [toVerify addObject:pid]; [seen addObject:pid]; }
             }
 
             mfLog(@"[iap] SK verify queue: %lu ids", (unsigned long)toVerify.count);
@@ -496,8 +523,11 @@ void mfShowScanPage(void) {
                         [merged addObject:@{@"pid": item[@"pid"], @"price": item[@"price"] ?: @"?", @"src": @"在线"}];
                     }
                     // verifiedPrices 里的是 Apple 确认可购买的 PID
+                    NSSet *localSet = [NSSet setWithArray:localCandidates];
                     for (NSString *pid in verifiedPrices) {
-                        [merged addObject:@{@"pid": pid, @"price": verifiedPrices[pid], @"src": @"本地"}];
+                        BOOL isLocal = [localSet containsObject:pid];
+                        [merged addObject:@{@"pid": pid, @"price": verifiedPrices[pid],
+                            @"src": isLocal ? @"本地" : @"组合命中"}];
                     }
 
                     // 按价格从低到高排序
@@ -1428,7 +1458,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define MINISFIX_VERSION @"1.9.6"
+#define MINISFIX_VERSION @"1.9.7"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
