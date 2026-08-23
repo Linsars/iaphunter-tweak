@@ -1430,7 +1430,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define MINISFIX_VERSION @"2.0.1"
+#define MINISFIX_VERSION @"2.0.2"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
@@ -1463,12 +1463,8 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
             return;
         }
 
-        // 实时捕获默认开启(v2.0.1):一开 App 就在网里;用户手动关过则尊重
-        if (mfPrefBool(@"mfCaptureEnabled", YES)) {
-            g_captureEnabled = YES;
-            extern void mfInstallNetworkCapture(void);
-            mfInstallNetworkCapture();
-        }
+        // 实时捕获(v2.0.2):默认关闭——NSURLProtocol 全局拦截对部分 App 不稳定;
+        // 需要抓包时在网络分析页手动开(开关状态持久化,关过就不再自动开)
 
         // IAP 收集
         ensureStoreKit();
