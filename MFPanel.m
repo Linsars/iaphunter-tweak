@@ -1320,8 +1320,27 @@ static void my_SK2ReceivedResponse(id self, SEL _cmd, id resp) {
                 NSString *pid = [p performSelector:NSSelectorFromString(@"productIdentifier")];
                 if (pid.length) { IAPRecord(pid); mfLog(@"[iap] SK2 bridge pid: %@", pid); }
             }
+        } else if ([resp isKindOfClass:[NSData class]]) {
+            // _NSInlineData(XPC 原始块):ID 以明文嵌在序列化体里(bplist/JSON 均含),
+            // 直接按可打印串切走 mfPIDShaped 门控——容器格式无关
+            NSData *d = (NSData *)resp;
+            const uint8_t *b = d.bytes;
+            NSUInteger len = d.length;
+            NSMutableString *cur = [NSMutableString string];
+            int found = 0;
+            for (NSUInteger i = 0; i <= len; i++) {
+                uint8_t c = i < len ? b[i] : 0;
+                if (c >= 0x20 && c < 0x7F) { [cur appendFormat:@"%c", c]; continue; }
+                if (cur.length >= 6 && mfPIDShaped(cur) && !mfPIDExcluded(cur)) {
+                    IAPRecord(cur);
+                    found++;
+                    if (found <= 25) mfLog(@"[iap] SK2 blob pid: %@", cur);
+                }
+                [cur setString:@""];
+            }
+            if (found) mfLog(@"[iap] SK2 blob total %d pids (%lu bytes)", found, (unsigned long)len);
         } else {
-            mfLog(@"[iap] SK2 receivedResponse arg=%@ (未知形态,记录待适配)", NSStringFromClass([resp class]));
+            mfLog(@"[iap] SK2 receivedResponse arg=%@ (未知形态)", NSStringFromClass([resp class]));
         }
     } @catch (NSException *e) {
         mfLog(@"[iap] SK2 bridge parse err: %@", e.reason);
@@ -1501,7 +1520,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define MINISFIX_VERSION @"2.2.0"
+#define MINISFIX_VERSION @"2.2.1"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
