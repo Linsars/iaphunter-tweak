@@ -547,11 +547,9 @@ void mfShowScanPage(void) {
                     }
                     sv.contentSize = CGSizeMake(g_mfCardW, y + 16);
                     [page addSubview:sv];
-                    mfLog(@"scan merged: online=%lu localVerified=%lu total=%d",
-                        (unsigned long)onlineItems.count, (unsigned long)verifiedPrices.count, (int)merged.count);
+                    mfLog(@"scan done: verified=%lu total=%lu",
+                        (unsigned long)verifiedPrices.count, (unsigned long)merged.count);
                 });
-            });
-        });
     });
 }
 
