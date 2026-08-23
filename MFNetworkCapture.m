@@ -192,7 +192,9 @@ static void mfRecordCapture(MFNetRecord *rec) {
 }
 
 + (BOOL)requestIsCacheEquivalent:(NSURLRequest *)a toRequest:(NSURLRequest *)b {
-    return [[super class] requestIsCacheEquivalent:a toRequest:b];
+    // v2.3.0: 不经 super 分发(Apple 实现回调子类→无限递归→栈溢出 Bus error),
+    // 直接 NO——本协议只做拦截改写,不参与 URL 缓存去重
+    return NO;
 }
 
 - (void)startLoading {

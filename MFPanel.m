@@ -1486,6 +1486,9 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
         NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
+        // v2.3.0 系统进程守卫（必须最先执行）：注入器会把插件塞进 Apple 守护进程,
+        // 在 appstored/SpringBoard 等环境里任何 hook 都是系统级事故(.ips 实锤)
+        if (!bid.length || [bid.lowercaseString hasPrefix:@"com.apple."]) return;
         mfLog(@"=== MinisFix ctor ENTER pid=%d app=%@ version=%@ ===", getpid(), bid, MINISFIX_VERSION);
 
         // TestFlight 增强（独立于 IAP工具箱，始终检查）
