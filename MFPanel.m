@@ -289,6 +289,31 @@ static NSSet *mfScanFileForPIDs(NSString *path);
 static void mfQueryLocalPrices(NSArray *pids, void (^cb)(NSDictionary *pidToPrice));
 
 // 从 Mach-O 的 __cstring 段提取 product ID（只匹配 bundleId. 前缀）
+
+// ====== 从捕获记录响应体提取 productId(v1.9.9 通用主路径) ======
+// 现代 App 内购列表由自家服务器下发(价格/文案/ID 打包成 JSON),
+// HTTP 层截获即得——不依赖 StoreKit 版本,对所有 App 生效
+static NSArray *mfExtractPIDsFromCaptures(void) {
+    NSMutableOrderedSet *out = [NSMutableOrderedSet orderedOrderedSet];
+    NSArray *recs = mfCapturedRecordsSnapshot();
+    NSError *reErr = nil;
+    // 键名形态: product_id / productId / productIdentifier / iap_id …
+    NSRegularExpression *re = [NSRegularExpression
+        regularExpressionWithPattern:@"\"(product[_]?[iI]d|productIdentifier|iap[_]?id|purchase[_]?id)\"\\s*:\\s*\"([^\"\\\\]{4,80})\""
+        options:NSRegularExpressionCaseInsensitive error:&reErr];
+    for (MFNetRecord *r in recs) {
+        if (r.respBody.length < 8) continue;
+        NSString *body = [[NSString alloc] initWithData:r.respBody encoding:NSUTF8StringEncoding];
+        if (!body) continue;
+        [re enumerateMatchesInString:body options:0 range:NSMakeRange(0, body.length)
+            usingBlock:^(NSTextCheckingResult *m, NSTextCheckingResult *f, BOOL *stop) {
+                NSString *pid = [body substringWithRange:[m rangeAtIndex:2]];
+                if (pid.length >= 4 && pid.length <= 80) [out addObject:pid];
+            }];
+    }
+    return out.array;
+}
+
 static NSArray *mfScanLocalProductIDs(void) {
     NSMutableSet *found = [NSMutableSet set];
     NSString *exePath = [[NSBundle mainBundle] executablePath];
@@ -316,45 +341,6 @@ static NSArray *mfScanLocalProductIDs(void) {
     return [[found allObjects] sortedArrayUsingSelector:@selector(compare:)];
 }
 
-// ====== 命名惯例组合候选(v1.9.8 多前缀版):所有观测到的二段前缀 × 内购后缀 ======
-static NSArray *mfGenerateComboPIDs(void) {
-    // 1) 前缀集合:bundleId 二段前缀 + 本地扫描字符串里频次最高的前二段组合
-    NSMutableSet *hosts = [NSMutableSet set];
-    NSString *bid = [[NSBundle mainBundle] bundleIdentifier] ?: @"";
-    NSArray *bseg = [bid componentsSeparatedByString:@"."];
-    if (bseg.count >= 2) [hosts addObject:[NSString stringWithFormat:@"%@.%@", bseg[0], bseg[1]]];
-    for (NSString *pid in mfScanLocalProductIDs()) {
-        NSArray *p = [pid componentsSeparatedByString:@"."];
-        if (p.count >= 2 && p[0].length && p[1].length)
-            [hosts addObject:[NSString stringWithFormat:@"%@.%@", p[0], p[1]]];
-    }
-    // 2) 后缀字典
-    NSArray *kw = @[@"premium", @"pro", @"vip", @"plus", @"unlock", @"full", @"paid",
-        @"lifetime", @"donate", @"donation", @"subscription", @"sub", @"weekly", @"monthly",
-        @"yearly", @"annual", @"month", @"year", @"week", @"gold", @"coins", @"credits",
-        @"gems", @"tokens", @"pack", @"upgrade", @"access", @"member", @"tier", @"basic"];
-    NSArray *mid = @[@"", @"iap.", @"subscription.", @"purchase."];
-    NSMutableSet *set = [NSMutableSet set];
-    for (NSString *host in hosts) {
-        [set addObject:[NSString stringWithFormat:@"%@.iap", host]];
-        [set addObject:[NSString stringWithFormat:@"%@.purchase", host]];
-        for (NSString *m in mid) {
-            for (NSString *k in kw) {
-                NSString *id2 = m.length ? [NSString stringWithFormat:@"%@.%@%@", host, m, k]
-                                         : [NSString stringWithFormat:@"%@.%@", host, k];
-                [set addObject:id2];
-            }
-        }
-        // 高频关键词的第二层计费周期
-        for (NSString *k in @[@"premium", @"pro", @"vip", @"unlock"]) {
-            for (NSString *c in @[@"monthly", @"yearly", @"lifetime", @"weekly"])
-                [set addObject:[NSString stringWithFormat:@"%@.%@.%@", host, k, c]];
-        }
-    }
-    NSArray *out = set.allObjects;
-    mfLog(@"[iap] combo hosts=%lu total=%lu", (unsigned long)hosts.count, (unsigned long)out.count);
-    return out;
-}
 
 
 // 扫描单个文件：提取所有 com.xxx.xxx.xxx 格式的字符串（3段以上点分）
@@ -510,8 +496,7 @@ void mfShowScanPage(void) {
         mfLog(@"scan local candidates: %d", (int)localCandidates.count);
 
         // 2. 在线查询
-        NSArray *comboPIDs = mfGenerateComboPIDs();
-        mfLog(@"[iap] local=%d combo=%lu → online query…", (int)localCandidates.count, (unsigned long)comboPIDs.count);
+        mfLog(@"[iap] local=%d → online query…", (int)localCandidates.count);
         dispatch_async(dispatch_get_main_queue(), ^{ mfProbeStoreKit2(); });
         mfFetchIAPList(^(NSArray *onlineItems, NSString *err) {
             if (err || !onlineItems.count) mfLog(@"[iap] online query dead: %@", err ?: @"0 items");
@@ -521,12 +506,15 @@ void mfShowScanPage(void) {
             }
 
             // 3. 本地候选中排除在线已有的，剩下的用 SKProductsRequest 验证
+            // 网络提取：从捕获记录的响应体里挖 productId（通用主路径）
+            NSArray *netPIDs = mfExtractPIDsFromCaptures();
+            mfLog(@"[iap] net-extracted=%lu from captures", (unsigned long)netPIDs.count);
             NSMutableSet *seen = [NSMutableSet setWithArray:localCandidates];
             NSMutableArray *toVerify = [NSMutableArray array];
             for (NSString *pid in localCandidates) {
                 if (!onlineMap[pid]) [toVerify addObject:pid];
             }
-            for (NSString *pid in comboPIDs) {
+            for (NSString *pid in netPIDs) {
                 if (!onlineMap[pid] && ![seen containsObject:pid]) { [toVerify addObject:pid]; [seen addObject:pid]; }
             }
 
@@ -543,10 +531,11 @@ void mfShowScanPage(void) {
                     }
                     // verifiedPrices 里的是 Apple 确认可购买的 PID
                     NSSet *localSet = [NSSet setWithArray:localCandidates];
+                    NSSet *netSet = [NSSet setWithArray:netPIDs];
                     for (NSString *pid in verifiedPrices) {
-                        BOOL isLocal = [localSet containsObject:pid];
-                        [merged addObject:@{@"pid": pid, @"price": verifiedPrices[pid],
-                            @"src": isLocal ? @"本地" : @"组合命中"}];
+                        NSString *src = [netSet containsObject:pid] ? @"网络" :
+                                        ([localSet containsObject:pid] ? @"本地" : @"?");
+                        [merged addObject:@{@"pid": pid, @"price": verifiedPrices[pid], @"src": src}];
                     }
 
                     // 按价格从低到高排序
@@ -1477,7 +1466,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define MINISFIX_VERSION @"1.9.8"
+#define MINISFIX_VERSION @"1.9.9"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
