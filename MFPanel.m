@@ -253,36 +253,6 @@ void mfShowNetworkCapturePage(void); // MFNetworkCapture.m
 void mfShowCryptoToolboxPage(void);  // MFNetworkCapture.m
 void mfShowNetworkModifyPage(void);  // MFNetworkCapture.m
 
-// ====== IAPHunter 功能（从 v4.1 迁移） ======
-// 远程查 IAP 列表
-static void mfFetchIAPList(void (^cb)(NSArray *items, NSString *err)) {
-    NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
-    if (!bid) { cb(nil, @"无 bundle id"); return; }
-    NSString *url = [NSString stringWithFormat:@"https://xn--ug8h.eu.org/api/iap?bundleId=%@&country=us", bid];
-    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:url] cachePolicy:NSURLRequestReloadIgnoringCacheData timeoutInterval:12];
-    [req setValue:@"IAPHunter/1.1" forHTTPHeaderField:@"User-Agent"];
-    [req setValue:@"https://xn--ug8h.eu.org" forHTTPHeaderField:@"Origin"];
-    [req setValue:@"https://xn--ug8h.eu.org" forHTTPHeaderField:@"Referer"];
-    NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
-        if (err) { cb(nil, err.localizedDescription); return; }
-        NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
-        if (![json isKindOfClass:[NSDictionary class]]) { cb(nil, @"响应格式错误"); return; }
-        NSArray *iaps = json[@"iaps"];
-        if (![iaps isKindOfClass:[NSArray class]]) { cb(nil, @"无 IAP 数据"); return; }
-        NSMutableArray *items = [NSMutableArray array];
-        for (NSDictionary *iap in iaps) {
-            if (![iap isKindOfClass:[NSDictionary class]]) continue;
-            NSString *pid = iap[@"productId"];
-            if (pid.length == 0) continue;
-            NSString *price = iap[@"priceFormatted"];
-            [items addObject:[NSDictionary dictionaryWithObjectsAndKeys:
-                pid, @"pid", (price.length ? price : @"?"), @"price", nil]];
-        }
-        cb(items, nil);
-    }];
-    [task resume];
-}
-
 // ====== 本地二进制扫描 ======
 // 前向声明
 static NSSet *mfScanFileForPIDs(NSString *path);
@@ -328,14 +298,6 @@ static NSArray *mfExtractPIDsFromCaptures(void) {
     return out.array;
 }
 
-// 启动即捕获(v2.0.0):白名单 App 进程一起床就装协议,老会话也能进网
-static void mfMaybeAutoCaptureAtLaunch(void) {
-    if (!mfPrefBool(@"mfAutoCapture", NO)) return;
-    g_captureEnabled = YES;
-    extern void mfInstallNetworkCapture(void);
-    mfInstallNetworkCapture();
-    mfLog(@"[iap] auto-capture ON from launch");
-}
 
 static NSArray *mfScanLocalProductIDs(void) {
     NSMutableSet *found = [NSMutableSet set];
@@ -506,18 +468,6 @@ static double mfParsePrice(NSString *priceStr) {
 void mfShowScanPage(void) {
     UIView *page = mfMakePage(@"扫描购买", YES);
     // 启动即捕获开关(v2.0.0):下次启动生效——解决"App 先启动、后开捕获截不到老会话"
-    UISwitch *autoSw = [[UISwitch alloc] initWithFrame:CGRectMake(16, 44, 51, 31)];
-    autoSw.on = mfPrefBool(@"mfAutoCapture", NO);
-    autoSw.onTintColor = [UIColor systemPurpleColor];
-    objc_setAssociatedObject(autoSw, "k", @"mfAutoCapture", OBJC_ASSOCIATION_RETAIN);
-    [page addSubview:autoSw];
-    UILabel *autoLb = [[UILabel alloc] initWithFrame:CGRectMake(76, 48, g_mfCardW - 92, 30)];
-    autoLb.text = @"启动即捕获(下次冷启动生效)\n开着它再逛购买页,网络提取才完整";
-    autoLb.font = [UIFont systemFontOfSize:10];
-    autoLb.numberOfLines = 2;
-    autoLb.textColor = [UIColor secondaryLabelColor];
-    [page addSubview:autoLb];
-    [autoSw addTarget:g_mfCtrl action:NSSelectorFromString(@"mfGridSwitchChanged:") forControlEvents:UIControlEventValueChanged];
 
     UILabel *st = [[UILabel alloc] initWithFrame:CGRectMake(16, g_mfCardH/2 - 20, g_mfCardW - 32, 40)];
     st.text = @"正在扫描…";
@@ -528,74 +478,52 @@ void mfShowScanPage(void) {
     mfPushPage(page);
 
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        // 1. 本地扫描：提取所有 com.xxx.xxx 格式字符串
+        // 1. 本地扫描 + 网络提取（双源）
         NSArray *localCandidates = mfScanLocalProductIDs();
-        mfLog(@"scan local candidates: %d", (int)localCandidates.count);
-
-        // 2. 在线查询
-        mfLog(@"[iap] local=%d → online query…", (int)localCandidates.count);
+        NSArray *netPIDs = mfExtractPIDsFromCaptures();
+        mfLog(@"[iap] local=%d net=%lu → SK verify", (int)localCandidates.count, (unsigned long)netPIDs.count);
         dispatch_async(dispatch_get_main_queue(), ^{ mfProbeStoreKit2(); });
-        mfFetchIAPList(^(NSArray *onlineItems, NSString *err) {
-            if (err || !onlineItems.count) mfLog(@"[iap] online query dead: %@", err ?: @"0 items");
-            NSMutableDictionary *onlineMap = [NSMutableDictionary dictionary]; // pid -> price
-            for (NSDictionary *item in onlineItems) {
-                if (item[@"pid"]) onlineMap[item[@"pid"]] = item[@"price"] ?: @"?";
-            }
 
-            // 3. 本地候选中排除在线已有的，剩下的用 SKProductsRequest 验证
-            // 网络提取：从捕获记录的响应体里挖 productId（通用主路径）
-            NSArray *netPIDs = mfExtractPIDsFromCaptures();
-            mfLog(@"[iap] net-extracted=%lu from captures", (unsigned long)netPIDs.count);
-            NSMutableSet *seen = [NSMutableSet setWithArray:localCandidates];
-            NSMutableArray *toVerify = [NSMutableArray array];
-            for (NSString *pid in localCandidates) {
-                if (!onlineMap[pid]) [toVerify addObject:pid];
-            }
-            for (NSString *pid in netPIDs) {
-                if (!onlineMap[pid] && ![seen containsObject:pid]) { [toVerify addObject:pid]; [seen addObject:pid]; }
-            }
+        NSMutableSet *seen = [NSMutableSet setWithArray:localCandidates];
+        NSMutableArray *toVerify = [NSMutableArray arrayWithArray:localCandidates];
+        for (NSString *pid in netPIDs) {
+            if (![seen containsObject:pid]) { [toVerify addObject:pid]; [seen addObject:pid]; }
+        }
 
-            mfLog(@"[iap] SK verify queue: %lu ids", (unsigned long)toVerify.count);
-            mfQueryLocalPrices(toVerify, ^(NSDictionary *verifiedPrices) {
-                mfLog(@"[iap] SK verified: %lu valid", (unsigned long)verifiedPrices.count);
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    [st removeFromSuperview];
+        // 2. SKProductsRequest 统一验证（Apple 裁判：有效才带价格回来）
+        mfQueryLocalPrices(toVerify, ^(NSDictionary *verifiedPrices) {
+            mfLog(@"[iap] SK verified: %lu valid / %lu tried", (unsigned long)verifiedPrices.count, (unsigned long)toVerify.count);
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [st removeFromSuperview];
 
-                    // 4. 合并：在线结果 + SKProductsRequest 验证通过的本地结果
-                    NSMutableArray *merged = [NSMutableArray array];
-                    for (NSDictionary *item in onlineItems) {
-                        [merged addObject:@{@"pid": item[@"pid"], @"price": item[@"price"] ?: @"?", @"src": @"在线"}];
-                    }
-                    // verifiedPrices 里的是 Apple 确认可购买的 PID
-                    NSSet *localSet = [NSSet setWithArray:localCandidates];
-                    NSSet *netSet = [NSSet setWithArray:netPIDs];
-                    for (NSString *pid in verifiedPrices) {
-                        NSString *src = [netSet containsObject:pid] ? @"网络" :
-                                        ([localSet containsObject:pid] ? @"本地" : @"?");
-                        [merged addObject:@{@"pid": pid, @"price": verifiedPrices[pid], @"src": src}];
-                    }
+                NSMutableArray *merged = [NSMutableArray array];
+                NSSet *netSet = [NSSet setWithArray:netPIDs];
+                for (NSString *pid in verifiedPrices) {
+                    NSString *src = [netSet containsObject:pid] ? @"网络" : @"本地";
+                    [merged addObject:@{@"pid": pid, @"price": verifiedPrices[pid], @"src": src}];
+                }
+                [merged sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+                    double pa = mfParsePrice(a[@"price"]), pb = mfParsePrice(b[@"price"]);
+                    return pa < pb ? NSOrderedAscending : (pa > pb ? NSOrderedDescending : NSOrderedSame);
+                }];
 
-                    // 按价格从低到高排序
-                    [merged sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
-                        double pa = mfParsePrice(a[@"price"]);
-                        double pb = mfParsePrice(b[@"price"]);
-                        if (pa < pb) return NSOrderedAscending;
-                        if (pa > pb) return NSOrderedDescending;
-                        return NSOrderedSame;
-                    }];
+                if (merged.count == 0) {
+                    UILabel *e = [[UILabel alloc] initWithFrame:CGRectMake(16, g_mfCardH/2 - 40, g_mfCardW - 32, 90)];
+                    e.numberOfLines = 0;
+                    e.textAlignment = NSTextAlignmentCenter;
+                    e.textColor = [UIColor secondaryLabelColor];
+                    e.font = [UIFont systemFontOfSize:12];
+                    e.text = [NSString stringWithFormat:@"未验证到有效的 IAP 产品\n候选 %lu 个全被 Apple 判无效\n\n抓包路径: 开实时捕获→杀App冷启动→逛购买页→再来扫", (unsigned long)toVerify.count];
+                    [page addSubview:e];
+                    return;
+                }
 
-                    if (merged.count == 0) {
-                        UILabel *e = [[UILabel alloc] initWithFrame:CGRectMake(16, 100, g_mfCardW - 32, 40)];
-                        e.text = @"未找到 IAP 产品"; e.textAlignment = NSTextAlignmentCenter;
-                        e.textColor = [UIColor secondaryLabelColor]; [page addSubview:e]; return;
-                    }
-
-                    UILabel *countLb = [[UILabel alloc] initWithFrame:CGRectMake(16, 46, g_mfCardW - 32, 20)];
-                    countLb.text = [NSString stringWithFormat:@"在线 %lu  本地验证 %lu（共 %d）",
-                        (unsigned long)onlineItems.count, (unsigned long)verifiedPrices.count, (int)merged.count];
-                    countLb.font = [UIFont systemFontOfSize:11];
-                    countLb.textColor = [UIColor tertiaryLabelColor];
-                    [page addSubview:countLb];
+                UILabel *countLb = [[UILabel alloc] initWithFrame:CGRectMake(16, 46, g_mfCardW - 32, 20)];
+                countLb.text = [NSString stringWithFormat:@"验证通过 %lu / 候选 %lu",
+                    (unsigned long)merged.count, (unsigned long)toVerify.count];
+                countLb.font = [UIFont systemFontOfSize:11];
+                countLb.textColor = [UIColor tertiaryLabelColor];
+                [page addSubview:countLb];
 
                     UIScrollView *sv = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 70, g_mfCardW, g_mfCardH - 70)];
                     CGFloat y = 8;
@@ -959,11 +887,11 @@ void mfShowProductPage(void) {
     mfLog(@"switch %@ -> %d", key, on);
 }
 
-// 网络捕获开关
+// 网络捕获开关（v2.0.1 持久化：默认开，手动关过则冷启动也不自动开）
 - (void)mfCaptureSwitchChanged:(UISwitch *)sw {
     g_captureEnabled = sw.on;
+    mfSetBoolPref(@"mfCaptureEnabled", sw.on);
     if (sw.on) {
-        // 开启时注册 NSURLProtocol（延迟注册——不影响未开启的 app）
         extern void mfInstallNetworkCapture(void);
         mfInstallNetworkCapture();
         mfLog(@"capture ON — NSURLProtocol registered");
@@ -1503,7 +1431,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define MINISFIX_VERSION @"2.0.0"
+#define MINISFIX_VERSION @"2.0.1"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
@@ -1536,8 +1464,12 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
             return;
         }
 
-        // 启动即捕获（v2.0.0）
-        mfMaybeAutoCaptureAtLaunch();
+        // 实时捕获默认开启(v2.0.1):一开 App 就在网里;用户手动关过则尊重
+        if (mfPrefBool(@"mfCaptureEnabled", YES)) {
+            g_captureEnabled = YES;
+            extern void mfInstallNetworkCapture(void);
+            mfInstallNetworkCapture();
+        }
 
         // IAP 收集
         ensureStoreKit();
