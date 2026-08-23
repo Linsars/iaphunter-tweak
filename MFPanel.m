@@ -265,15 +265,21 @@ static BOOL mfPIDShaped(NSString *s) {
     if ([s rangeOfCharacterFromSet:ok.invertedSet].location != NSNotFound) return NO;
     if (![s containsString:@"."] && ![s containsString:@"_"] && ![s containsString:@"-"]) return NO;
     NSString *low = s.lowercaseString;
-    static NSArray *kws = nil;
+    // 按分隔符切段后整段匹配——containsString 会把 processing/provider 这类子串全放进来(v2.1.0 教训: 12627 候选)
+    static NSArray *segKws = nil;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        kws = @[@"iap", @"purchase", @"premium", @"pro", @"vip", @"plus", @"unlock",
-            @"lifetime", @"donate", @"donation", @"subscription", @"weekly", @"monthly",
-            @"yearly", @"annual", @"gold", @"coin", @"gem", @"credit", @"token",
-            @"pack", @"upgrade", @"member", @"tier", @"supporter", @"byok", @"perk"];
+        segKws = @[@"iap", @"iaps", @"purchase", @"premium", @"pro", @"vip", @"plus",
+            @"unlock", @"unlocked", @"lifetime", @"donate", @"donation", @"subs",
+            @"subscription", @"weekly", @"monthly", @"yearly", @"annual", @"gold",
+            @"coins", @"gem", @"gems", @"credit", @"credits", @"token", @"tokens",
+            @"pack", @"upgrade", @"member", @"tier", @"supporter", @"byok", @"perks"];
     });
-    for (NSString *k in kws) if ([low containsString:k]) return YES;
+    NSArray *parts = [low componentsSeparatedByCharactersInSet:
+        [[NSCharacterSet alphanumericCharacterSet] invertedSet]];
+    for (NSString *part in parts) {
+        if (part.length >= 3 && [segKws containsObject:part]) return YES;
+    }
     NSString *bid = [[NSBundle mainBundle] bundleIdentifier] ?: @"";
     NSArray *seg = [bid componentsSeparatedByString:@"."];
     if (seg.count >= 2) {
@@ -489,9 +495,18 @@ void mfShowScanPage(void) {
         dispatch_async(dispatch_get_main_queue(), ^{ mfProbeStoreKit2(); });
 
         NSMutableSet *seen = [NSMutableSet setWithArray:localCandidates];
-        NSMutableArray *toVerify = [NSMutableArray arrayWithArray:localCandidates];
-        for (NSString *pid in netPIDs) {
-            if (![seen containsObject:pid]) { [toVerify addObject:pid]; [seen addObject:pid]; }
+        NSMutableArray *toVerify = [NSMutableArray arrayWithArray:netPIDs];      // 网络提取最优先
+        for (NSString *pid in localCandidates) [toVerify addObject:pid];
+        NSString *bid2 = [[NSBundle mainBundle] bundleIdentifier] ?: @"";
+        NSArray *bseg = [bid2 componentsSeparatedByString:@"."];
+        NSString *hostPref = bseg.count >= 2 ? [[NSString stringWithFormat:@"%@.%@", bseg[0], bseg[1]] lowercaseString] : @"";
+        [toVerify sortUsingComparator:^NSComparisonResult(NSString *a, NSString *b) {
+            BOOL ah = [a.lowercaseString hasPrefix:hostPref], bh = [b.lowercaseString hasPrefix:hostPref];
+            return ah == bh ? NSOrderedSame : (ah ? NSOrderedAscending : NSOrderedDescending);
+        }];
+        if (toVerify.count > 500) {
+            mfLog(@"[iap] candidates %lu → capped 500 (host-prefix first)", (unsigned long)toVerify.count);
+            toVerify = [[toVerify subarrayWithRange:NSMakeRange(0, 500)] mutableCopy];
         }
 
         // 2. SKProductsRequest 统一验证（Apple 裁判：有效才带价格回来）
@@ -1434,7 +1449,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define MINISFIX_VERSION @"2.1.0"
+#define MINISFIX_VERSION @"2.1.1"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
