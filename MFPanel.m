@@ -1258,41 +1258,42 @@ static id new_SKProductsReq_init(id self, SEL _cmd, NSSet *identifiers) {
 }
 
 
-// ====== StoreKit 2 探针(v1.9.6):枚举运行时 ASK*/AppStoreKit 类及可疑方法 ======
+// ====== StoreKit 2 侦察(v2.1.2):全量枚举 AppStoreKit 镜像类+方法表并落盘 ======
 static void mfProbeStoreKit2(void) {
     unsigned n = 0;
     Class *cs = objc_copyClassList(&n);
-    int askCls = 0, logged = 0;
-    NSMutableString *out = [NSMutableString string];
+    NSMutableString *out = [NSMutableString stringWithCapacity:1 << 16];
+    int clsCount = 0, methodCount = 0;
     for (unsigned i = 0; i < n; i++) {
         const char *nm = class_getName(cs[i]);
-        if (!strstr(nm, "ASK") && !strstr(nm, "AppStoreKit")) continue;
-        askCls++;
-        if (logged > 12) continue;
-        // 枚举实例+类方法里含 product/id/fetch/request 的 selector
+        const char *img = class_getImageName(cs[i]);
+        BOOL inASK = (strstr(nm, "ASK") == nm) || (img && strstr(img, "AppStoreKit"));
+        if (!inASK) continue;
+        clsCount++;
+        [out appendFormat:@"== %s  [%s]\n", nm, img ? [@(img) lastPathComponent].UTF8String : "?"];
         for (int meta = 0; meta < 2; meta++) {
             Class c = meta ? object_getClass(cs[i]) : cs[i];
             unsigned mc = 0;
             Method *ms = class_copyMethodList(c, &mc);
             for (unsigned j = 0; j < mc; j++) {
-                NSString *sel = NSStringFromSelector(method_getName(ms[j]));
-                NSRange r = [sel rangeOfString:@"(?i)(product|fetch|request|identifier)" options:NSRegularExpressionSearch];
-                if (r.location == NSNotFound) continue;
-                [out appendFormat:@"  [%@ %@] %@\n", nm, meta ? @"+" : @"-", sel];
-                logged++;
-                if (logged > 40) break;
+                [out appendFormat:@"  %c %s\n", meta ? '+' : '-', sel_getName(method_getName(ms[j]))];
+                methodCount++;
             }
             free(ms);
-            if (logged > 40) break;
         }
+        [out appendString:@"\n"];
     }
     free(cs);
-    if (askCls > 0) {
-        mfLog(@"[iap] StoreKit2 探针: 运行时存在 %d 个 ASK/AppStoreKit 类", askCls);
-        if (out.length) mfLog(@"[iap] 可疑方法:\n%@", out);
-    } else {
-        mfLog(@"[iap] StoreKit2 探针: 无 ASK/AppStoreKit 类——SK1-only 或未初始化");
+    if (!clsCount) {
+        mfLog(@"[iap] SK2 枚举: 进程内无 AppStoreKit 类——先打开一次购买页再扫描");
+        return;
     }
+    NSString *dir = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0]
+                        stringByAppendingPathComponent:@"classdump"];
+    [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+    NSString *path = [dir stringByAppendingPathComponent:@"AppStoreKit_runtime.txt"];
+    [out writeToFile:path atomically:NSUTF8StringEncoding error:nil];
+    mfLog(@"[iap] SK2 枚举: %d 类 / %d 方法 → %@", clsCount, methodCount, path);
 }
 
 static void swizzle(Class cls, SEL sel, IMP newImp, IMP *origOut) {
@@ -1449,7 +1450,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define MINISFIX_VERSION @"2.1.1"
+#define MINISFIX_VERSION @"2.1.2"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
