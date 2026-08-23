@@ -369,11 +369,11 @@ static NSArray *mfScanLocalProductIDs(void) {
     while (queue.count && files < 400) {
         NSURL *dirURL = [queue firstObject];
         [queue removeObjectAtIndex:0];
-        NSArray *items = [fm contentsOfDirectoryAtURL:dirURL includingPropertiesForKeys:@[NSFileSizeKey, NSIsDirectoryKey] options:NSDirectoryEnumerationSkipsHiddenFiles error:nil];
+        NSArray *items = [fm contentsOfDirectoryAtURL:dirURL includingPropertiesForKeys:@[NSURLFileSizeKey, NSURLIsDirectoryKey] options:NSDirectoryEnumerationSkipsHiddenFiles error:nil];
         for (NSURL *u in items) {
             NSNumber *isDir = nil, *size = nil;
-            [u getResourceValue:&isDir forKey:NSIsDirectoryKey error:nil];
-            [u getResourceValue:&size forKey:NSFileSizeKey error:nil];
+            [u getResourceValue:&isDir forKey:NSURLIsDirectoryKey error:nil];
+            [u getResourceValue:&size forKey:NSURLFileSizeKey error:nil];
             if ([isDir boolValue]) { [queue addObject:u]; continue; }
             unsigned long long sz = size.unsignedLongLongValue;
             if (sz == 0 || sz > 4 * 1024 * 1024) continue;
