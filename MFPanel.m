@@ -1236,6 +1236,7 @@ static id new_SKProductsReq_init(id self, SEL _cmd, NSSet *identifiers) {
 
 
 // ====== StoreKit 2 探针(v1.9.6):枚举运行时 ASK*/AppStoreKit 类及可疑方法 ======
+static void mfProbeStoreKit2(void);  // 前向声明——定义在 SK hooks 区
 static void mfProbeStoreKit2(void) {
     unsigned n = 0;
     Class *cs = objc_copyClassList(&n);
