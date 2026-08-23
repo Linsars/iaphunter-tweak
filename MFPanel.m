@@ -1292,7 +1292,7 @@ static void mfProbeStoreKit2(void) {
                         stringByAppendingPathComponent:@"classdump"];
     [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
     NSString *path = [dir stringByAppendingPathComponent:@"AppStoreKit_runtime.txt"];
-    [out writeToFile:path atomically:NSUTF8StringEncoding error:nil];
+    [out writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
     mfLog(@"[iap] SK2 枚举: %d 类 / %d 方法 → %@", clsCount, methodCount, path);
 }
 
