@@ -316,25 +316,44 @@ static NSArray *mfScanLocalProductIDs(void) {
     return [[found allObjects] sortedArrayUsingSelector:@selector(compare:)];
 }
 
-// ====== 命名惯例组合候选(v1.9.7):bundle 前缀 × 常见内购后缀,交给 SKProductsRequest 验证 ======
+// ====== 命名惯例组合候选(v1.9.8 多前缀版):所有观测到的二段前缀 × 内购后缀 ======
 static NSArray *mfGenerateComboPIDs(void) {
+    // 1) 前缀集合:bundleId 二段前缀 + 本地扫描字符串里频次最高的前二段组合
+    NSMutableSet *hosts = [NSMutableSet set];
     NSString *bid = [[NSBundle mainBundle] bundleIdentifier] ?: @"";
-    NSArray *seg = [bid componentsSeparatedByString:@"."];
-    if (seg.count < 2) return @[];
-    NSString *host = [NSString stringWithFormat:@"%@.%@", seg[0], seg[1]];
+    NSArray *bseg = [bid componentsSeparatedByString:@"."];
+    if (bseg.count >= 2) [hosts addObject:[NSString stringWithFormat:@"%@.%@", bseg[0], bseg[1]]];
+    for (NSString *pid in mfScanLocalProductIDs()) {
+        NSArray *p = [pid componentsSeparatedByString:@"."];
+        if (p.count >= 2 && p[0].length && p[1].length)
+            [hosts addObject:[NSString stringWithFormat:@"%@.%@", p[0], p[1]]];
+    }
+    // 2) 后缀字典
     NSArray *kw = @[@"premium", @"pro", @"vip", @"plus", @"unlock", @"full", @"paid",
         @"lifetime", @"donate", @"donation", @"subscription", @"sub", @"weekly", @"monthly",
         @"yearly", @"annual", @"month", @"year", @"week", @"gold", @"coins", @"credits",
         @"gems", @"tokens", @"pack", @"upgrade", @"access", @"member", @"tier", @"basic"];
+    NSArray *mid = @[@"", @"iap.", @"subscription.", @"purchase."];
     NSMutableSet *set = [NSMutableSet set];
-    [set addObject:[NSString stringWithFormat:@"%@.iap", host]];
-    [set addObject:[NSString stringWithFormat:@"%@.purchase", host]];
-    for (NSString *k in kw) {
-        [set addObject:[NSString stringWithFormat:@"%@.%@", host, k]];
-        [set addObject:[NSString stringWithFormat:@"%@.iap.%@", host, k]];
-        [set addObject:[NSString stringWithFormat:@"%@.subscription.%@", host, k]];
+    for (NSString *host in hosts) {
+        [set addObject:[NSString stringWithFormat:@"%@.iap", host]];
+        [set addObject:[NSString stringWithFormat:@"%@.purchase", host]];
+        for (NSString *m in mid) {
+            for (NSString *k in kw) {
+                NSString *id2 = m.length ? [NSString stringWithFormat:@"%@.%@%@", host, m, k]
+                                         : [NSString stringWithFormat:@"%@.%@", host, k];
+                [set addObject:id2];
+            }
+        }
+        // 高频关键词的第二层计费周期
+        for (NSString *k in @[@"premium", @"pro", @"vip", @"unlock"]) {
+            for (NSString *c in @[@"monthly", @"yearly", @"lifetime", @"weekly"])
+                [set addObject:[NSString stringWithFormat:@"%@.%@.%@", host, k, c]];
+        }
     }
-    return set.allObjects;
+    NSArray *out = set.allObjects;
+    mfLog(@"[iap] combo hosts=%lu total=%lu", (unsigned long)hosts.count, (unsigned long)out.count);
+    return out;
 }
 
 
@@ -1458,7 +1477,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define MINISFIX_VERSION @"1.9.7"
+#define MINISFIX_VERSION @"1.9.8"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
