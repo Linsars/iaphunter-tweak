@@ -1329,6 +1329,19 @@ static void mfProbeStoreKit2(void) {
 static IMP orig_SK2ReceivedResponse = nil;
 static BOOL g_sk2HookInstalled = NO;
 
+
+// ====== 零消息安全探测(v2.2.6):XPC 代理元素连 respondsToSelector 都会远程转发 ======
+// 直接查本地类方法表:命中 _objc_msgForward 说明该方法会转发,一律跳过
+extern IMP _objc_msgForward;
+
+static BOOL mfLocalResponds(id obj, SEL sel) {
+    if (!obj) return NO;
+    Class c = object_getClass(obj);
+    if (!c) return NO;
+    IMP imp = class_getMethodImplementation(c, sel);
+    return imp && imp != (IMP)_objc_msgForward;
+}
+
 static void my_SK2ReceivedResponse(id self, SEL _cmd, id resp) {
     ((void(*)(id, SEL, id))orig_SK2ReceivedResponse)(self, _cmd, resp);
     // v2.2.5 铁律：resp 可能是 XPC 远端代理(_NSXPCDistantObject),
@@ -1337,10 +1350,15 @@ static void my_SK2ReceivedResponse(id self, SEL _cmd, id resp) {
     // 只允许 isKindOfClass(本地应答) + NSData 字节扫描 + NSArray 本地遍历
     @try {
         if ([resp isKindOfClass:[NSArray class]]) {
+            // 数组元素也可能是远端代理/已释放对象(.ips 实锤 0xa3a3 填充),
+            // 用本地方法表直调替代任何 objc 消息发送
+            SEL pidSel = NSSelectorFromString(@"productIdentifier");
             for (id p in resp) {
-                if (![p respondsToSelector:NSSelectorFromString(@"productIdentifier")]) continue;
-                NSString *pid = [p performSelector:NSSelectorFromString(@"productIdentifier")];
-                if (pid.length) { IAPRecord(pid); mfLog(@"[iap] SK2 bridge pid: %@", pid); }
+                @try {
+                    if (!mfLocalResponds(p, pidSel)) continue;
+                    NSString *pid = ((NSString *(*)(id, SEL))class_getMethodImplementation(object_getClass(p), pidSel))(p, pidSel);
+                    if (pid.length) { IAPRecord(pid); mfLog(@"[iap] SK2 bridge pid: %@", pid); }
+                } @catch (NSException *e) { /* 单元素异常不拖累整体 */ }
             }
         } else if ([resp isKindOfClass:[NSData class]]) {
             // _NSInlineData(XPC 原始块):ID 以明文嵌在序列化体里(bplist/JSON 均含),
@@ -1549,7 +1567,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define MINISFIX_VERSION @"2.2.5"
+#define MINISFIX_VERSION @"2.2.6"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
