@@ -1481,14 +1481,16 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define MINISFIX_VERSION @"2.3.0"
+#define MINISFIX_VERSION @"2.3.1"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
         NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
-        // v2.3.0 系统进程守卫（必须最先执行）：注入器会把插件塞进 Apple 守护进程,
-        // 在 appstored/SpringBoard 等环境里任何 hook 都是系统级事故(.ips 实锤)
-        if (!bid.length || [bid.lowercaseString hasPrefix:@"com.apple."]) return;
+        // v2.3.1 系统进程守卫（必须最先执行）：注入器会把插件塞进 Apple 守护进程,
+        // 在 appstored/SpringBoard 等环境里任何 hook 都是系统级事故(.ips 实锤)。
+        // 豁免 com.apple.TestFlight——beta 测试宿主,TestFlight 增强功能依赖它
+        BOOL isTestFlight = [bid isEqualToString:@"com.apple.TestFlight"];
+        if (!isTestFlight && (![bid.length] || [bid.lowercaseString hasPrefix:@"com.apple."])) return;
         mfLog(@"=== MinisFix ctor ENTER pid=%d app=%@ version=%@ ===", getpid(), bid, MINISFIX_VERSION);
 
         // TestFlight 增强（独立于 IAP工具箱，始终检查）
