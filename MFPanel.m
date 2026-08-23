@@ -1332,7 +1332,7 @@ static BOOL g_sk2HookInstalled = NO;
 
 // ====== 零消息安全探测(v2.2.6):XPC 代理元素连 respondsToSelector 都会远程转发 ======
 // 直接查本地类方法表:命中 _objc_msgForward 说明该方法会转发,一律跳过
-extern IMP _objc_msgForward;
+extern id _objc_msgForward(id self, SEL _cmd);
 
 static BOOL mfLocalResponds(id obj, SEL sel) {
     if (!obj) return NO;
