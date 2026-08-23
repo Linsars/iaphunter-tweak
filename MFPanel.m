@@ -1267,8 +1267,10 @@ static void mfProbeStoreKit2(void) {
     for (unsigned i = 0; i < n; i++) {
         const char *nm = class_getName(cs[i]);
         const char *img = class_getImageName(cs[i]);
-        BOOL inASK = (strstr(nm, "ASK") == nm) || (img && strstr(img, "AppStoreKit"));
+        BOOL inASK = (strstr(nm, "ASK") == nm)
+                  || (img && (strstr(img, "AppStoreKit") || strstr(img, "StoreKit")));
         if (!inASK) continue;
+        if (img && strstr(img, "StoreKitUI")) continue; // 排除商店 UI 框架降噪
         clsCount++;
         [out appendFormat:@"== %s  [%s]\n", nm, img ? [@(img) lastPathComponent].UTF8String : "?"];
         for (int meta = 0; meta < 2; meta++) {
@@ -1450,7 +1452,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define MINISFIX_VERSION @"2.1.2"
+#define MINISFIX_VERSION @"2.1.3"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
