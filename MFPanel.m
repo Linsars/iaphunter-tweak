@@ -467,7 +467,10 @@ void mfShowScanPage(void) {
         mfLog(@"scan local candidates: %d", (int)localCandidates.count);
 
         // 2. 在线查询
+        mfLog(@"[iap] local=%d → online query…", (int)localCandidates.count);
+        dispatch_async(dispatch_get_main_queue(), ^{ mfProbeStoreKit2(); });
         mfFetchIAPList(^(NSArray *onlineItems, NSString *err) {
+            if (err || !onlineItems.count) mfLog(@"[iap] online query dead: %@", err ?: @"0 items");
             NSMutableDictionary *onlineMap = [NSMutableDictionary dictionary]; // pid -> price
             for (NSDictionary *item in onlineItems) {
                 if (item[@"pid"]) onlineMap[item[@"pid"]] = item[@"price"] ?: @"?";
@@ -479,7 +482,9 @@ void mfShowScanPage(void) {
                 if (!onlineMap[pid]) [toVerify addObject:pid];
             }
 
+            mfLog(@"[iap] SK verify queue: %lu ids", (unsigned long)toVerify.count);
             mfQueryLocalPrices(toVerify, ^(NSDictionary *verifiedPrices) {
+                mfLog(@"[iap] SK verified: %lu valid", (unsigned long)verifiedPrices.count);
                 dispatch_async(dispatch_get_main_queue(), ^{
                     [st removeFromSuperview];
 
@@ -1207,25 +1212,64 @@ static void ensureStoreKit(void) {
 static IMP orig_SKProduct_pid;
 static NSString *new_SKProduct_pid(id self, SEL _cmd) {
     NSString *r = ((NSString *(*)(id, SEL))orig_SKProduct_pid)(self, _cmd);
-    IAPRecord(r);
+    if (r) { IAPRecord(r); mfLog(@"[iap] SK1 SKProduct pid: %@", r); }
     return r;
 }
 static IMP orig_SKPayment_pid;
 static NSString *new_SKPayment_pid(id self, SEL _cmd) {
     NSString *r = ((NSString *(*)(id, SEL))orig_SKPayment_pid)(self, _cmd);
-    IAPRecord(r);
+    if (r) { IAPRecord(r); mfLog(@"[iap] SK1 SKPayment pid: %@", r); }
     return r;
 }
 static IMP orig_SKPaymentTxn_pid;
 static NSString *new_SKPaymentTxn_pid(id self, SEL _cmd) {
     NSString *r = ((NSString *(*)(id, SEL))orig_SKPaymentTxn_pid)(self, _cmd);
-    IAPRecord(r);
+    if (r) { IAPRecord(r); mfLog(@"[iap] SK1 Transaction pid: %@", r); }
     return r;
 }
 static IMP orig_SKProductsReq_init;
 static id new_SKProductsReq_init(id self, SEL _cmd, NSSet *identifiers) {
+    mfLog(@"[iap] SK1 ProductsRequest: %lu ids → %@", (unsigned long)identifiers.count, identifiers);
     for (NSString *pid in identifiers) IAPRecord(pid);
     return ((id(*)(id, SEL, NSSet *))orig_SKProductsReq_init)(self, _cmd, identifiers);
+}
+
+
+// ====== StoreKit 2 探针(v1.9.6):枚举运行时 ASK*/AppStoreKit 类及可疑方法 ======
+static void mfProbeStoreKit2(void) {
+    unsigned n = 0;
+    Class *cs = objc_copyClassList(&n);
+    int askCls = 0, logged = 0;
+    NSMutableString *out = [NSMutableString string];
+    for (unsigned i = 0; i < n; i++) {
+        const char *nm = class_getName(cs[i]);
+        if (!strstr(nm, "ASK") && !strstr(nm, "AppStoreKit")) continue;
+        askCls++;
+        if (logged > 12) continue;
+        // 枚举实例+类方法里含 product/id/fetch/request 的 selector
+        for (int meta = 0; meta < 2; meta++) {
+            Class c = meta ? object_getClass(cs[i]) : cs[i];
+            unsigned mc = 0;
+            Method *ms = class_copyMethodList(c, &mc);
+            for (unsigned j = 0; j < mc; j++) {
+                NSString *sel = NSStringFromSelector(method_getName(ms[j]));
+                NSRange r = [sel rangeOfString:@"(?i)(product|fetch|request|identifier)" options:NSRegularExpressionSearch];
+                if (r.location == NSNotFound) continue;
+                [out appendFormat:@"  [%@ %@] %@\n", nm, meta ? @"+" : @"-", sel];
+                logged++;
+                if (logged > 40) break;
+            }
+            free(ms);
+            if (logged > 40) break;
+        }
+    }
+    free(cs);
+    if (askCls > 0) {
+        mfLog(@"[iap] StoreKit2 探针: 运行时存在 %d 个 ASK/AppStoreKit 类", askCls);
+        if (out.length) mfLog(@"[iap] 可疑方法:\n%@", out);
+    } else {
+        mfLog(@"[iap] StoreKit2 探针: 无 ASK/AppStoreKit 类——SK1-only 或未初始化");
+    }
 }
 
 static void swizzle(Class cls, SEL sel, IMP newImp, IMP *origOut) {
@@ -1382,7 +1426,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define MINISFIX_VERSION @"1.9.5"
+#define MINISFIX_VERSION @"1.9.6"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
