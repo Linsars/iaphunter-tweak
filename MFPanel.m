@@ -294,7 +294,7 @@ static void mfQueryLocalPrices(NSArray *pids, void (^cb)(NSDictionary *pidToPric
 // 现代 App 内购列表由自家服务器下发(价格/文案/ID 打包成 JSON),
 // HTTP 层截获即得——不依赖 StoreKit 版本,对所有 App 生效
 static NSArray *mfExtractPIDsFromCaptures(void) {
-    NSMutableOrderedSet *out = [NSMutableOrderedSet orderedOrderedSet];
+    NSMutableOrderedSet *out = [NSMutableOrderedSet orderedSet];
     NSArray *recs = mfCapturedRecordsSnapshot();
     NSError *reErr = nil;
     // 键名形态: product_id / productId / productIdentifier / iap_id …
@@ -306,7 +306,7 @@ static NSArray *mfExtractPIDsFromCaptures(void) {
         NSString *body = [[NSString alloc] initWithData:r.respBody encoding:NSUTF8StringEncoding];
         if (!body) continue;
         [re enumerateMatchesInString:body options:0 range:NSMakeRange(0, body.length)
-            usingBlock:^(NSTextCheckingResult *m, NSTextCheckingResult *f, BOOL *stop) {
+            usingBlock:^(NSTextCheckingResult *m, NSMatchingFlags flags, BOOL *stop) {
                 NSString *pid = [body substringWithRange:[m rangeAtIndex:2]];
                 if (pid.length >= 4 && pid.length <= 80) [out addObject:pid];
             }];
