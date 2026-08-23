@@ -534,7 +534,7 @@ void mfShowScanPage(void) {
                     e.textAlignment = NSTextAlignmentCenter;
                     e.textColor = [UIColor secondaryLabelColor];
                     e.font = [UIFont systemFontOfSize:12];
-                    e.text = [NSString stringWithFormat:@"未验证到有效的 IAP 产品\n候选 %lu 个全被 Apple 判无效\n\n抓包路径: 开实时捕获→杀App冷启动→逛购买页→再来扫", (unsigned long)toVerify.count];
+                    e.text = [NSString stringWithFormat:@"未验证到有效的 IAP 产品（候选 %lu 全被 Apple 判无效）\n\n三条路任选其一后再来扫：\n① 进 App 升级/购买页逛一圈 → 重扫\n  （SK2 目录桥自动截，无需任何开关）\n② 在 App 里点一次真实购买再取消\n  （SK1 hook 日志现形）\n③ 仅当它从自家服务器拉配置时才需要：\n  网络分析开实时捕获 + 冷启动 + 逛页", (unsigned long)toVerify.count];
                     [page addSubview:e];
                     return;
                 }
