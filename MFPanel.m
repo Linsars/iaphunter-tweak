@@ -433,6 +433,7 @@ static void mfQueryLocalPrices(NSArray *pids, void (^cb)(NSDictionary *pidToPric
 
 // IAP 记录
 static void mfProbeStoreKit2(void);  // v1.9.6 SK2 探针,定义在文件后部
+static void mfInstallSK2BridgeHook(void);  // v2.2.0 SK2→SK1 桥,定义在文件后部
 
 static void IAPRecord(NSString *pid) {
     if (pid.length == 0) return;
@@ -1320,7 +1321,7 @@ static void my_SK2ReceivedResponse(id self, SEL _cmd, id resp) {
                 if (pid.length) { IAPRecord(pid); mfLog(@"[iap] SK2 bridge pid: %@", pid); }
             }
         } else {
-            mfLog(@"[iap] SK2 receivedResponse arg=%@ (未知形态,记录待适配)", NSStringFromClass(resp.class));
+            mfLog(@"[iap] SK2 receivedResponse arg=%@ (未知形态,记录待适配)", NSStringFromClass([resp class]));
         }
     } @catch (NSException *e) {
         mfLog(@"[iap] SK2 bridge parse err: %@", e.reason);
