@@ -1490,7 +1490,7 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
         // 在 appstored/SpringBoard 等环境里任何 hook 都是系统级事故(.ips 实锤)。
         // 豁免 com.apple.TestFlight——beta 测试宿主,TestFlight 增强功能依赖它
         BOOL isTestFlight = [bid isEqualToString:@"com.apple.TestFlight"];
-        if (!isTestFlight && (![bid.length] || [bid.lowercaseString hasPrefix:@"com.apple."])) return;
+        if (!isTestFlight && (bid.length == 0 || [bid.lowercaseString hasPrefix:@"com.apple."])) return;
         mfLog(@"=== MinisFix ctor ENTER pid=%d app=%@ version=%@ ===", getpid(), bid, MINISFIX_VERSION);
 
         // TestFlight 增强（独立于 IAP工具箱，始终检查）
