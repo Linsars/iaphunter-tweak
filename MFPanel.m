@@ -1331,13 +1331,13 @@ static BOOL g_sk2HookInstalled = NO;
 
 static void my_SK2ReceivedResponse(id self, SEL _cmd, id resp) {
     ((void(*)(id, SEL, id))orig_SK2ReceivedResponse)(self, _cmd, resp);
+    // v2.2.5 铁律：resp 可能是 XPC 远端代理(_NSXPCDistantObject),
+    // 对它调 performSelector = 同步远程调用,回包异常构建期还会二次抛出,
+    // @try 拦不住嵌套异常 → SIGABRT(v2.2.0-4 闪退真因,.ips 实锤)
+    // 只允许 isKindOfClass(本地应答) + NSData 字节扫描 + NSArray 本地遍历
     @try {
-        NSArray *arr = nil;
-        if ([resp isKindOfClass:[NSArray class]]) arr = resp;
-        else if ([resp respondsToSelector:NSSelectorFromString(@"products")])
-            arr = [resp performSelector:NSSelectorFromString(@"products")];
-        if ([arr isKindOfClass:[NSArray class]]) {
-            for (id p in arr) {
+        if ([resp isKindOfClass:[NSArray class]]) {
+            for (id p in resp) {
                 if (![p respondsToSelector:NSSelectorFromString(@"productIdentifier")]) continue;
                 NSString *pid = [p performSelector:NSSelectorFromString(@"productIdentifier")];
                 if (pid.length) { IAPRecord(pid); mfLog(@"[iap] SK2 bridge pid: %@", pid); }
@@ -1369,7 +1369,7 @@ static void my_SK2ReceivedResponse(id self, SEL _cmd, id resp) {
             }
             if (found) mfLog(@"[iap] SK2 blob total %d pids (%lu bytes)", found, (unsigned long)len);
         } else {
-            mfLog(@"[iap] SK2 receivedResponse arg=%@ (未知形态)", NSStringFromClass([resp class]));
+            mfLog(@"[iap] SK2 receivedResponse arg=%@ — XPC代理/opaque,不触碰", NSStringFromClass([resp class]));
         }
     } @catch (NSException *e) {
         mfLog(@"[iap] SK2 bridge parse err: %@", e.reason);
