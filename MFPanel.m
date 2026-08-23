@@ -455,7 +455,6 @@ static void mfQueryLocalPrices(NSArray *pids, void (^cb)(NSDictionary *pidToPric
 
 // IAP 记录
 static void mfProbeStoreKit2(void);  // v1.9.6 SK2 探针,定义在文件后部
-static void mfInstallSK2BridgeHook(void);  // v2.2.0 SK2→SK1 桥,定义在文件后部
 
 static void IAPRecord(NSString *pid) {
     if (pid.length == 0) return;
@@ -516,7 +515,6 @@ void mfShowScanPage(void) {
         NSArray *netPIDs = mfExtractPIDsFromCaptures();
         mfLog(@"[iap] local=%d net=%lu → SK verify", (int)localCandidates.count, (unsigned long)netPIDs.count);
         dispatch_async(dispatch_get_main_queue(), ^{ mfProbeStoreKit2(); });
-        mfInstallSK2BridgeHook();  // 兜底重试：购买页打开后类才加载的情况
 
         NSMutableSet *seen = [NSMutableSet setWithArray:localCandidates];
         NSMutableArray *toVerify = [NSMutableArray arrayWithArray:netPIDs];      // 网络提取最优先
@@ -1323,94 +1321,11 @@ static void mfProbeStoreKit2(void) {
 }
 
 
-// ====== SK2→SK1 桥拦截(v2.2.0) ======
-// StoreKit2 的 Product.products(for:) 内部走 ProductResponseReceiver<SKProduct>.receivedResponse:
-// 类名是泛型混淆串,按「含 ProductResponseReceiver」动态匹配,跨版本/跨 App 通用
-static IMP orig_SK2ReceivedResponse = nil;
-static BOOL g_sk2HookInstalled = NO;
-
-
-// ====== 零消息安全探测(v2.2.6):XPC 代理元素连 respondsToSelector 都会远程转发 ======
-// 直接查本地类方法表:命中 _objc_msgForward 说明该方法会转发,一律跳过
-
-static BOOL mfLocalResponds(id obj, SEL sel) {
-    if (!obj) return NO;
-    Class c = object_getClass(obj);
-    if (!c) return NO;
-    IMP imp = class_getMethodImplementation(c, sel);
-    return imp && imp != (IMP)&_objc_msgForward;
-}
-
-static void my_SK2ReceivedResponse(id self, SEL _cmd, id resp) {
-    ((void(*)(id, SEL, id))orig_SK2ReceivedResponse)(self, _cmd, resp);
-    // v2.2.5 铁律：resp 可能是 XPC 远端代理(_NSXPCDistantObject),
-    // 对它调 performSelector = 同步远程调用,回包异常构建期还会二次抛出,
-    // @try 拦不住嵌套异常 → SIGABRT(v2.2.0-4 闪退真因,.ips 实锤)
-    // 只允许 isKindOfClass(本地应答) + NSData 字节扫描 + NSArray 本地遍历
-    @try {
-        if ([resp isKindOfClass:[NSArray class]]) {
-            // 数组元素也可能是远端代理/已释放对象(.ips 实锤 0xa3a3 填充),
-            // 用本地方法表直调替代任何 objc 消息发送
-            SEL pidSel = NSSelectorFromString(@"productIdentifier");
-            for (id p in resp) {
-                @try {
-                    if (!mfLocalResponds(p, pidSel)) continue;
-                    NSString *pid = ((NSString *(*)(id, SEL))class_getMethodImplementation(object_getClass(p), pidSel))(p, pidSel);
-                    if (pid.length) { IAPRecord(pid); mfLog(@"[iap] SK2 bridge pid: %@", pid); }
-                } @catch (NSException *e) { /* 单元素异常不拖累整体 */ }
-            }
-        } else if ([resp isKindOfClass:[NSData class]]) {
-            // _NSInlineData(XPC 原始块):ID 以明文嵌在序列化体里(bplist/JSON 均含),
-            // 直接按可打印串切走 mfPIDShaped 门控——容器格式无关
-            NSData *d = (NSData *)resp;
-            const uint8_t *b = d.bytes;
-            NSUInteger len = d.length;
-            NSMutableString *cur = [NSMutableString string];
-            int found = 0;
-            // v2.2.4 修复：i < len 严格边界（原 i <= len 在哨兵位解引用 b[len]，
-            // XPC 缓冲区贴页边界时直接 EXC_BAD_ACCESS——NASPlayerApp 闪退根因）
-            for (NSUInteger i = 0; i < len; i++) {
-                uint8_t c = b[i];
-                if (c >= 0x20 && c < 0x7F) { [cur appendFormat:@"%c", c]; continue; }
-                if (cur.length >= 6 && mfPIDShaped(cur) && !mfPIDExcluded(cur)) {
-                    IAPRecord(cur);
-                    found++;
-                    if (found <= 25) mfLog(@"[iap] SK2 blob pid: %@", cur);
-                }
-                [cur setString:@""];
-            }
-            // 尾段收尾（循环内不再越界）
-            if (cur.length >= 6 && mfPIDShaped(cur) && !mfPIDExcluded(cur)) {
-                IAPRecord(cur);
-                found++;
-            }
-            if (found) mfLog(@"[iap] SK2 blob total %d pids (%lu bytes)", found, (unsigned long)len);
-        } else {
-            mfLog(@"[iap] SK2 receivedResponse arg=%@ — XPC代理/opaque,不触碰", NSStringFromClass([resp class]));
-        }
-    } @catch (NSException *e) {
-        mfLog(@"[iap] SK2 bridge parse err: %@", e.reason);
-    }
-}
-
-static void mfInstallSK2BridgeHook(void) {
-    if (g_sk2HookInstalled) return;
-    unsigned n = 0;
-    Class *cs = objc_copyClassList(&n);
-    int hit = 0;
-    for (unsigned i = 0; i < n; i++) {
-        const char *nm = class_getName(cs[i]);
-        if (!strstr(nm, "ProductResponseReceiver")) continue;
-        Class c = cs[i];
-        Method m = class_getInstanceMethod(c, NSSelectorFromString(@"receivedResponse:"));
-        if (!m) continue;
-        orig_SK2ReceivedResponse = method_getImplementation(m);
-        method_setImplementation(m, (IMP)my_SK2ReceivedResponse);
-        hit++;
-    }
-    free(cs);
-    if (hit) { g_sk2HookInstalled = YES; mfLog(@"[iap] SK2 bridge hooked (%d classes)", hit); }
-}
+// ====== SK2→SK1 桥拦截:已移除(v2.2.7) ======
+// 两份 .ips 证明 receivedResponse: 只收 SK1 管线回声(含我们自己的验证请求),
+// App 的 SK2 目录走纯 Swift 路径不经过此 ObjC 桥;而参数里全是 XPC 远端代理,
+// 任何方法调用都可能"异常构建期二次抛出"→SIGABRT。
+// 零收益全风险 → 整体拆除。SK2 App 的 ID 获取依赖:静态扫描+缓存扫描+网络提取+SK验证。
 
 static void swizzle(Class cls, SEL sel, IMP newImp, IMP *origOut) {
     Method m = class_getInstanceMethod(cls, sel);
@@ -1566,7 +1481,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define MINISFIX_VERSION @"2.2.6"
+#define MINISFIX_VERSION @"2.2.7"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
@@ -1603,7 +1518,6 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
         // 需要抓包时在网络分析页手动开(开关状态持久化,关过就不再自动开)
 
         // SK2→SK1 桥拦截（SK2 App 的产品目录必经之路）
-        mfInstallSK2BridgeHook();
 
         // IAP 收集
         ensureStoreKit();
