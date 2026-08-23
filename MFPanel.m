@@ -361,6 +361,28 @@ static NSArray *mfScanLocalProductIDs(void) {
             }
         }
     }
+    // v2.2.3: SK2 产品目录磁盘缓存——Library/Caches 下递归扫小文件(含 StoreKit/storeservicesd 缓存)
+    NSString *cacheRoot = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES)[0];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSMutableArray<NSURL *> *queue = [NSMutableArray arrayWithObject:[NSURL fileURLWithPath:cacheRoot]];
+    int files = 0;
+    while (queue.count && files < 400) {
+        NSURL *dirURL = [queue firstObject];
+        [queue removeObjectAtIndex:0];
+        NSArray *items = [fm contentsOfDirectoryAtURL:dirURL includingPropertiesForKeys:@[NSFileSizeKey, NSIsDirectoryKey] options:NSDirectoryEnumerationSkipsHiddenFiles error:nil];
+        for (NSURL *u in items) {
+            NSNumber *isDir = nil, *size = nil;
+            [u getResourceValue:&isDir forKey:NSIsDirectoryKey error:nil];
+            [u getResourceValue:&size forKey:NSFileSizeKey error:nil];
+            if ([isDir boolValue]) { [queue addObject:u]; continue; }
+            unsigned long long sz = size.unsignedLongLongValue;
+            if (sz == 0 || sz > 4 * 1024 * 1024) continue;
+            [found unionSet:mfScanFileForPIDs(u.path)];
+            files++;
+            if (files >= 400) break;
+        }
+    }
+    mfLog(@"[iap] cache sweep: %d files from %@", files, cacheRoot.lastPathComponent);
     return [[found allObjects] sortedArrayUsingSelector:@selector(compare:)];
 }
 
