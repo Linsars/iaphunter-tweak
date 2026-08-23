@@ -255,6 +255,38 @@ void mfShowNetworkModifyPage(void);  // MFNetworkCapture.m
 
 // ====== 本地二进制扫描 ======
 // 前向声明
+
+// ====== PID 形态判定(v2.0.3):不限 com. 前缀——反向域名与下划线 slug 都收 ======
+// 必须含 IAP 语义关键词或匹配 bundleId 主机段,否则二进制点分字符串噪声爆炸
+static BOOL mfPIDShaped(NSString *s) {
+    if (s.length < 6 || s.length > 80) return NO;
+    NSCharacterSet *ok = [NSCharacterSet characterSetWithCharactersInString:
+        @"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"];
+    if ([s rangeOfCharacterFromSet:ok.invertedSet].location != NSNotFound) return NO;
+    if (![s containsString:@"."] && ![s containsString:@"_"] && ![s containsString:@"-"]) return NO;
+    NSString *low = s.lowercaseString;
+    static NSArray *kws = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        kws = @[@"iap", @"purchase", @"premium", @"pro", @"vip", @"plus", @"unlock",
+            @"lifetime", @"donate", @"donation", @"subscription", @"weekly", @"monthly",
+            @"yearly", @"annual", @"gold", @"coin", @"gem", @"credit", @"token",
+            @"pack", @"upgrade", @"member", @"tier", @"supporter", @"byok", @"perk"];
+    });
+    for (NSString *k in kws) if ([low containsString:k]) return YES;
+    NSString *bid = [[NSBundle mainBundle] bundleIdentifier] ?: @"";
+    NSArray *seg = [bid componentsSeparatedByString:@"."];
+    if (seg.count >= 2) {
+        NSString *host = [[NSString stringWithFormat:@"%@.%@", seg[0], seg[1]] lowercaseString];
+        if ([low hasPrefix:host]) return YES;
+    }
+    return NO;
+}
+static BOOL mfPIDExcluded(NSString *s) {
+    return [s hasPrefix:@"com.apple."] || [s hasPrefix:@"com.facebook."] ||
+           [s hasPrefix:@"com.google."] || [s hasPrefix:@"com.adjust."] ||
+           [s hasPrefix:@"com.appsflyer."] || [s hasPrefix:@"com.branch."];
+}
 static NSSet *mfScanFileForPIDs(NSString *path);
 static void mfQueryLocalPrices(NSArray *pids, void (^cb)(NSDictionary *pidToPrice));
 
@@ -342,43 +374,15 @@ static NSSet *mfScanFileForPIDs(NSString *path) {
         if (c >= 0x20 && c < 0x7F) {
             [current appendFormat:@"%c", c];
         } else {
-            if (current.length >= 10 && [current hasPrefix:@"com."]) {
-                // 至少3段（com.xxx.xxx），排除系统框架标识符
-                NSInteger dots = 0;
-                for (NSUInteger j = 0; j < current.length; j++) {
-                    if ([current characterAtIndex:j] == '.') dots++;
-                }
-                if (dots >= 2) {
-                    NSString *s = [current copy];
-                    // 排除已知系统前缀
-                    if ([s hasPrefix:@"com.apple."] ||
-                        [s hasPrefix:@"com.facebook.sdk."] ||
-                        [s hasPrefix:@"com.google."] ||
-                        [s hasPrefix:@"com.adjust."] ||
-                        [s hasPrefix:@"com.appsflyer."] ||
-                        [s hasPrefix:@"com.branch."]) {
-                        // skip
-                    } else {
-                        [pids addObject:s];
-                    }
-                }
+            if (current.length >= 6 && mfPIDShaped(current)) {
+                NSString *sv = [current copy];
+                if (!mfPIDExcluded(sv)) [pids addObject:sv];
             }
             [current setString:@""];
         }
     }
-    if (current.length >= 10 && [current hasPrefix:@"com."]) {
-        NSInteger dots = 0;
-        for (NSUInteger j = 0; j < current.length; j++) {
-            if ([current characterAtIndex:j] == '.') dots++;
-        }
-        if (dots >= 2) {
-            NSString *s = [current copy];
-            if (![s hasPrefix:@"com.apple."] && ![s hasPrefix:@"com.facebook.sdk."] &&
-                ![s hasPrefix:@"com.google."] && ![s hasPrefix:@"com.adjust."] &&
-                ![s hasPrefix:@"com.appsflyer."] && ![s hasPrefix:@"com.branch."]) {
-                [pids addObject:s];
-            }
-        }
+    if (current.length >= 6 && mfPIDShaped(current) && !mfPIDExcluded(current)) {
+        [pids addObject:[current copy]];
     }
     return pids;
 }
@@ -1430,7 +1434,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define MINISFIX_VERSION @"2.0.2"
+#define MINISFIX_VERSION @"2.1.0"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
