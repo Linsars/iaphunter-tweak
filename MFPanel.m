@@ -1481,7 +1481,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define MINISFIX_VERSION @"2.2.7"
+#define MINISFIX_VERSION @"2.2.8"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
@@ -1514,8 +1514,14 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
             return;
         }
 
-        // 实时捕获(v2.0.2):默认关闭——NSURLProtocol 全局拦截对部分 App 不稳定;
-        // 需要抓包时在网络分析页手动开(开关状态持久化,关过就不再自动开)
+        // 实时捕获(v2.2.8):默认 OFF;用户开过则持久化,冷启动即装协议——
+        // 解决"启动后才开开关截不到老会话"(v2.0.2 一刀切留下的坑)
+        if (mfPrefBool(@"mfCaptureEnabled", NO)) {
+            g_captureEnabled = YES;
+            extern void mfInstallNetworkCapture(void);
+            mfInstallNetworkCapture();
+            mfLog(@"capture restored from pref — active from launch");
+        }
 
         // SK2→SK1 桥拦截（SK2 App 的产品目录必经之路）
 
