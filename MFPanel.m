@@ -1350,8 +1350,10 @@ static void my_SK2ReceivedResponse(id self, SEL _cmd, id resp) {
             NSUInteger len = d.length;
             NSMutableString *cur = [NSMutableString string];
             int found = 0;
-            for (NSUInteger i = 0; i <= len; i++) {
-                uint8_t c = i < len ? b[i] : 0;
+            // v2.2.4 修复：i < len 严格边界（原 i <= len 在哨兵位解引用 b[len]，
+            // XPC 缓冲区贴页边界时直接 EXC_BAD_ACCESS——NASPlayerApp 闪退根因）
+            for (NSUInteger i = 0; i < len; i++) {
+                uint8_t c = b[i];
                 if (c >= 0x20 && c < 0x7F) { [cur appendFormat:@"%c", c]; continue; }
                 if (cur.length >= 6 && mfPIDShaped(cur) && !mfPIDExcluded(cur)) {
                     IAPRecord(cur);
@@ -1359,6 +1361,11 @@ static void my_SK2ReceivedResponse(id self, SEL _cmd, id resp) {
                     if (found <= 25) mfLog(@"[iap] SK2 blob pid: %@", cur);
                 }
                 [cur setString:@""];
+            }
+            // 尾段收尾（循环内不再越界）
+            if (cur.length >= 6 && mfPIDShaped(cur) && !mfPIDExcluded(cur)) {
+                IAPRecord(cur);
+                found++;
             }
             if (found) mfLog(@"[iap] SK2 blob total %d pids (%lu bytes)", found, (unsigned long)len);
         } else {
@@ -1542,7 +1549,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define MINISFIX_VERSION @"2.2.3"
+#define MINISFIX_VERSION @"2.2.4"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
