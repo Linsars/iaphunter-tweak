@@ -301,17 +301,40 @@ static NSArray *mfExtractPIDsFromCaptures(void) {
     NSRegularExpression *re = [NSRegularExpression
         regularExpressionWithPattern:@"\"(product[_]?[iI]d|productIdentifier|iap[_]?id|purchase[_]?id)\"\\s*:\\s*\"([^\"\\\\]{4,80})\""
         options:NSRegularExpressionCaseInsensitive error:&reErr];
+    // 兜底形态:任意 "id"/"identifier" 键下挂反向域名样式值(products 数组常用)
+    NSRegularExpression *re2 = [NSRegularExpression
+        regularExpressionWithPattern:@"\"(id|identifier)\":\"((?:com|app|net|io|org)\\.[A-Za-z0-9_.\\-/]{4,70})\""
+        options:NSRegularExpressionCaseInsensitive error:nil];
+    __block unsigned bodies = 0;
     for (MFNetRecord *r in recs) {
-        if (r.respBody.length < 8) continue;
-        NSString *body = [[NSString alloc] initWithData:r.respBody encoding:NSUTF8StringEncoding];
-        if (!body) continue;
-        [re enumerateMatchesInString:body options:0 range:NSMakeRange(0, body.length)
-            usingBlock:^(NSTextCheckingResult *m, NSMatchingFlags flags, BOOL *stop) {
-                NSString *pid = [body substringWithRange:[m rangeAtIndex:2]];
-                if (pid.length >= 4 && pid.length <= 80) [out addObject:pid];
-            }];
+        NSMutableString *both = [NSMutableString string];
+        NSString *b1 = [[NSString alloc] initWithData:r.respBody encoding:NSUTF8StringEncoding];
+        if (b1) [both appendString:b1];
+        NSString *b2 = [[NSString alloc] initWithData:r.reqBody encoding:NSUTF8StringEncoding];
+        if (b2) [both appendFormat:@"\n%@", b2];
+        if (both.length < 8) continue;
+        bodies++;
+        for (NSRegularExpression *rx in @[re, re2]) {
+            [rx enumerateMatchesInString:both options:0 range:NSMakeRange(0, both.length)
+                usingBlock:^(NSTextCheckingResult *m, NSMatchingFlags flags, BOOL *stop) {
+                    NSUInteger gi = m.numberOfRanges > 2 ? 2 : 1;
+                    if ([m rangeAtIndex:gi].location == NSNotFound) return;
+                    NSString *pid = [both substringWithRange:[m rangeAtIndex:gi]];
+                    if (pid.length >= 4 && pid.length <= 80) [out addObject:pid];
+                }];
+        }
     }
+    mfLog(@"[iap] net-scan bodies=%lu/%lu extracted=%lu", (unsigned long)bodies, (unsigned long)recs.count, (unsigned long)out.count);
     return out.array;
+}
+
+// 启动即捕获(v2.0.0):白名单 App 进程一起床就装协议,老会话也能进网
+static void mfMaybeAutoCaptureAtLaunch(void) {
+    if (!mfPrefBool(@"mfAutoCapture", NO)) return;
+    g_captureEnabled = YES;
+    extern void mfInstallNetworkCapture(void);
+    mfInstallNetworkCapture();
+    mfLog(@"[iap] auto-capture ON from launch");
 }
 
 static NSArray *mfScanLocalProductIDs(void) {
@@ -482,6 +505,20 @@ static double mfParsePrice(NSString *priceStr) {
 // 扫描购买页（本地扫描 + SKProductsRequest 验证 + 在线查询，去重合并，按价格排序）
 void mfShowScanPage(void) {
     UIView *page = mfMakePage(@"扫描购买", YES);
+    // 启动即捕获开关(v2.0.0):下次启动生效——解决"App 先启动、后开捕获截不到老会话"
+    UISwitch *autoSw = [[UISwitch alloc] initWithFrame:CGRectMake(16, 44, 51, 31)];
+    autoSw.on = mfPrefBool(@"mfAutoCapture", NO);
+    autoSw.onTintColor = [UIColor systemPurpleColor];
+    objc_setAssociatedObject(autoSw, "k", @"mfAutoCapture", OBJC_ASSOCIATION_RETAIN);
+    [page addSubview:autoSw];
+    UILabel *autoLb = [[UILabel alloc] initWithFrame:CGRectMake(76, 48, g_mfCardW - 92, 30)];
+    autoLb.text = @"启动即捕获(下次冷启动生效)\n开着它再逛购买页,网络提取才完整";
+    autoLb.font = [UIFont systemFontOfSize:10];
+    autoLb.numberOfLines = 2;
+    autoLb.textColor = [UIColor secondaryLabelColor];
+    [page addSubview:autoLb];
+    [autoSw addTarget:g_mfCtrl action:NSSelectorFromString(@"mfGridSwitchChanged:") forControlEvents:UIControlEventValueChanged];
+
     UILabel *st = [[UILabel alloc] initWithFrame:CGRectMake(16, g_mfCardH/2 - 20, g_mfCardW - 32, 40)];
     st.text = @"正在扫描…";
     st.textAlignment = NSTextAlignmentCenter;
@@ -1466,7 +1503,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define MINISFIX_VERSION @"1.9.9"
+#define MINISFIX_VERSION @"2.0.0"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
@@ -1498,6 +1535,9 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
             mfLog(@"app not in IAP工具箱 whitelist — MinisFix disabled in this app");
             return;
         }
+
+        // 启动即捕获（v2.0.0）
+        mfMaybeAutoCaptureAtLaunch();
 
         // IAP 收集
         ensureStoreKit();
