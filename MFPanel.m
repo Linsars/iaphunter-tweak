@@ -493,6 +493,7 @@ void mfShowScanPage(void) {
         NSArray *netPIDs = mfExtractPIDsFromCaptures();
         mfLog(@"[iap] local=%d net=%lu → SK verify", (int)localCandidates.count, (unsigned long)netPIDs.count);
         dispatch_async(dispatch_get_main_queue(), ^{ mfProbeStoreKit2(); });
+        mfInstallSK2BridgeHook();  // 兜底重试：购买页打开后类才加载的情况
 
         NSMutableSet *seen = [NSMutableSet setWithArray:localCandidates];
         NSMutableArray *toVerify = [NSMutableArray arrayWithArray:netPIDs];      // 网络提取最优先
@@ -1298,6 +1299,53 @@ static void mfProbeStoreKit2(void) {
     mfLog(@"[iap] SK2 枚举: %d 类 / %d 方法 → %@", clsCount, methodCount, path);
 }
 
+
+// ====== SK2→SK1 桥拦截(v2.2.0) ======
+// StoreKit2 的 Product.products(for:) 内部走 ProductResponseReceiver<SKProduct>.receivedResponse:
+// 类名是泛型混淆串,按「含 ProductResponseReceiver」动态匹配,跨版本/跨 App 通用
+static IMP orig_SK2ReceivedResponse = nil;
+static BOOL g_sk2HookInstalled = NO;
+
+static void my_SK2ReceivedResponse(id self, SEL _cmd, id resp) {
+    ((void(*)(id, SEL, id))orig_SK2ReceivedResponse)(self, _cmd, resp);
+    @try {
+        NSArray *arr = nil;
+        if ([resp isKindOfClass:[NSArray class]]) arr = resp;
+        else if ([resp respondsToSelector:NSSelectorFromString(@"products")])
+            arr = [resp performSelector:NSSelectorFromString(@"products")];
+        if ([arr isKindOfClass:[NSArray class]]) {
+            for (id p in arr) {
+                if (![p respondsToSelector:NSSelectorFromString(@"productIdentifier")]) continue;
+                NSString *pid = [p performSelector:NSSelectorFromString(@"productIdentifier")];
+                if (pid.length) { IAPRecord(pid); mfLog(@"[iap] SK2 bridge pid: %@", pid); }
+            }
+        } else {
+            mfLog(@"[iap] SK2 receivedResponse arg=%@ (未知形态,记录待适配)", NSStringFromClass(resp.class));
+        }
+    } @catch (NSException *e) {
+        mfLog(@"[iap] SK2 bridge parse err: %@", e.reason);
+    }
+}
+
+static void mfInstallSK2BridgeHook(void) {
+    if (g_sk2HookInstalled) return;
+    unsigned n = 0;
+    Class *cs = objc_copyClassList(&n);
+    int hit = 0;
+    for (unsigned i = 0; i < n; i++) {
+        const char *nm = class_getName(cs[i]);
+        if (!strstr(nm, "ProductResponseReceiver")) continue;
+        Class c = cs[i];
+        Method m = class_getInstanceMethod(c, NSSelectorFromString(@"receivedResponse:"));
+        if (!m) continue;
+        orig_SK2ReceivedResponse = method_getImplementation(m);
+        method_setImplementation(m, (IMP)my_SK2ReceivedResponse);
+        hit++;
+    }
+    free(cs);
+    if (hit) { g_sk2HookInstalled = YES; mfLog(@"[iap] SK2 bridge hooked (%d classes)", hit); }
+}
+
 static void swizzle(Class cls, SEL sel, IMP newImp, IMP *origOut) {
     Method m = class_getInstanceMethod(cls, sel);
     if (!m) return;
@@ -1452,7 +1500,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define MINISFIX_VERSION @"2.1.3"
+#define MINISFIX_VERSION @"2.2.0"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
@@ -1487,6 +1535,9 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
 
         // 实时捕获(v2.0.2):默认关闭——NSURLProtocol 全局拦截对部分 App 不稳定;
         // 需要抓包时在网络分析页手动开(开关状态持久化,关过就不再自动开)
+
+        // SK2→SK1 桥拦截（SK2 App 的产品目录必经之路）
+        mfInstallSK2BridgeHook();
 
         // IAP 收集
         ensureStoreKit();
