@@ -7,17 +7,29 @@
 #import <mach-o/dyld.h>
 
 static NSString *g_spoofVersion = nil;
+static BOOL g_spoofEnabled = NO;
 
+// v2.4.0 统一偏好域 com.linsars.minisfix(设置页「系统增强」分区),旧 appstoretroller 域作 fallback
 static void loadConfig(void) {
-    NSDictionary *prefs = [NSDictionary dictionaryWithContentsOfFile:
-        @"/var/mobile/Library/Preferences/dev.mineek.appstoretroller.plist"];
-    if (prefs) {
-        NSNumber *enabled = prefs[@"enabled"];
-        if (enabled && ![enabled boolValue]) return;
-        NSString *ver = prefs[@"iOSVersion"];
-        if (ver.length > 0) g_spoofVersion = ver;
+    g_spoofVersion = @"99.0.0";
+    g_spoofEnabled = NO;
+    NSDictionary *p = [NSDictionary dictionaryWithContentsOfFile:
+        @"/var/jb/var/mobile/Library/Preferences/com.linsars.minisfix.plist"];
+    id en = p[@"mfSpoofEnabled"];
+    if (en) {
+        g_spoofEnabled = [en boolValue];
+        NSString *v = p[@"mfSpoofVersion"];
+        if (v.length > 0) g_spoofVersion = v;
+        return;
     }
-    if (!g_spoofVersion) g_spoofVersion = @"99.0.0";
+    // 兼容旧 appstoretroller 配置
+    NSDictionary *old = [NSDictionary dictionaryWithContentsOfFile:
+        @"/var/mobile/Library/Preferences/dev.mineek.appstoretroller.plist"];
+    NSNumber *enabled = old[@"enabled"];
+    if (enabled && ![enabled boolValue]) return;
+    NSString *ver = old[@"iOSVersion"];
+    if (ver.length > 0) g_spoofVersion = ver;
+    g_spoofEnabled = YES;
 }
 
 static BOOL isProcess(const char *name) {
@@ -57,15 +69,18 @@ static BOOL hook_isApplicable(id self, SEL _cmd, NSError **err) {
     return YES;
 }
 
+extern void MFTestFlightHooksInstall(void);
+
+// v2.4.0 AppHooks.dylib: 指定进程注入组(appstored/installd/TestFlight)
 __attribute__((constructor))
-static void AppStoreSpoof_init(void) {
+static void AppHooks_init(void) {
     loadConfig();
-    if (!g_spoofVersion) return;
-    
-    NSDictionary *prefs = [NSDictionary dictionaryWithContentsOfFile:
-        @"/var/mobile/Library/Preferences/dev.mineek.appstoretroller.plist"];
-    if (prefs && prefs[@"enabled"] && ![prefs[@"enabled"] boolValue]) return;
-    
+    if (isProcess("TestFlight")) {
+        MFTestFlightHooksInstall();
+        return;
+    }
+    if (!g_spoofEnabled) return;
+
     if (isProcess("appstored")) {
         Class cls = objc_getClass("NSMutableURLRequest");
         if (cls) {

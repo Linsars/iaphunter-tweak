@@ -1334,49 +1334,8 @@ static void swizzle(Class cls, SEL sel, IMP newImp, IMP *origOut) {
     method_setImplementation(m, newImp);
 }
 
-// ====== TestFlight 增强 ======
-// 兼容性增强（mfTFCompatible）：compatible/platformCompatible/hardwareCompatible/minOSCompatible
-// 禁止跑路（mfTFExpiration）：expirationDate/setExpirationDate
+// TestFlight 增强已迁出 → MFTestFlightHooks.m(AppHooks.dylib,v2.4.0 按注入目标归位)
 
-static BOOL (*orig_tfCompatible)(id self, SEL _cmd);
-static BOOL (*orig_tfPlatformCompatible)(id self, SEL _cmd);
-static BOOL (*orig_tfHardwareCompatible)(id self, SEL _cmd);
-static BOOL (*orig_tfMinOSCompatible)(id self, SEL _cmd);
-static NSDate *(*orig_tfExpirationDate)(id self, SEL _cmd);
-static void (*orig_tfSetExpirationDate)(id self, SEL _cmd, NSDate *date);
-
-static BOOL hook_tfCompatible(id self, SEL _cmd) {
-    return mfPrefBool(@"mfTFCompatible", YES) ? YES : orig_tfCompatible ? orig_tfCompatible(self, _cmd) : YES;
-}
-static BOOL hook_tfPlatformCompatible(id self, SEL _cmd) {
-    return mfPrefBool(@"mfTFCompatible", YES) ? YES : orig_tfPlatformCompatible ? orig_tfPlatformCompatible(self, _cmd) : YES;
-}
-static BOOL hook_tfHardwareCompatible(id self, SEL _cmd) {
-    return mfPrefBool(@"mfTFCompatible", YES) ? YES : orig_tfHardwareCompatible ? orig_tfHardwareCompatible(self, _cmd) : YES;
-}
-static BOOL hook_tfMinOSCompatible(id self, SEL _cmd) {
-    return mfPrefBool(@"mfTFCompatible", YES) ? YES : orig_tfMinOSCompatible ? orig_tfMinOSCompatible(self, _cmd) : YES;
-}
-static NSDate *hook_tfExpirationDate(id self, SEL _cmd) {
-    return mfPrefBool(@"mfTFExpiration", YES) ? [NSDate distantFuture] : orig_tfExpirationDate ? orig_tfExpirationDate(self, _cmd) : [NSDate distantFuture];
-}
-static void hook_tfSetExpirationDate(id self, SEL _cmd, NSDate *date) {
-    if (mfPrefBool(@"mfTFExpiration", YES)) return;
-    if (orig_tfSetExpirationDate) orig_tfSetExpirationDate(self, _cmd, date);
-}
-
-static void mfInstallTestFlightBypass(void) {
-    Class TFAppBuild = objc_getClass("TFAppBuild");
-    if (!TFAppBuild) return;
-
-    swizzle(TFAppBuild, @selector(compatible), (IMP)hook_tfCompatible, (IMP *)&orig_tfCompatible);
-    swizzle(TFAppBuild, @selector(platformCompatible), (IMP)hook_tfPlatformCompatible, (IMP *)&orig_tfPlatformCompatible);
-    swizzle(TFAppBuild, @selector(hardwareCompatible), (IMP)hook_tfHardwareCompatible, (IMP *)&orig_tfHardwareCompatible);
-    swizzle(TFAppBuild, @selector(minOSCompatible), (IMP)hook_tfMinOSCompatible, (IMP *)&orig_tfMinOSCompatible);
-
-    swizzle(TFAppBuild, @selector(expirationDate), (IMP)hook_tfExpirationDate, (IMP *)&orig_tfExpirationDate);
-    swizzle(TFAppBuild, @selector(setExpirationDate:), (IMP)hook_tfSetExpirationDate, (IMP *)&orig_tfSetExpirationDate);
-}
 
 // ====== 自动添加新安装 App 到白名单 ======
 // 监听 SpringBoard 的应用安装/注册通知
@@ -1481,33 +1440,16 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define MINISFIX_VERSION @"2.3.2"
+#define IAPTOOLS_VERSION @"2.3.2"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
         NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
-        // v2.3.1 系统进程守卫（必须最先执行）：注入器会把插件塞进 Apple 守护进程,
-        // 在 appstored/SpringBoard 等环境里任何 hook 都是系统级事故(.ips 实锤)。
-        // 豁免 com.apple.TestFlight——beta 测试宿主,TestFlight 增强功能依赖它
-        BOOL isTestFlight = [bid isEqualToString:@"com.apple.TestFlight"];
-        if (!isTestFlight && (bid.length == 0 || [bid.lowercaseString hasPrefix:@"com.apple."])) return;
-        mfLog(@"=== MinisFix ctor ENTER pid=%d app=%@ version=%@ ===", getpid(), bid, MINISFIX_VERSION);
-
-        // TestFlight 增强（独立于 IAP工具箱，始终检查）
-        // 兼容性增强
-        if (mfPrefBool(@"mfTFCompatible", YES)) {
-            mfInstallTestFlightBypass();
-        }
-        // 禁止跑路
-        if (mfPrefBool(@"mfTFExpiration", YES)) {
-            if (!mfPrefBool(@"mfTFCompatible", YES)) {
-                Class TFAppBuild = objc_getClass("TFAppBuild");
-                if (TFAppBuild) {
-                    swizzle(TFAppBuild, @selector(expirationDate), (IMP)hook_tfExpirationDate, (IMP *)&orig_tfExpirationDate);
-                    swizzle(TFAppBuild, @selector(setExpirationDate:), (IMP)hook_tfSetExpirationDate, (IMP *)&orig_tfSetExpirationDate);
-                }
-            }
-        }
+        // v2.4.0 系统进程守卫（必须最先执行）：本 dylib 只服务用户 App 的 IAP工具箱面板,
+        // Apple 进程(含 SpringBoard/TestFlight)一律不装任何 hook。
+        // SpringBoard 系统功能在 FolderX.dylib,TF/商店 hook 在 AppHooks.dylib(见 ARCHITECTURE.md)
+        if (bid.length == 0 || [bid.lowercaseString hasPrefix:@"com.apple."]) return;
+        mfLog(@"=== IAPtools ctor ENTER pid=%d app=%@ version=%@ ===", getpid(), bid, IAPTOOLS_VERSION);
 
         // 自动添加新 App 到白名单（始终注册通知，运行时检查开关）
         mfLog(@"autoApply: installing observers");
@@ -1565,9 +1507,9 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
             mfLog(@"ctor longPress method added");
         }
 
-        mfLog(@"=== MinisFix deferred hooks DONE (5s stagger) ===");
+        mfLog(@"=== IAPtools deferred hooks DONE (5s stagger) ===");
         }); // v2.3.2 dispatch_after end
 
-        mfLog(@"=== MinisFix ctor DONE ===");
+        mfLog(@"=== IAPtools ctor DONE ===");
     }
 }

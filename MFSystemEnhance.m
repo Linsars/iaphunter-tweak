@@ -98,7 +98,16 @@ static BOOL hook_allowIdleSleep(id self, SEL _cmd) {
     return orig_allowIdleSleep(self, _cmd);
 }
 
-#pragma mark - 入口(MFPanel ctor 在 SpringBoard 分支调用)
+#pragma mark - 自启动(v2.4.0 编入 FolderX.dylib,仅 SpringBoard 注入,无需进程守卫)
+
+__attribute__((constructor))
+static void SystemEnhanceAutoStart(void) {
+    // 按开关自启:全关则零 hook 零监听,改开关后 respring 生效
+    NSDictionary *p = sePrefs();
+    if ([p[@"mfSysChargeEnabled"] boolValue] || [p[@"mfSysWifiAlwaysOn"] boolValue]) {
+        mfSystemEnhanceInit();
+    }
+}
 
 void mfSystemEnhanceInit(void);
 

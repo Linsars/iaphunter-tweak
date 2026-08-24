@@ -36,6 +36,18 @@
 		</dict>
 		<dict>
 			<key>cell</key>
+			<string>PSLinkCell</string>
+			<key>detail</key>
+			<string>SystemEnhanceController</string>
+			<key>icon</key>
+			<string>icon.png</string>
+			<key>isController</key>
+			<true/>
+			<key>label</key>
+			<string>⚡️ 系统增强</string>
+		</dict>
+		<dict>
+			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
 			<string>关于</string>

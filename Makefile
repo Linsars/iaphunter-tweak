@@ -9,30 +9,29 @@ export SYSROOT = $(THEOS)/sdks/iPhoneOS14.5.sdk
 
 include $(THEOS)/makefiles/common.mk
 
-TWEAK_NAME = FolderX MinisFix AppStoreSpoof
+# v2.4.0 按「注入目标」分类(真相源: ARCHITECTURE.md,架构变动必须同步更新它)
+TWEAK_NAME = FolderX AppHooks IAPtools
 
-# FolderX（文件夹变色——原有功能不变）
-FolderX_FILES = $(filter-out MFPanel.m MFNetworkCapture.m MFJSRules.m MFAppStoreSpoof.m MFKeychainManager.m MFClassDump.m MFDiagnostics.m MFNetAnalyzer.m MFCryptoToolbox.m MFCryptoHooks.m MFMethodTrace.m, $(wildcard *.xm *.m))
+# FolderX(SpringBoard: 文件夹变色 + 系统增强[充电限制/Wi-Fi永连])
+FolderX_FILES = $(filter-out MFPanel.m MFNetworkCapture.m MFJSRules.m MFAppStoreSpoof.m MFTestFlightHooks.m MFKeychainManager.m MFClassDump.m MFDiagnostics.m MFNetAnalyzer.m MFCryptoToolbox.m MFCryptoHooks.m MFMethodTrace.m, $(wildcard *.xm *.m))
 FolderX_FRAMEWORKS = UIKit Foundation SpringBoardServices
 FolderX_CFLAGS = -fno-objc-arc -fmodules
+MFSystemEnhance.m_CFLAGS = -fobjc-arc
 FolderX_ARCHS = arm64 arm64e
 
-# IAPHunter 已合并进 MinisFix（SK hooks + IAP 收集 + 交易观察器）
+# IAPtools v2.4.0(原 MinisFix.dylib 改名——职责纯化: 仅 IAP工具箱面板,全局 UIKit 注入)
+IAPtools_FILES = MFPanel.m MFNetworkCapture.m MFJSRules.m MFDiagnosticCleaner.m MFKeychainManager.m MFClassDump.m MFDiagnostics.m MFNetAnalyzer.m MFCryptoToolbox.m MFCryptoHooks.m MFMethodTrace.m
+IAPtools_FRAMEWORKS = UIKit Foundation Security
+IAPtools_LDFLAGS = -weak_framework UIKit -weak_framework StoreKit -weak_framework JavaScriptCore -lz
+IAPtools_CFLAGS = -fobjc-arc -Wno-everything
+IAPtools_ARCHS = arm64 arm64e
 
-# MinisFix v5.0（新面板：数据分析/网络修改/Product + 诊断清理 + Keychain管理 + ClassDump）
-MinisFix_FILES = MFPanel.m MFNetworkCapture.m MFJSRules.m MFDiagnosticCleaner.m MFKeychainManager.m MFClassDump.m MFDiagnostics.m MFNetAnalyzer.m MFCryptoToolbox.m MFCryptoHooks.m MFMethodTrace.m
-# v2.3.2 依赖瘦身: CloudKit/JSC/StoreKit/MobileCoreServices 全部运行时 dlopen,不再硬链接
-MinisFix_FRAMEWORKS = UIKit Foundation Security
-MinisFix_LDFLAGS = -weak_framework UIKit -weak_framework StoreKit -weak_framework JavaScriptCore -lz
-MinisFix_CFLAGS = -fobjc-arc -Wno-everything
-MinisFix_ARCHS = arm64 arm64e
-
-# AppStoreSpoof（版本伪装——使用 method_setImplementation 替代 MSHookMessageEx）
-AppStoreSpoof_FILES = MFAppStoreSpoof.m
-AppStoreSpoof_FRAMEWORKS = Foundation
-AppStoreSpoof_CFLAGS = -fobjc-arc
-AppStoreSpoof_ARCHS = arm64 arm64e
-AppStoreSpoof_INSTALL_PATH = /usr/lib/TweakInject
+# AppHooks v2.4.0(原 AppStoreSpoof 扩编——指定进程注入: appstored/installd/TestFlight)
+AppHooks_FILES = MFAppStoreSpoof.m MFTestFlightHooks.m
+AppHooks_FRAMEWORKS = Foundation
+AppHooks_CFLAGS = -fobjc-arc
+AppHooks_ARCHS = arm64 arm64e
+AppHooks_INSTALL_PATH = /usr/lib/TweakInject
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 SUBPROJECTS += folderx
