@@ -100,6 +100,8 @@ static BOOL hook_allowIdleSleep(id self, SEL _cmd) {
 
 #pragma mark - 自启动(v2.4.0 编入 FolderX.dylib,仅 SpringBoard 注入,无需进程守卫)
 
+void mfSystemEnhanceInit(void);
+
 __attribute__((constructor))
 static void SystemEnhanceAutoStart(void) {
     // 按开关自启:全关则零 hook 零监听,改开关后 respring 生效
@@ -108,8 +110,6 @@ static void SystemEnhanceAutoStart(void) {
         mfSystemEnhanceInit();
     }
 }
-
-void mfSystemEnhanceInit(void);
 
 void mfSystemEnhanceInit(void) {
     static dispatch_once_t once;
