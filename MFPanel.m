@@ -7,6 +7,7 @@
 
 // ====== 全局状态（定义在此，extern 在 MFPanel.h） ======
 UIView *g_mfPanelOverlay = nil;
+UIWindow *g_mfPanelWindow = nil;
 UIViewController *g_mfPanelRootVC = nil;
 id g_mfCtrl = nil;
 NSMutableArray *g_mfPages = nil;
@@ -204,6 +205,7 @@ void mfClosePanel(void) {
         UIView *ov = g_mfPanelOverlay;
         [UIView animateWithDuration:0.2 animations:^{ ov.alpha = 0; } completion:^(BOOL f) {
             [ov removeFromSuperview];
+            g_mfPanelWindow.hidden = YES; // v2.6.2
             g_mfPanelOverlay = nil;
             g_mfPanelRootVC = nil;
             g_mfCardContentView = nil;
@@ -1220,10 +1222,20 @@ static void iaphShowPanel(UIViewController *vc) {
         g_mfPanelRootVC = vc;
         mfLog(@"PANEL STEP 8: overlay stored, g_mfCtrl=%p g_mfPanelOverlay=%p", g_mfCtrl, g_mfPanelOverlay);
 
-        [keyWin addSubview:overlay];
-        [keyWin bringSubviewToFront:overlay]; // v2.6.1: 确保 overlay 在最上层,否则触摸穿透到 App
-        overlay.userInteractionEnabled = YES;
-        mfLog(@"PANEL STEP 9: added to keyWin + brought to front");
+        // v2.6.2: 独立 UIWindow——彻底解决 Telegram 等复杂 window 层级的触摸穿透
+        {
+            UIWindowScene *panelScene = keyWin.windowScene;
+            if (!panelScene) panelScene = (UIWindowScene *)[[UIApplication sharedApplication].connectedScenes anyObject];
+            g_mfPanelWindow = [[UIWindow alloc] initWithWindowScene:panelScene];
+            g_mfPanelWindow.frame = keyWin.frame;
+            g_mfPanelWindow.windowLevel = UIWindowLevelAlert + 1000;
+            g_mfPanelWindow.backgroundColor = [UIColor clearColor];
+            g_mfPanelWindow.rootViewController = [UIViewController new];
+            g_mfPanelWindow.rootViewController.view = overlay;
+            g_mfPanelWindow.hidden = NO;
+            g_mfPanelWindow.userInteractionEnabled = YES;
+        }
+        mfLog(@"PANEL STEP 9: standalone UIWindow level=%.0f", g_mfPanelWindow.windowLevel);
 
         overlay.alpha = 0;
         [UIView animateWithDuration:0.25 animations:^{ overlay.alpha = 1; }];
