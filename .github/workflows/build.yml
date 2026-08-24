@@ -34,18 +34,13 @@ jobs:
         run: |
           curl -L -o /tmp/dobby.tar.gz https://github.com/jmpews/Dobby/releases/download/latest/dobby-iphoneos-all.tar.gz
           mkdir -p /tmp/dobby && tar xzf /tmp/dobby.tar.gz -C /tmp/dobby
-          echo "=== dobby contents ==="
-          find /tmp/dobby -type f | head -20
+          echo "=== dobby files ==="
+          find /tmp/dobby -name "*.a" -o -name "*.dylib" -o -name "dobby.h" | head -20
           sudo mkdir -p "$THEOS/lib" "$THEOS/include"
-          LIB=$(find /tmp/dobby -name "libdobby.a" -o -name "libdobby.dylib" | head -1)
-          if [ -n "$LIB" ]; then
-            sudo cp "$LIB" "$THEOS/lib/libdobby.a"
-          else
-            # 可能是 framework 或裸 .a 在根目录
-            find /tmp/dobby -name "*.a" -exec sudo cp {} "$THEOS/lib/" \;
-          fi
-          find /tmp/dobby -name "dobby.h" -exec sudo cp {} "$THEOS/include/" \; 2>/dev/null || true
-          ls -la "$THEOS/lib/libdobby.a" 2>/dev/null && echo "Dobby OK" || echo "WARN: libdobby.a not found, UnseenHooks will fail"
+          sudo cp /tmp/dobby/build/iphoneos/universal/libdobby.a "$THEOS/lib/libdobby.a"
+          HDR=$(find /tmp/dobby -name "dobby.h" | head -1)
+          if [ -n "$HDR" ]; then sudo cp "$HDR" "$THEOS/include/"; fi
+          ls -la "$THEOS/lib/libdobby.a" && echo "=== Dobby installed OK ==="
 
       - name: Build package
         run: make package
