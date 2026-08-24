@@ -175,20 +175,19 @@ static void install_springboard_hooks(void) {
     // sendActions: 过滤截图 action
     Class uiApp = objc_getClass("UIApplication");
     Method m = class_getInstanceMethod(uiApp, @selector(sendAction:to:from:forEvent:));
-    if (m) { orig_sendActions = (void*)method_getImplementation(m); method_setImplementation(m, (IMP)hook_sendActions); }
+    if (m) { orig_sendActions = (void (*)(id, SEL, id, id))method_getImplementation(m); method_setImplementation(m, (IMP)hook_sendActions); }
 
     // NSNotificationCenter postNotification: 拦截录屏状态
     Class ncCls = objc_getClass("NSNotificationCenter");
     Method m2 = class_getInstanceMethod(ncCls, @selector(postNotification:));
-    if (m2) { orig_postNotification = (void*)method_getImplementation(m2); method_setImplementation(m2, (IMP)hook_postNotification); }
+    if (m2) { orig_postNotification = (void (*)(id, SEL, id))method_getImplementation(m2); method_setImplementation(m2, (IMP)hook_postNotification); }
 
     // BKSystemShellSentinel 观察者(私有 API,动态加载)
     void *h = dlopen("/System/Library/PrivateFrameworks/BackBoardServices.framework/BackBoardServices", RTLD_LAZY);
     if (h) {
-        Class sentinelCls = (Class)dlsym(h, "BKSystemShellSentinel");
+        Class sentinelCls = (__bridge Class)dlsym(h, "BKSystemShellSentinel");
         if (sentinelCls) {
-            // addSystemShellObserver:reason: (实例方法)
-            // 这里仅示意,完整实现需按 Unseen 原版包装 observer
+            // addSystemShellObserver:reason: — 完整实现需按 Unseen 原版包装 observer
         }
     }
 
@@ -197,19 +196,14 @@ static void install_springboard_hooks(void) {
     NSLog(@"[UnseenHooks] SpringBoard hooks installed");
 }
 
-
-
 // ============================================================
-// 统一入口(两进程各自编译时定义 TARGET_宏,见 Makefile)
+// 统一入口(运行时进程判断,单一 dylib 双进程通用)
 // ============================================================
 __attribute__((constructor))
 static void UnseenHooks_init(void) {
-    // 仅在目标进程安装
-// backboardd 侧: CA::Render 内部 inline hook(运行时进程判断,不再用编译期宏)
-    install_backboardd_hooks();
-#elif TARGET_SPRINGBOARD
-    install_springboard_hooks();
-#else
-    // 其它进程不加载
-#endif
+    if (isBackboardd()) {
+        install_backboardd_hooks();
+    } else if (isSpringBoard()) {
+        install_springboard_hooks();
+    }
 }
