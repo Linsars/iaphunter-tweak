@@ -199,6 +199,16 @@ static void install_springboard_hooks(void) {
 // ============================================================
 // 统一入口(运行时进程判断,单一 dylib 双进程通用)
 // ============================================================
+#include <mach-o/dyld.h>
+static BOOL isBackboardd(void) {
+    char path[1024]; uint32_t sz=sizeof(path); _NSGetExecutablePath(path,&sz);
+    return strstr(path, "backboardd") != NULL;
+}
+static BOOL isSpringBoard(void) {
+    char path[1024]; uint32_t sz=sizeof(path); _NSGetExecutablePath(path,&sz);
+    return strstr(path, "SpringBoard") != NULL;
+}
+
 __attribute__((constructor))
 static void UnseenHooks_init(void) {
     if (isBackboardd()) {
