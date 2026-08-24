@@ -110,15 +110,32 @@ static void install_backboardd_hooks(void) {
 // ============================================================
 // SpringBoard 侧
 // ============================================================
-static void (*orig_sendAction)(id, SEL, id, id, id, id);
+static BOOL (*orig_sendAction)(id, SEL, id, id, id, id);
+static int sb_action_count = 0;
 
-static void hook_sendAction(id self, SEL _cmd, id action, id target, id sender, id event) {
+static BOOL hook_sendAction(id self, SEL _cmd, id action, id target, id sender, id event) {
+    sb_action_count++;
     Class actionCls = object_getClass(action);
-    if (actionCls && strstr(class_getName(actionCls), "TakeScreenshot") != NULL) {
-        dbg(@"🚫 filtered screenshot: %s", class_getName(actionCls));
-        return;
+    const char *clsName = actionCls ? class_getName(actionCls) : "(nil)";
+
+    // 前 20 次全量打日志,之后只打截图
+    if (sb_action_count <= 20) {
+        dbg(@"SB sendAction #%d class=%s self=%p action=%p", sb_action_count, clsName, self, action);
     }
-    if (orig_sendAction) orig_sendAction(self, _cmd, action, target, sender, event);
+
+    if (actionCls && strstr(clsName, "TakeScreenshot") != NULL) {
+        dbg(@"🚫 filtered screenshot: %s", clsName);
+        return YES; // 吞掉截图 action
+    }
+
+    if (orig_sendAction) {
+        BOOL r = orig_sendAction(self, _cmd, action, target, sender, event);
+        if (sb_action_count <= 20) {
+            dbg(@"  → orig returned %d", r);
+        }
+        return r;
+    }
+    return YES;
 }
 
 static void install_springboard_hooks(void) {
