@@ -15,10 +15,10 @@
 | **FolderX** | SpringBoard dylib + 同名设置 bundle(folderx 子项目) | — |
 | repo 名 iaphunter-tweak | 旧命名没改而已 | 与 IAPHunter 时代强绑定 |
 
-## 目标架构(v2.4.0,按注入目标分类)
+## 目标架构(v2.5.0,按注入目标分类)
 
 ```
-deb = 4 dylib + 1 设置 bundle
+deb = 5 dylib + 1 设置 bundle
 ├── FolderX.dylib      filter: com.apple.springboard
 │   ├── 文件夹变色(FX*.m, FolderColor.xm)
 │   └── 充电限制 + Wi-Fi永连(MFSystemEnhance.m, IOKit IOPMPowerSource + allowIdleSleep hook)
@@ -27,10 +27,14 @@ deb = 4 dylib + 1 设置 bundle
 │   └── TestFlight 增强(MFTestFlightHooks.m, TFAppBuild swizzle,自 MFPanel.m 迁出)
 ├── IAPtools.dylib     filter: com.apple.UIKit(全局 UI 进程;原 MinisFix 改名)
 │   └── IAP工具箱面板(数据分析/Product)
+├── UnseenHooks.dylib  filter: Executables [backboardd, SpringBoard](v2.5.0 新增,对标 com.82flex.unseen)
+│   ├── 反检测/隐私四件套:显示隐藏画面/保护系统UI/隐藏截图/隐藏录屏
+│   ├── backboardd: Dobby inline hook CA::Render::Update/Updater/Context
+│   └── SpringBoard: 截图 action 过滤 + capture-state 屏蔽 + BKSystemShellSentinel PID 观察
 └── FolderX.bundle     folderx/ 子项目(bundle.mk, 装系统设置)
     ├── Root.plist = 设置页: 功能[IAP工具箱/FolderX/⚡️系统增强] + 关于
-    ├── SystemEnhanceSettings.plist(新): 伪装3键+TF2键+诊断清理+充电+WiFi
-    └── IAPSettings.plist: 只剩 IAP 工具箱自身(伪装/TF/清理三组迁出)
+    ├── SystemEnhanceSettings.plist: 伪装3键+TF2键+诊断清理+充电+WiFi+Unseen4键
+    └── IAPSettings.plist: 只剩 IAP 工具箱自身
 ```
 
 ## 新功能归属决策树(加功能前必走)

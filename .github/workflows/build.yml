@@ -11,21 +11,38 @@ jobs:
       THEOS: /opt/theos
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
       - name: Install Theos
         run: |
           sudo mkdir -p "$THEOS"
           sudo chown $(id -u):$(id -g) "$THEOS"
           git clone --recursive https://github.com/theos/theos.git "$THEOS"
+
       - name: Install SDK
         run: |
           curl -L -o /tmp/sdk.tar.xz https://github.com/theos/sdks/releases/download/master-146e41f/iPhoneOS16.5.sdk.tar.xz
           mkdir -p "$THEOS/sdks"
           tar xJf /tmp/sdk.tar.xz -C "$THEOS/sdks/"
           mv "$THEOS/sdks/iPhoneOS16.5.sdk" "$THEOS/sdks/iPhoneOS14.5.sdk"
+
       - name: Install ldid
         run: brew install ldid
+
+      - name: Build Dobby static library(arm64/arm64e)
+        run: |
+          cd dobby
+          mkdir -p build && cd build
+          cmake -DCMAKE_OSX_ARCHITECTURES="arm64;arm64e" -DCMAKE_OSX_SYSROOT=iphoneos -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 -DCMAKE_BUILD_TYPE=Release ..
+          make -j$(sysctl -n hw.ncpu)
+          sudo mkdir -p "$THEOS/lib"
+          sudo cp libdobby.a "$THEOS/lib/"
+          sudo cp -r ../include/dobby.h "$THEOS/include/"
+
       - name: Build package
         run: make package
+
       - uses: actions/upload-artifact@v4
         with:
           name: deb-packages

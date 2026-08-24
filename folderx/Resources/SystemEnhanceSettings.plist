@@ -134,7 +134,7 @@
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
-			<real>90</real>
+			<real>90.0</real>
 			<key>defaults</key>
 			<string>com.linsars.minisfix</string>
 			<key>isSegmented</key>
@@ -144,9 +144,9 @@
 			<key>label</key>
 			<string>充电上限(%)</string>
 			<key>max</key>
-			<real>100</real>
+			<real>100.0</real>
 			<key>min</key>
-			<real>50</real>
+			<real>50.0</real>
 			<key>segmentCount</key>
 			<integer>10</integer>
 			<key>showValue</key>
@@ -165,6 +165,82 @@
 			<string>mfSysWifiAlwaysOn</string>
 			<key>label</key>
 			<string>Wi-Fi 永连(锁屏不断网)</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>反检测/隐私(Unseen)</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.linsars.minisfix/ReloadPrefs</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+			<key>defaults</key>
+			<string>com.linsars.minisfix</string>
+			<key>key</key>
+			<string>mfUnseenEnabled</string>
+			<key>label</key>
+			<string>启用反检测</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.linsars.minisfix/ReloadPrefs</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.linsars.minisfix</string>
+			<key>key</key>
+			<string>mfUnseenRevealHidden</string>
+			<key>label</key>
+			<string>显示被隐藏画面</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.linsars.minisfix/ReloadPrefs</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.linsars.minisfix</string>
+			<key>key</key>
+			<string>mfUnseenProtectSysUI</string>
+			<key>label</key>
+			<string>保护系统界面</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.linsars.minisfix/ReloadPrefs</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.linsars.minisfix</string>
+			<key>key</key>
+			<string>mfUnseenHideScreenshot</string>
+			<key>label</key>
+			<string>隐藏截图行为</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.linsars.minisfix/ReloadPrefs</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.linsars.minisfix</string>
+			<key>key</key>
+			<string>mfUnseenHideRecording</string>
+			<key>label</key>
+			<string>隐藏录屏状态</string>
 		</dict>
 	</array>
 	<key>title</key>
