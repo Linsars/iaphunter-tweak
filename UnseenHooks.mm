@@ -82,6 +82,10 @@ static void install_backboardd_hooks(void) {
     }
 
     // v2.5.9: 多种方式尝试符号解析(包括 NULL 镜像名搜索全部已加载镜像)
+    const char *syms[] = {
+        "_ZN2CA6Render6Update17allowed_in_updateEPNS0_7ContextEPKNS0_5LayerE",
+        "__ZN2CA6Render6Update17allowed_in_updateEPNS0_7ContextEPKNS0_5LayerE",
+    };
     void *sym = NULL;
     for (int i = 0; i < 2; i++) {
         // 尝试 DobbySymbolResolver(NULL) — 搜索全部镜像
