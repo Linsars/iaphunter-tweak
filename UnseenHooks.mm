@@ -29,12 +29,29 @@ static void dbg(NSString *fmt, ...) {
     }
 }
 
+// 偏好缓存(hook 内不再读文件+写日志——v2.5.10 日志爆炸 9268 行教训)
+static NSTimeInterval g_lastPrefRead = 0;
+static BOOL g_cachedHideScreenshot = YES;
+static BOOL g_cachedHideRecording = YES;
+static BOOL g_cachedRevealHidden = YES;
+
+static void unseenRefreshPrefs(void) {
+    NSTimeInterval now = [NSDate date].timeIntervalSince1970;
+    if (now - g_lastPrefRead < 2.0) return;
+    g_lastPrefRead = now;
+    @autoreleasepool {
+        NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:UNSEEN_PREFS];
+        id v;
+        v = d[@"mfUnseenHideScreenshot"]; g_cachedHideScreenshot = v ? [v boolValue] : YES;
+        v = d[@"mfUnseenHideRecording"];  g_cachedHideRecording  = v ? [v boolValue] : YES;
+        v = d[@"mfUnseenRevealHidden"];   g_cachedRevealHidden   = v ? [v boolValue] : YES;
+    }
+}
+
 static inline BOOL unseenPref(NSString *key, BOOL def) {
     NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:UNSEEN_PREFS];
     id v = d[key];
-    BOOL r = v ? [v boolValue] : def;
-    dbg(@"pref %@ = %d", key, r);
-    return r;
+    return v ? [v boolValue] : def;
 }
 
 static BOOL g_unseenEnabled = NO;
@@ -162,19 +179,18 @@ static BOOL shouldFilterNotification(NSString *name) {
 
 static void hook_postNotificationName(id self, SEL _cmd, NSString *name, id obj, NSDictionary *userInfo) {
     sb_notif_count++;
-    if (sb_notif_count <= 10) {
-        dbg(@"SB notif #%d: %@", sb_notif_count, name);
-    }
-    if (g_unseenEnabled && unseenPref(@"mfUnseenHideScreenshot", YES) && shouldFilterNotification(name)) {
-        dbg(@"🚫 filtered notification: %@", name);
-        return; // 吞掉,App 收不到
+    unseenRefreshPrefs();
+    if (g_unseenEnabled && g_cachedHideScreenshot && shouldFilterNotification(name)) {
+        if (sb_notif_count <= 50) dbg(@"🚫 filtered: %@", name);
+        return;
     }
     if (orig_postNotificationName) orig_postNotificationName(self, _cmd, name, obj, userInfo);
 }
 
 static void hook_postNotificationObj(id self, SEL _cmd, NSNotification *notification) {
-    if (g_unseenEnabled && unseenPref(@"mfUnseenHideScreenshot", YES) && shouldFilterNotification(notification.name)) {
-        dbg(@"🚫 filtered notification (obj): %@", notification.name);
+    unseenRefreshPrefs();
+    if (g_unseenEnabled && g_cachedHideScreenshot && shouldFilterNotification(notification.name)) {
+        dbg(@"🚫 filtered (obj): %@", notification.name);
         return;
     }
     if (orig_postNotificationObj) orig_postNotificationObj(self, _cmd, notification);
