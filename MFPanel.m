@@ -1221,7 +1221,9 @@ static void iaphShowPanel(UIViewController *vc) {
         mfLog(@"PANEL STEP 8: overlay stored, g_mfCtrl=%p g_mfPanelOverlay=%p", g_mfCtrl, g_mfPanelOverlay);
 
         [keyWin addSubview:overlay];
-        mfLog(@"PANEL STEP 9: added to keyWin");
+        [keyWin bringSubviewToFront:overlay]; // v2.6.1: 确保 overlay 在最上层,否则触摸穿透到 App
+        overlay.userInteractionEnabled = YES;
+        mfLog(@"PANEL STEP 9: added to keyWin + brought to front");
 
         overlay.alpha = 0;
         [UIView animateWithDuration:0.25 animations:^{ overlay.alpha = 1; }];
@@ -1461,10 +1463,7 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
             return;
         }
 
-        // v2.3.2 开机错峰:重 hook 段延迟 5s——dlopen 依赖链/NSURLProtocol/SK hooks
-        // 在开机高峰(低电量+几十进程并发启动)会放大 IO/CPU,曾致 BT BlueTool Stuck watchdog panic
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5 * NSEC_PER_SEC)),
-                       dispatch_get_main_queue(), ^{
+        // v2.6.1: 移除 5s 错峰(v2.3.2 为 BT panic 加的,根因=硬依赖链已 dlopen 化修复)
         // 实时捕获(v2.2.8):默认 OFF;用户开过则持久化,冷启动即装协议——
         // 解决"启动后才开开关截不到老会话"(v2.0.2 一刀切留下的坑)
         if (mfPrefBool(@"mfCaptureEnabled", NO)) {
@@ -1506,9 +1505,6 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
             class_addMethod(vcCls, @selector(mfHandleLongPress:), (IMP)mfLongPressAction, "v@:@");
             mfLog(@"ctor longPress method added");
         }
-
-        mfLog(@"=== IAPtools deferred hooks DONE (5s stagger) ===");
-        }); // v2.3.2 dispatch_after end
 
         mfLog(@"=== IAPtools ctor DONE ===");
     }
