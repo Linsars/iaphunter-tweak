@@ -34,11 +34,25 @@ jobs:
         run: |
           cd dobby
           mkdir -p build && cd build
-          cmake -DCMAKE_OSX_ARCHITECTURES="arm64;arm64e" -DCMAKE_OSX_SYSROOT=iphoneos -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 -DCMAKE_BUILD_TYPE=Release ..
-          make -j$(sysctl -n hw.ncpu)
-          sudo mkdir -p "$THEOS/lib"
-          sudo cp libdobby.a "$THEOS/lib/"
-          sudo cp -r ../include/dobby.h "$THEOS/include/"
+          cmake -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_ARCHITECTURES="arm64;arm64e" -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF ..
+          make -j$(sysctl -n hw.ncpu) || make
+          echo "=== find libdobby ==="
+          find . -name "libdobby*" -type f
+          LIBPATH=$(find . -name "libdobby.a" -type f | head -1)
+          if [ -n "$LIBPATH" ]; then
+            sudo mkdir -p "$THEOS/lib"
+            sudo cp "$LIBPATH" "$THEOS/lib/libdobby.a"
+          else
+            echo "libdobby.a not found, trying alternative build"
+            # Fallback: build with xcodebuild
+            cd ..
+            cmake -B build_ios -G Xcode -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
+            xcodebuild -project build_ios/Dobby.xcodeproj -configuration Release -sdk iphoneos ARCHS=arm64 build
+            find build_ios -name "libdobby.a" -exec sudo cp {} "$THEOS/lib/" \;
+          fi
+          ls -la "$THEOS/lib/libdobby.a" 2>/dev/null || (echo "FATAL: libdobby.a still not found" && exit 1)
+          mkdir -p "$THEOS/include"
+          cp ../include/dobby.h "$THEOS/include/" 2>/dev/null || true
 
       - name: Build package
         run: make package

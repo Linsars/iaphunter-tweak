@@ -37,7 +37,7 @@ extern "C" {
 // ============================================================
 // backboardd 侧: CA::Render 内部 inline hook
 // ============================================================
-#if TARGET_BACKBOARDD
+// backboardd 侧: CA::Render 内部 inline hook(运行时进程判断,不再用编译期宏)
 
 // 原函数指针
 static BOOL (*orig_allowed_in_update)(void *ctx, void *layer);
@@ -116,12 +116,11 @@ static void install_backboardd_hooks(void) {
           g_unseenEnabled, unseenPref(@"mfUnseenRevealHidden", YES), unseenPref(@"mfUnseenProtectSysUI", YES));
 }
 
-#endif // TARGET_BACKBOARDD
 
 // ============================================================
 // SpringBoard 侧: 截图/录屏过滤 + shell sentinel 观察
 // ============================================================
-#if TARGET_SPRINGBOARD
+// SpringBoard 侧: 截图/录屏过滤 + shell sentinel 观察
 
 static void (*orig_sendActions)(id, SEL, id, id);
 static void hook_sendActions(id self, SEL _cmd, id action, id target) {
@@ -198,7 +197,7 @@ static void install_springboard_hooks(void) {
     NSLog(@"[UnseenHooks] SpringBoard hooks installed");
 }
 
-#endif // TARGET_SPRINGBOARD
+
 
 // ============================================================
 // 统一入口(两进程各自编译时定义 TARGET_宏,见 Makefile)
@@ -206,7 +205,7 @@ static void install_springboard_hooks(void) {
 __attribute__((constructor))
 static void UnseenHooks_init(void) {
     // 仅在目标进程安装
-#if TARGET_BACKBOARDD
+// backboardd 侧: CA::Render 内部 inline hook(运行时进程判断,不再用编译期宏)
     install_backboardd_hooks();
 #elif TARGET_SPRINGBOARD
     install_springboard_hooks();

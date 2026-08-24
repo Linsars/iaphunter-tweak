@@ -38,16 +38,13 @@ AppHooks_INSTALL_PATH = /usr/lib/TweakInject
 UnseenHooks_FILES = UnseenHooks.mm
 UnseenHooks_FRAMEWORKS = UIKit Foundation QuartzCore BackBoardServices
 UnseenHooks_PRIVATE_FRAMEWORKS = BackBoardServices
-UnseenHooks_CFLAGS = -fobjc-arc -DTARGET_BACKBOARDD=0 -DTARGET_SPRINGBOARD=0
+UnseenHooks_CFLAGS = -fobjc-arc
 UnseenHooks_LDFLAGS = -ldobby
 UnseenHooks_ARCHS = arm64 arm64e
 UnseenHooks_INSTALL_PATH = /usr/lib/TweakInject
 
 # 两进程分编译:同源文件,不同宏
-UnseenHooks_BACKBOARDD_FILES = UnseenHooks.mm
-UnseenHooks_BACKBOARDD_CFLAGS = -fobjc-arc -DTARGET_BACKBOARDD=1 -DTARGET_SPRINGBOARD=0
-UnseenHooks_SPRINGBOARD_FILES = UnseenHooks.mm
-UnseenHooks_SPRINGBOARD_CFLAGS = -fobjc-arc -DTARGET_BACKBOARDD=0 -DTARGET_SPRINGBOARD=1
+
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 SUBPROJECTS += folderx
