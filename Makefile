@@ -39,7 +39,7 @@ UnseenHooks_FILES = UnseenHooks.mm
 UnseenHooks_FRAMEWORKS = UIKit Foundation QuartzCore BackBoardServices
 UnseenHooks_PRIVATE_FRAMEWORKS = BackBoardServices
 UnseenHooks_CFLAGS = -fobjc-arc
-UnseenHooks_LDFLAGS = -ldobby
+UnseenHooks_LDFLAGS = $(THEOS)/lib/libdobby.a
 UnseenHooks_ARCHS = arm64 arm64e
 UnseenHooks_INSTALL_PATH = /usr/lib/TweakInject
 
