@@ -21,7 +21,8 @@ FolderX_ARCHS = arm64 arm64e
 
 # MinisFix v5.0（新面板：数据分析/网络修改/Product + 诊断清理 + Keychain管理 + ClassDump）
 MinisFix_FILES = MFPanel.m MFNetworkCapture.m MFJSRules.m MFDiagnosticCleaner.m MFKeychainManager.m MFClassDump.m MFDiagnostics.m MFNetAnalyzer.m MFCryptoToolbox.m MFCryptoHooks.m MFMethodTrace.m
-MinisFix_FRAMEWORKS = UIKit Foundation StoreKit JavaScriptCore Security CloudKit MobileCoreServices
+# v2.3.2 依赖瘦身: CloudKit/JSC/StoreKit/MobileCoreServices 全部运行时 dlopen,不再硬链接
+MinisFix_FRAMEWORKS = UIKit Foundation Security
 MinisFix_LDFLAGS = -weak_framework UIKit -weak_framework StoreKit -weak_framework JavaScriptCore -lz
 MinisFix_CFLAGS = -fobjc-arc -Wno-everything
 MinisFix_ARCHS = arm64 arm64e

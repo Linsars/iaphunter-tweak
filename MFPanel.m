@@ -1240,7 +1240,7 @@ static void ensureStoreKit(void) {
     dlopen("/System/Library/Frameworks/StoreKit.framework/StoreKit", RTLD_LAZY | RTLD_GLOBAL);
 }
 
-@interface MFIAPObserver : NSObject <SKPaymentTransactionObserver>
+@interface MFIAPObserver : NSObject // v2.3.2 摘除协议声明(链接符号),方法动态分发等效
 @end
 @implementation MFIAPObserver
 - (void)paymentQueue:(SKPaymentQueue *)queue updatedTransactions:(NSArray *)transactions {
@@ -1481,7 +1481,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define MINISFIX_VERSION @"2.3.1"
+#define MINISFIX_VERSION @"2.3.2"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
@@ -1519,6 +1519,10 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
             return;
         }
 
+        // v2.3.2 开机错峰:重 hook 段延迟 5s——dlopen 依赖链/NSURLProtocol/SK hooks
+        // 在开机高峰(低电量+几十进程并发启动)会放大 IO/CPU,曾致 BT BlueTool Stuck watchdog panic
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
         // 实时捕获(v2.2.8):默认 OFF;用户开过则持久化,冷启动即装协议——
         // 解决"启动后才开开关截不到老会话"(v2.0.2 一刀切留下的坑)
         if (mfPrefBool(@"mfCaptureEnabled", NO)) {
@@ -1545,7 +1549,7 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
         static dispatch_once_t once;
         dispatch_once(&once, ^{
             g_observer = [[MFIAPObserver alloc] init];
-            [[SKPaymentQueue defaultQueue] addTransactionObserver:g_observer];
+            [[objc_getClass("SKPaymentQueue") defaultQueue] addTransactionObserver:g_observer];
         });
 
         // 手势注册
@@ -1560,6 +1564,9 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
             class_addMethod(vcCls, @selector(mfHandleLongPress:), (IMP)mfLongPressAction, "v@:@");
             mfLog(@"ctor longPress method added");
         }
+
+        mfLog(@"=== MinisFix deferred hooks DONE (5s stagger) ===");
+        }); // v2.3.2 dispatch_after end
 
         mfLog(@"=== MinisFix ctor DONE ===");
     }

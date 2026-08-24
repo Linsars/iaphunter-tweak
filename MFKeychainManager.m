@@ -5,6 +5,7 @@
 #import <UIKit/UIKit.h>
 #import <Security/Security.h>
 #import <CloudKit/CloudKit.h>
+#import <dlfcn.h>
 #import "MFPanel.h"
 #import "LSApplicationProxy.h"
 
@@ -446,9 +447,11 @@ static void mfQueryRecordIDForContainer(NSString *containerIdentifier,
         
         @try {
             if (containerIdentifier && ![containerIdentifier isEqualToString:@"(默认容器)"]) {
-                container = [CKContainer containerWithIdentifier:containerIdentifier];
+                dlopen("/System/Library/Frameworks/CloudKit.framework/CloudKit", RTLD_LAZY); // v2.3.2 惰性加载
+                container = [(id)objc_getClass("CKContainer") containerWithIdentifier:containerIdentifier];
             } else {
-                container = [CKContainer defaultContainer];
+                dlopen("/System/Library/Frameworks/CloudKit.framework/CloudKit", RTLD_LAZY);
+                container = [(id)objc_getClass("CKContainer") defaultContainer];
             }
             if (!container) fetchError = @"CKContainer 为空";
         } @catch (NSException *e) {

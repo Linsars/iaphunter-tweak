@@ -19,6 +19,7 @@
 
 #import "MFPanel.h"
 #import <JavaScriptCore/JavaScriptCore.h>
+#import <dlfcn.h>
 #import <CommonCrypto/CommonCrypto.h>
 
 static JSContext *g_jsCtx = nil;
@@ -62,7 +63,8 @@ static NSString *mfJSGetScript(void) {
 static void mfJSInitIfNeeded(void) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        g_jsCtx = [[JSContext alloc] init];
+        dlopen("/System/Library/Frameworks/JavaScriptCore.framework/JavaScriptCore", RTLD_LAZY); // v2.3.2 惰性加载
+        g_jsCtx = [[(id)objc_getClass("JSContext") alloc] init];
         g_jsCtx.exceptionHandler = ^(JSContext *ctx, JSValue *e) {
             mfLog(@"JS exception: %@", e);
         };
