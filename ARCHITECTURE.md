@@ -1,6 +1,6 @@
 # MinisFix 架构真相源(任何会话开工必读,防概念混淆)
 
-> 状态: v2.3.1 现行 · **v2.4.0 四 dylib 重组已拍板待执行**(见下文目标态)
+> 状态: **v2.4.0 四 dylib 重组已完成** ✅ (FolderX / AppHooks / IAPtools + FolderX.bundle)
 > 历史教训: 模型反复把「IAP工具箱面板」当成 MinisFix 全部、把功能塞错 dylib。
 > 误导源: ①Makefile 旧注释 `# MinisFix v5.0(新面板:数据分析/...)` ②旧 memory 叙事。
 > 本文件是唯一真相源,架构变动必须同步更新本文件(纪律)。
