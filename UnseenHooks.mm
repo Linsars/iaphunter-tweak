@@ -140,18 +140,10 @@ static BOOL hook_sendAction(id self, SEL _cmd, id action, id target, id sender, 
 
 static void install_springboard_hooks(void) {
     dbg(@"=== SB install START ===");
-    Class uiApp = objc_getClass("UIApplication");
-    dbg(@"UIApplication = %p", uiApp);
-    if (!uiApp) { dbg(@"❌ no UIApplication"); return; }
-
-    Method m = class_getInstanceMethod(uiApp, @selector(sendAction:to:from:forEvent:));
-    dbg(@"Method = %p", m);
-    if (!m) { dbg(@"❌ method not found"); return; }
-
-    orig_sendAction = (BOOL (*)(id, SEL, id, id, id, id))method_getImplementation(m);
-    method_setImplementation(m, (IMP)hook_sendAction);
-    dbg(@"✅ sendAction hooked (orig=%p)", orig_sendAction);
-    dbg(@"=== SB install END ===");
+    // v2.5.5: sendAction hook 导致 SpringBoard 反复崩溃(装上后从未被调用就崩了)
+    // 暂时禁用,只保留 ctor 日志追踪——先确保四 dylib 稳定加载
+    dbg(@"SB sendAction hook DISABLED (v2.5.5 crash workaround)");
+    dbg(@"=== SB install END (no hooks) ===");
 }
 
 // ============================================================
