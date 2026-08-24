@@ -174,71 +174,71 @@
 		</dict>
 		<dict>
 			<key>PostNotification</key>
-			<string>com.linsars.minisfix/ReloadPrefs</string>
+			<string>com.82flex.unseen/ReloadPrefs</string>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>default</key>
 			<false/>
 			<key>defaults</key>
-			<string>com.linsars.minisfix</string>
+			<string>com.82flex.unseen</string>
 			<key>key</key>
-			<string>mfUnseenEnabled</string>
+			<string>Enabled</string>
 			<key>label</key>
 			<string>启用反检测</string>
 		</dict>
 		<dict>
 			<key>PostNotification</key>
-			<string>com.linsars.minisfix/ReloadPrefs</string>
+			<string>com.82flex.unseen/ReloadPrefs</string>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>default</key>
 			<true/>
 			<key>defaults</key>
-			<string>com.linsars.minisfix</string>
+			<string>com.82flex.unseen</string>
 			<key>key</key>
-			<string>mfUnseenRevealHidden</string>
+			<string>DisableUpdateMaskPatchEnabled</string>
 			<key>label</key>
 			<string>显示被隐藏画面</string>
 		</dict>
 		<dict>
 			<key>PostNotification</key>
-			<string>com.linsars.minisfix/ReloadPrefs</string>
+			<string>com.82flex.unseen/ReloadPrefs</string>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>default</key>
 			<true/>
 			<key>defaults</key>
-			<string>com.linsars.minisfix</string>
+			<string>com.82flex.unseen</string>
 			<key>key</key>
-			<string>mfUnseenProtectSysUI</string>
+			<string>ProcessAwareUpdateMaskBypassEnabled</string>
 			<key>label</key>
 			<string>保护系统界面</string>
 		</dict>
 		<dict>
 			<key>PostNotification</key>
-			<string>com.linsars.minisfix/ReloadPrefs</string>
+			<string>com.82flex.unseen/ReloadPrefs</string>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>default</key>
 			<true/>
 			<key>defaults</key>
-			<string>com.linsars.minisfix</string>
+			<string>com.82flex.unseen</string>
 			<key>key</key>
-			<string>mfUnseenHideScreenshot</string>
+			<string>ScreenshotActionFilterEnabled</string>
 			<key>label</key>
 			<string>隐藏截图行为</string>
 		</dict>
 		<dict>
 			<key>PostNotification</key>
-			<string>com.linsars.minisfix/ReloadPrefs</string>
+			<string>com.82flex.unseen/ReloadPrefs</string>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>default</key>
 			<true/>
 			<key>defaults</key>
-			<string>com.linsars.minisfix</string>
+			<string>com.82flex.unseen</string>
 			<key>key</key>
-			<string>mfUnseenHideRecording</string>
+			<string>CaptureStateMaskEnabled</string>
 			<key>label</key>
 			<string>隐藏录屏状态</string>
 		</dict>
