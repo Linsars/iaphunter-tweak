@@ -148,7 +148,7 @@ static void install_springboard_hooks(void) {
     dbg(@"Method = %p", m);
     if (!m) { dbg(@"❌ method not found"); return; }
 
-    orig_sendAction = (void (*)(id, SEL, id, id, id, id))method_getImplementation(m);
+    orig_sendAction = (BOOL (*)(id, SEL, id, id, id, id))method_getImplementation(m);
     method_setImplementation(m, (IMP)hook_sendAction);
     dbg(@"✅ sendAction hooked (orig=%p)", orig_sendAction);
     dbg(@"=== SB install END ===");
