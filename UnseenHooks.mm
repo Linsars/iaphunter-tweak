@@ -81,19 +81,23 @@ static void install_backboardd_hooks(void) {
         dbg(@"dlopen error: %s", dlerror());
     }
 
-    // 符号解析(多种格式尝试)
-    const char *syms[] = {
-        "_ZN2CA6Render6Update17allowed_in_updateEPNS0_7ContextEPKNS0_5LayerE",
-        "__ZN2CA6Render6Update17allowed_in_updateEPNS0_7ContextEPKNS0_5LayerE",
-    };
+    // v2.5.9: 多种方式尝试符号解析(包括 NULL 镜像名搜索全部已加载镜像)
     void *sym = NULL;
     for (int i = 0; i < 2; i++) {
-        sym = DobbySymbolResolver("QuartzCore", syms[i]);
-        dbg(@"DobbySymbolResolver(\"QuartzCore\",\"%s\") → %p", syms[i], sym);
+        // 尝试 DobbySymbolResolver(NULL) — 搜索全部镜像
+        sym = DobbySymbolResolver(NULL, syms[i]);
+        dbg(@"DobbySymbolResolver(NULL,\"%s\") → %p", syms[i], sym);
         if (sym) break;
+        // 尝试 dlsym
         sym = dlsym(RTLD_DEFAULT, syms[i]);
         dbg(@"dlsym(RTLD_DEFAULT,\"%s\") → %p", syms[i], sym);
         if (sym) break;
+        // 尝试通过 handle 查找(如果 QuartzCore 已加载)
+        if (handle) {
+            sym = dlsym(handle, syms[i]);
+            dbg(@"dlsym(handle,\"%s\") → %p", syms[i], sym);
+            if (sym) break;
+        }
     }
 
     if (!sym) {
@@ -138,12 +142,64 @@ static BOOL hook_sendAction(id self, SEL _cmd, id action, id target, id sender, 
     return YES;
 }
 
+// 截图/录屏通知过滤(v2.5.9 安全方案: hook NSNotificationCenter 而非 UIApplication)
+static void (*orig_postNotificationName)(id, SEL, NSString*, id, NSDictionary*);
+static void (*orig_postNotificationObj)(id, SEL, NSNotification*);
+static int sb_notif_count = 0;
+
+static BOOL shouldFilterNotification(NSString *name) {
+    if (!name) return NO;
+    // 过滤所有截图/录屏相关通知
+    if ([name containsString:@"Screenshot"] || [name containsString:@"screenshot"]) return YES;
+    if ([name containsString:@"Captured"] || [name containsString:@"captured"]) return YES;
+    if ([name containsString:@"CaptureState"]) return YES;
+    return NO;
+}
+
+static void hook_postNotificationName(id self, SEL _cmd, NSString *name, id obj, NSDictionary *userInfo) {
+    sb_notif_count++;
+    if (sb_notif_count <= 10) {
+        dbg(@"SB notif #%d: %@", sb_notif_count, name);
+    }
+    if (g_unseenEnabled && unseenPref(@"mfUnseenHideScreenshot", YES) && shouldFilterNotification(name)) {
+        dbg(@"🚫 filtered notification: %@", name);
+        return; // 吞掉,App 收不到
+    }
+    if (orig_postNotificationName) orig_postNotificationName(self, _cmd, name, obj, userInfo);
+}
+
+static void hook_postNotificationObj(id self, SEL _cmd, NSNotification *notification) {
+    if (g_unseenEnabled && unseenPref(@"mfUnseenHideScreenshot", YES) && shouldFilterNotification(notification.name)) {
+        dbg(@"🚫 filtered notification (obj): %@", notification.name);
+        return;
+    }
+    if (orig_postNotificationObj) orig_postNotificationObj(self, _cmd, notification);
+}
+
 static void install_springboard_hooks(void) {
     dbg(@"=== SB install START ===");
-    // v2.5.5: sendAction hook 导致 SpringBoard 反复崩溃(装上后从未被调用就崩了)
-    // 暂时禁用,只保留 ctor 日志追踪——先确保四 dylib 稳定加载
-    dbg(@"SB sendAction hook DISABLED (v2.5.5 crash workaround)");
-    dbg(@"=== SB install END (no hooks) ===");
+
+    // v2.5.9: 安全截图过滤——hook NSNotificationCenter 而非 UIApplication.sendAction
+    Class ncCls = objc_getClass("NSNotificationCenter");
+    if (!ncCls) { dbg(@"❌ no NSNotificationCenter"); return; }
+
+    SEL postSel = @selector(postNotificationName:object:userInfo:);
+    Method m = class_getInstanceMethod(ncCls, postSel);
+    if (m) {
+        orig_postNotificationName = (void (*)(id, SEL, NSString*, id, NSDictionary*))method_getImplementation(m);
+        method_setImplementation(m, (IMP)hook_postNotificationName);
+        dbg(@"✅ postNotificationName:object:userInfo: hooked");
+    }
+
+    SEL postSel2 = @selector(postNotification:);
+    Method m2 = class_getInstanceMethod(ncCls, postSel2);
+    if (m2) {
+        orig_postNotificationObj = (void (*)(id, SEL, NSNotification*))method_getImplementation(m2);
+        method_setImplementation(m2, (IMP)hook_postNotificationObj);
+        dbg(@"✅ postNotification: hooked");
+    }
+
+    dbg(@"=== SB install END ===");
 }
 
 // ============================================================
