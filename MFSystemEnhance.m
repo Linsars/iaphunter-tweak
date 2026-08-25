@@ -83,6 +83,15 @@ static void seApplyCharge(void) {
         int cmd = -1;
         if (charging && lvl >= limit)           cmd = 0; // 到上限停充
         else if (!charging && lvl <= limit - 5) cmd = 1; // 回差恢复
+        // v2.6.18 诊断: 决策变化时打出完整依据(rawLimit 原始值排查滑条落盘)
+        static int seLastLoggedCmd = -2;
+        if (cmd >= 0 && cmd != seLastLoggedCmd) {
+            id raw = p[@"mfSysChargeLimit"];
+            NSLog(@"[SysEnhance] charge decision: lvl=%d limit=%d rawLimit=%@ (%s) charging=%d",
+                  lvl, limit, raw ?: @"nil", [raw isKindOfClass:[NSNumber class]] ? "num" : "other",
+                  charging);
+            seLastLoggedCmd = cmd;
+        }
         if (cmd >= 0 && cmd != seLastCmd) {
             seSetCharging(cmd == 1);
             seLastCmd = cmd;
