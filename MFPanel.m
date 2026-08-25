@@ -541,10 +541,12 @@ static NSArray *mfGuessIDsFromTitles(NSArray *titles) {
     return [clean copy];
 }
 
-// v2.6.11: App Store 产品页 IAP 商品名抓取——成功缓存到 UserDefaults,429 限流时用缓存兜底
-static void mfFetchIAPTitles(NSString *bundleId, void (^cb)(NSArray *titles)) {
+// v2.6.12: bundleId → trackId（缓存）
+static void mfLookupTrackId(NSString *bundleId, void (^cb)(NSString *)) {
+    NSString *ck = [NSString stringWithFormat:@"trackId_%@", bundleId];
+    NSString *cached = [[NSUserDefaults standardUserDefaults] stringForKey:ck];
+    if (cached.length) { cb(cached); return; }
     NSString *lk = [NSString stringWithFormat:@"https://itunes.apple.com/lookup?bundleId=%@", bundleId];
-    NSString *cacheKey = [NSString stringWithFormat:@"iapTitles_%@", bundleId];
     [[NSURLSession.sharedSession dataTaskWithURL:[NSURL URLWithString:lk]
         completionHandler:^(NSData *d, NSURLResponse *r, NSError *e) {
             NSString *trackId = nil;
@@ -556,12 +558,54 @@ static void mfFetchIAPTitles(NSString *bundleId, void (^cb)(NSArray *titles)) {
                 NSTextCheckingResult *m = [rx firstMatchInString:body options:0 range:NSMakeRange(0, body.length)];
                 if (m) trackId = [body substringWithRange:[m rangeAtIndex:1]];
             }
-            if (!trackId.length) {
-                NSArray *cached = [[NSUserDefaults standardUserDefaults] objectForKey:cacheKey];
-                if (cached.count) { mfLog(@"[iap] guess: no trackId, cache %lu titles", (unsigned long)cached.count); cb(cached); return; }
-                mfLog(@"[iap] guess: no trackId for %@", bundleId); cb(nil); return;
+            if (trackId.length) [[NSUserDefaults standardUserDefaults] setObject:trackId forKey:ck];
+            cb(trackId);
+    }] resume];
+}
+
+// v2.6.12: AppForge 档案库——众包 productId 数据库(456 app/33k products, ToolsEric 同款接口)
+// GET /v1/apps/{trackId}/product-ids → {"productIds":[...]}；结果缓存,失败不阻塞扫描
+static void mfFetchArchiveIDs(NSString *trackId, void (^cb)(NSArray *)) {
+    if (!trackId.length) { cb(nil); return; }
+    NSString *ck = [NSString stringWithFormat:@"archiveIDs_%@", trackId];
+    NSArray *cached = [[NSUserDefaults standardUserDefaults] objectForKey:ck];
+    if (cached.count) { mfLog(@"[iap] archive: cache %lu ids", (unsigned long)cached.count); cb(cached); return; }
+    NSString *u = [NSString stringWithFormat:
+        @"https://appforge-productid-api.tranthikimchi2601.workers.dev/v1/apps/%@/product-ids", trackId];
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:u]];
+    req.timeoutInterval = 10;
+    [[NSURLSession.sharedSession dataTaskWithRequest:req
+        completionHandler:^(NSData *d, NSURLResponse *r, NSError *e) {
+            NSMutableArray *ids = [NSMutableArray array];
+            if (d.length > 20) {
+                NSString *body = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
+                NSRange pr = [body rangeOfString:@"\"productIds\":["];
+                if (pr.location != NSNotFound) {
+                    NSRange end = [body rangeOfString:@"]" options:0 range:NSMakeRange(pr.location + pr.length, MIN((NSUInteger)4000, body.length - pr.location - pr.length))];
+                    if (end.location != NSNotFound) {
+                        NSString *arr = [body substringWithRange:NSMakeRange(pr.location + pr.length, end.location - pr.location - pr.length)];
+                        NSError *er = nil;
+                        NSRegularExpression *rx = [NSRegularExpression
+                            regularExpressionWithPattern:@"\"([A-Za-z0-9._-]{4,80})\"" options:0 error:&er];
+                        [rx enumerateMatchesInString:arr options:0 range:NSMakeRange(0, arr.length)
+                            usingBlock:^(NSTextCheckingResult *m, NSMatchingFlags f, BOOL *s) {
+                                [ids addObject:[arr substringWithRange:[m rangeAtIndex:1]]];
+                            }];
+                    }
+                }
             }
-            NSString *pu = [NSString stringWithFormat:@"https://apps.apple.com/us/app/id%@", trackId];
+            if (ids.count) [[NSUserDefaults standardUserDefaults] setObject:ids forKey:ck];
+            mfLog(@"[iap] archive: %lu ids from trackId %@", (unsigned long)ids.count, trackId);
+            cb(ids);
+    }] resume];
+}
+
+// v2.6.11: App Store 产品页 IAP 商品名抓取——成功缓存到 UserDefaults,429 限流时用缓存兜底
+static void mfFetchIAPTitles(NSString *trackId, void (^cb)(NSArray *titles)) {
+    NSString *cacheKey = [NSString stringWithFormat:@"iapTitles_%@", trackId];
+    NSArray *pre = [[NSUserDefaults standardUserDefaults] objectForKey:cacheKey];
+    if (pre.count) { mfLog(@"[iap] guess: cache %lu titles", (unsigned long)pre.count); cb(pre); return; }
+    NSString *pu = [NSString stringWithFormat:@"https://apps.apple.com/us/app/id%@", trackId];
             NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:pu]];
             req.timeoutInterval = 10;
             [req setValue:@"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15" forHTTPHeaderField:@"User-Agent"];
@@ -603,7 +647,6 @@ static void mfFetchIAPTitles(NSString *bundleId, void (^cb)(NSArray *titles)) {
                     mfLog(@"[iap] guess: trackId=%@ titles=%lu http=%ld", trackId, (unsigned long)titles.count, (long)code);
                     cb(titles);
             }] resume];
-    }] resume];
 }
 
 
@@ -810,21 +853,34 @@ void mfShowScanPage(void) {
             }
         }
 
-        // 1.6 App Store 商品名猜测(v2.6.7): lookup trackId → 产品页 IAP titles → slug 变体 → 候选
-        // 覆盖「非 RC、静态挖不到」的 app(如 PythonIDE: byok_unlock_permanent 实锤 slug 命名)
+        // 1.6 App Store 情报(v2.6.12): lookup trackId → AppForge 档案库 IDs(众包库,最高命中) + 产品页 titles 猜测
         NSArray *guessPIDs = @[];
+        NSArray *archivePIDs = @[];
         {
-            dispatch_semaphore_t gsem = dispatch_semaphore_create(0);
-            __block NSArray *gtitles = nil;
             NSString *bid = [[NSBundle mainBundle] bundleIdentifier] ?: @"";
             if (bid.length) {
-                mfFetchIAPTitles(bid, ^(NSArray *titles) {
-                    gtitles = titles ?: @[];
-                    dispatch_semaphore_signal(gsem);
-                });
-                dispatch_semaphore_wait(gsem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(12 * NSEC_PER_SEC)));
-                guessPIDs = mfGuessIDsFromTitles(gtitles);
-                mfLog(@"[iap] guess: %lu titles → %lu candidate ids", (unsigned long)gtitles.count, (unsigned long)guessPIDs.count);
+                dispatch_semaphore_t lsem = dispatch_semaphore_create(0);
+                __block NSString *tid = nil;
+                mfLookupTrackId(bid, ^(NSString *t) { tid = t; dispatch_semaphore_signal(lsem); });
+                dispatch_semaphore_wait(lsem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(10 * NSEC_PER_SEC)));
+                if (tid.length) {
+                    // 档案库查询(v2.6.12)
+                    dispatch_semaphore_t asem = dispatch_semaphore_create(0);
+                    __block NSArray *aids = nil;
+                    mfFetchArchiveIDs(tid, ^(NSArray *ids) { aids = ids ?: @[]; dispatch_semaphore_signal(asem); });
+                    dispatch_semaphore_wait(asem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(10 * NSEC_PER_SEC)));
+                    archivePIDs = aids;
+                    // 产品页 titles → 猜测
+                    dispatch_semaphore_t gsem = dispatch_semaphore_create(0);
+                    __block NSArray *gtitles = nil;
+                    mfFetchIAPTitles(tid, ^(NSArray *titles) {
+                        gtitles = titles ?: @[];
+                        dispatch_semaphore_signal(gsem);
+                    });
+                    dispatch_semaphore_wait(gsem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(12 * NSEC_PER_SEC)));
+                    guessPIDs = mfGuessIDsFromTitles(gtitles);
+                    mfLog(@"[iap] guess: %lu titles → %lu candidate ids", (unsigned long)gtitles.count, (unsigned long)guessPIDs.count);
+                }
             }
         }
 
@@ -837,9 +893,10 @@ void mfShowScanPage(void) {
 
         NSMutableSet *seen = [NSMutableSet setWithArray:localCandidates];
         NSMutableArray *toVerify = [NSMutableArray arrayWithArray:hookedPIDs];   // 运行时截获最优先(v2.6.11)
-        for (NSString *pid in netPIDs) [toVerify addObject:pid];                 // 网络提取次之
-        for (NSString *pid in rcPIDs) [toVerify addObject:pid];                  // RC offerings 次优先(v2.6.4)
-        for (NSString *pid in guessPIDs) [toVerify addObject:pid];               // 商品名猜测再次优先(v2.6.7)
+        for (NSString *pid in archivePIDs) [toVerify addObject:pid];             // 档案库众包库次之(v2.6.12)
+        for (NSString *pid in netPIDs) [toVerify addObject:pid];                 // 网络提取
+        for (NSString *pid in rcPIDs) [toVerify addObject:pid];                  // RC offerings(v2.6.4)
+        for (NSString *pid in guessPIDs) [toVerify addObject:pid];               // 商品名猜测(v2.6.7)
         for (NSString *pid in comboPIDs) [toVerify addObject:pid];               // 片段组合(v2.6.8)
         for (NSString *pid in localCandidates) [toVerify addObject:pid];
         NSString *bid2 = [[NSBundle mainBundle] bundleIdentifier] ?: @"";
@@ -862,12 +919,14 @@ void mfShowScanPage(void) {
 
                 NSMutableArray *merged = [NSMutableArray array];
                 NSSet *hookSet = [NSSet setWithArray:hookedPIDs];
+                NSSet *archiveSet = [NSSet setWithArray:archivePIDs];
                 NSSet *netSet = [NSSet setWithArray:netPIDs];
                 NSSet *rcSet = [NSSet setWithArray:rcPIDs];
                 NSSet *guessSet = [NSSet setWithArray:guessPIDs];
                 NSSet *comboSet = [NSSet setWithArray:comboPIDs];
                 for (NSString *pid in verifiedPrices) {
                     NSString *src = [hookSet containsObject:pid] ? @"钩"
+                        : [archiveSet containsObject:pid] ? @"档"
                         : [netSet containsObject:pid] ? @"网络"
                         : [rcSet containsObject:pid] ? @"RC"
                         : [guessSet containsObject:pid] ? @"猜"
