@@ -757,31 +757,35 @@ static void mfQueryRevenueCatOfferings(NSString *key, void (^cb)(NSSet *pids)) {
 
 // SKProductsRequest 查询本地 PID 的价格
 @interface MFProductReqDelegate : NSObject <SKProductsRequestDelegate>
-@property (nonatomic, copy) void (^cb)(NSDictionary *);
+@property (nonatomic, copy) void (^cb)(NSDictionary *prices, NSDictionary *titles);
 @end
 @implementation MFProductReqDelegate
 - (void)productsRequest:(SKProductsRequest *)request didReceiveResponse:(SKProductsResponse *)response {
     NSMutableDictionary *map = [NSMutableDictionary dictionary];
+    NSMutableDictionary *tmap = [NSMutableDictionary dictionary];
     for (SKProduct *p in response.products) {
         NSNumberFormatter *fmt = [[NSNumberFormatter alloc] init];
         fmt.numberStyle = NSNumberFormatterCurrencyStyle;
         fmt.locale = p.priceLocale;
         NSString *priceStr = [fmt stringFromNumber:p.price];
         if (priceStr.length) map[p.productIdentifier] = priceStr;
+        // v2.6.15: localizedTitle 一并收集——面板展示商品名
+        NSString *t = p.localizedTitle;
+        if (t.length) tmap[p.productIdentifier] = t;
     }
-    if (self.cb) self.cb([map copy]);
+    if (self.cb) self.cb([map copy], [tmap copy]);
 }
 - (void)request:(SKRequest *)request didFailWithError:(NSError *)error {
-    if (self.cb) self.cb(@{});
+    if (self.cb) self.cb(@{}, @{});
 }
 @end
-static void mfQueryLocalPrices(NSArray *pids, void (^cb)(NSDictionary *pidToPrice)) {
-    if (pids.count == 0) { cb(@{}); return; }
+static void mfQueryLocalPrices(NSArray *pids, void (^cb)(NSDictionary *pidToPrice, NSDictionary *pidToTitle)) {
+    if (pids.count == 0) { cb(@{}, @{}); return; }
     SKProductsRequest *req = [[SKProductsRequest alloc] initWithProductIdentifiers:[NSSet setWithArray:pids]];
     MFProductReqDelegate *delegate = [[MFProductReqDelegate alloc] init];
     __block BOOL done = NO;
-    delegate.cb = ^(NSDictionary *map) {
-        if (!done) { done = YES; cb(map); }
+    delegate.cb = ^(NSDictionary *map, NSDictionary *tmap) {
+        if (!done) { done = YES; cb(map, tmap); }
     };
     req.delegate = delegate;
     // 防 ARC 释放 delegate
@@ -799,8 +803,12 @@ static void mfQueryPricesBatched(NSArray *pids, NSMutableDictionary *acc, void (
     NSUInteger n = MIN((NSUInteger)500, pids.count);
     NSArray *batch = [pids subarrayWithRange:NSMakeRange(0, n)];
     NSArray *rest = n < pids.count ? [pids subarrayWithRange:NSMakeRange(n, pids.count - n)] : @[];
-    mfQueryLocalPrices(batch, ^(NSDictionary *map) {
+    mfQueryLocalPrices(batch, ^(NSDictionary *map, NSDictionary *tmap) {
         [acc addEntriesFromDictionary:map];
+        // v2.6.15: titles 聚合到关联对象——不改 cb 签名,调用端取
+        NSMutableDictionary *tacc = objc_getAssociatedObject(acc, "titles");
+        if (!tacc) { tacc = [NSMutableDictionary dictionary]; objc_setAssociatedObject(acc, "titles", tacc, OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
+        [tacc addEntriesFromDictionary:tmap];
         mfQueryPricesBatched(rest, acc, cb);
     });
 }
@@ -967,14 +975,20 @@ void mfShowScanPage(void) {
                 NSSet *rcSet = [NSSet setWithArray:rcPIDs];
                 NSSet *guessSet = [NSSet setWithArray:guessPIDs];
                 NSSet *comboSet = [NSSet setWithArray:comboPIDs];
+                NSSet *localSet = [NSSet setWithArray:localCandidates];
+                NSMutableDictionary *titleMap = objc_getAssociatedObject(verifiedPrices, "titles");
                 for (NSString *pid in verifiedPrices) {
-                    NSString *src = [hookSet containsObject:pid] ? @"钩"
-                        : [archiveSet containsObject:pid] ? @"档"
-                        : [netSet containsObject:pid] ? @"网络"
-                        : [rcSet containsObject:pid] ? @"RC"
-                        : [guessSet containsObject:pid] ? @"猜"
-                        : [comboSet containsObject:pid] ? @"组" : @"本地";
-                    [merged addObject:@{@"pid": pid, @"price": verifiedPrices[pid], @"src": src}];
+                    // v2.6.15: 全部命中途径都显示(一个 ID 可能被多条路径挖到)
+                    NSMutableArray *srcs = [NSMutableArray array];
+                    if ([hookSet containsObject:pid])    [srcs addObject:@"钩"];
+                    if ([archiveSet containsObject:pid]) [srcs addObject:@"档"];
+                    if ([netSet containsObject:pid])     [srcs addObject:@"网"];
+                    if ([rcSet containsObject:pid])      [srcs addObject:@"RC"];
+                    if ([guessSet containsObject:pid])   [srcs addObject:@"猜"];
+                    if ([comboSet containsObject:pid])   [srcs addObject:@"组"];
+                    if ([localSet containsObject:pid])   [srcs addObject:@"本地"];
+                    [merged addObject:@{@"pid": pid, @"price": verifiedPrices[pid],
+                        @"title": titleMap[pid] ?: @"", @"src": [srcs componentsJoinedByString:@"+"]}];
                 }
                 [merged sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
                     double pa = mfParsePrice(a[@"price"]), pb = mfParsePrice(b[@"price"]);
@@ -1003,17 +1017,31 @@ void mfShowScanPage(void) {
                     CGFloat y = 8;
                     for (NSDictionary *item in merged) {
                         UIButton *row = [UIButton buttonWithType:UIButtonTypeSystem];
-                        row.frame = CGRectMake(12, y, g_mfCardW - 24, 46);
+                        row.frame = CGRectMake(12, y, g_mfCardW - 24, 56);
                         BOOL isLocal = [item[@"src"] isEqualToString:@"本地"];
                         row.backgroundColor = isLocal ?
                             [UIColor tertiarySystemBackgroundColor] :
                             [UIColor secondarySystemBackgroundColor];
                         row.layer.cornerRadius = 12;
-                        [row setTitle:[NSString stringWithFormat:@"%@    %@", item[@"pid"], item[@"price"]] forState:UIControlStateNormal];
-                        row.titleLabel.font = [UIFont systemFontOfSize:13];
-                        row.titleLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
-                        [row setContentHorizontalAlignment:UIControlContentHorizontalAlignmentLeft];
-                        [row setTitleEdgeInsets:UIEdgeInsetsMake(0, 14, 0, 14)];
+                        // v2.6.15: 双行布局——主行 pid,副行 商品名·价格·来源
+                        UILabel *pidL = [[UILabel alloc] initWithFrame:CGRectMake(14, 6, g_mfCardW - 52, 20)];
+                        pidL.text = item[@"pid"];
+                        pidL.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+                        pidL.textColor = [UIColor labelColor];
+                        pidL.lineBreakMode = NSLineBreakByTruncatingMiddle;
+                        pidL.userInteractionEnabled = NO;
+                        [row addSubview:pidL];
+                        UILabel *subL = [[UILabel alloc] initWithFrame:CGRectMake(14, 28, g_mfCardW - 52, 22)];
+                        NSMutableArray *subParts = [NSMutableArray array];
+                        if ([item[@"title"] length]) [subParts addObject:item[@"title"]];
+                        [subParts addObject:item[@"price"]];
+                        if ([item[@"src"] length]) [subParts addObject:[NSString stringWithFormat:@"来源: %@", item[@"src"]]];
+                        subL.text = [subParts componentsJoinedByString:@" · "];
+                        subL.font = [UIFont systemFontOfSize:11];
+                        subL.textColor = [UIColor secondaryLabelColor];
+                        subL.lineBreakMode = NSLineBreakByTruncatingTail;
+                        subL.userInteractionEnabled = NO;
+                        [row addSubview:subL];
                         objc_setAssociatedObject(row, "pid", item[@"pid"], OBJC_ASSOCIATION_RETAIN);
                         [row addTarget:g_mfCtrl action:NSSelectorFromString(@"mfBuyProduct:") forControlEvents:UIControlEventTouchUpInside];
                         // v2.6.10: 左划复制 productId
@@ -1022,7 +1050,7 @@ void mfShowScanPage(void) {
                         sw.direction = UISwipeGestureRecognizerDirectionLeft;
                         [row addGestureRecognizer:sw];
                         [sv addSubview:row];
-                        y += 52;
+                        y += 62;
                     }
                     sv.contentSize = CGSizeMake(g_mfCardW, y + 16);
                     [page addSubview:sv];
@@ -1536,11 +1564,8 @@ void mfShowProductPage(void) {
     [UIPasteboard generalPasteboard].string = pid;
     UIColor *orig = row.backgroundColor;
     row.backgroundColor = [UIColor systemGreenColor];
-    NSString *origTitle = row.currentTitle;
-    [row setTitle:[NSString stringWithFormat:@"✓ 已复制 %@", pid] forState:UIControlStateNormal];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.9 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         row.backgroundColor = orig;
-        [row setTitle:origTitle forState:UIControlStateNormal];
     });
     mfLog(@"copied: %@", pid);
 }
