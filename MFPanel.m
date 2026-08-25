@@ -871,6 +871,11 @@ void mfShowScanPage(void) {
                         [row setTitleEdgeInsets:UIEdgeInsetsMake(0, 14, 0, 14)];
                         objc_setAssociatedObject(row, "pid", item[@"pid"], OBJC_ASSOCIATION_RETAIN);
                         [row addTarget:g_mfCtrl action:NSSelectorFromString(@"mfBuyProduct:") forControlEvents:UIControlEventTouchUpInside];
+                        // v2.6.10: 左划复制 productId
+                        UISwipeGestureRecognizer *sw = [[UISwipeGestureRecognizer alloc]
+                            initWithTarget:g_mfCtrl action:NSSelectorFromString(@"mfCopyRowSwipe:")];
+                        sw.direction = UISwipeGestureRecognizerDirectionLeft;
+                        [row addGestureRecognizer:sw];
                         [sv addSubview:row];
                         y += 52;
                     }
@@ -1376,6 +1381,23 @@ void mfShowProductPage(void) {
     [[SKPaymentQueue defaultQueue] addPayment:pay];
     b.backgroundColor = [UIColor systemGreenColor];
     mfLog(@"buy: %@", pid);
+}
+
+// v2.6.10: 左划复制 productId——swipe 手势挂在结果行上,闪绿反馈
+- (void)mfCopyRowSwipe:(UISwipeGestureRecognizer *)g {
+    UIButton *row = (UIButton *)g.view;
+    NSString *pid = objc_getAssociatedObject(row, "pid");
+    if (!pid.length) return;
+    [UIPasteboard generalPasteboard].string = pid;
+    UIColor *orig = row.backgroundColor;
+    row.backgroundColor = [UIColor systemGreenColor];
+    NSString *origTitle = row.currentTitle;
+    [row setTitle:[NSString stringWithFormat:@"✓ 已复制 %@", pid] forState:UIControlStateNormal];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.9 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        row.backgroundColor = orig;
+        [row setTitle:origTitle forState:UIControlStateNormal];
+    });
+    mfLog(@"copied: %@", pid);
 }
 - (void)mfDoManualBuy {
     UIView *top = [g_mfPages lastObject];
