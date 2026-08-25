@@ -297,6 +297,7 @@ static BOOL mfPIDExcluded(NSString *s) {
 }
 static NSSet *mfScanFileForPIDs(NSString *path);
 static void mfQueryLocalPrices(NSArray *pids, void (^cb)(NSDictionary *pidToPrice));
+static NSMutableSet *g_mfRCKeys = nil; // v2.6.4: RevenueCat public key 静态收集池
 
 // 从 Mach-O 的 __cstring 段提取 product ID（只匹配 bundleId. 前缀）
 
@@ -307,9 +308,9 @@ static NSArray *mfExtractPIDsFromCaptures(void) {
     NSMutableOrderedSet *out = [NSMutableOrderedSet orderedSet];
     NSArray *recs = mfCapturedRecordsSnapshot();
     NSError *reErr = nil;
-    // 键名形态: product_id / productId / productIdentifier / iap_id …
+    // 键名形态: product_id / productId / productIdentifier / iap_id / platform_product_identifier(v2.6.4 RevenueCat) …
     NSRegularExpression *re = [NSRegularExpression
-        regularExpressionWithPattern:@"\"(product[_]?[iI]d|productIdentifier|iap[_]?id|purchase[_]?id)\"\\s*:\\s*\"([^\"\\\\]{4,80})\""
+        regularExpressionWithPattern:@"\"((?:platform_)?product[_]?(?:[iI]d|identifier)|iap[_]?id|purchase[_]?id)\"\\s*:\\s*\"([^\"\\\\]{4,80})\""
         options:NSRegularExpressionCaseInsensitive error:&reErr];
     // 兜底形态:任意 "id"/"identifier" 键下挂反向域名样式值(products 数组常用)
     NSRegularExpression *re2 = [NSRegularExpression
@@ -394,6 +395,7 @@ static NSArray *mfScanLocalProductIDs(void) {
 // 后续由 SKProductsRequest 验证哪些是真正的 product ID
 static NSSet *mfScanFileForPIDs(NSString *path) {
     NSMutableSet *pids = [NSMutableSet set];
+    if (!g_mfRCKeys) g_mfRCKeys = [NSMutableSet set];
     NSData *data = [NSData dataWithContentsOfFile:path options:NSDataReadingMappedIfSafe error:nil];
     if (!data.length) return pids;
     const uint8_t *bytes = (const uint8_t *)data.bytes;
@@ -404,6 +406,9 @@ static NSSet *mfScanFileForPIDs(NSString *path) {
         if (c >= 0x20 && c < 0x7F) {
             [current appendFormat:@"%c", c];
         } else {
+            // v2.6.4: RevenueCat public SDK key 顺带收集(appl_+43 base62)——offerings 查询入口
+            if (current.length >= 44 && current.length <= 60 && [current hasPrefix:@"appl_"])
+                [g_mfRCKeys addObject:[current copy]];
             if (current.length >= 6 && mfPIDShaped(current)) {
                 NSString *sv = [current copy];
                 if (!mfPIDExcluded(sv)) [pids addObject:sv];
@@ -411,10 +416,51 @@ static NSSet *mfScanFileForPIDs(NSString *path) {
             [current setString:@""];
         }
     }
+    if (current.length >= 44 && current.length <= 60 && [current hasPrefix:@"appl_"])
+        [g_mfRCKeys addObject:[current copy]];
     if (current.length >= 6 && mfPIDShaped(current) && !mfPIDExcluded(current)) {
         [pids addObject:[current copy]];
     }
     return pids;
+}
+
+// v2.6.4: RevenueCat 路径——静态挖 public key(appl_) → offerings API 拿全量 productId
+// offerings 响应 offerings[].packages[].platform_product_identifier 是开发者配置的完整商品列表,
+// slug 形态 ID(live_level_subscription_monthly)静态扫描易漏,此处一网打尽
+static NSSet *mfCollectedRCKeys(void) { return g_mfRCKeys ?: [NSSet set]; }
+static void mfQueryRevenueCatOfferings(NSString *key, void (^cb)(NSSet *pids)) {
+    if (!key.length) { cb(nil); return; }
+    // 一次性随机匿名 user id——RC 会自动创建空订阅者,不碰真实用户数据
+    NSString *uid = [NSString stringWithFormat:@"mfprobe%08x%08x", arc4random(), arc4random()];
+    NSString *urlStr = [NSString stringWithFormat:
+        @"https://api.revenuecat.com/v1/subscribers/%@/offerings", uid];
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:urlStr]];
+    req.HTTPMethod = @"GET";
+    req.timeoutInterval = 10;
+    [req setValue:[NSString stringWithFormat:@"Bearer %@", key] forHTTPHeaderField:@"Authorization"];
+    [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+    [req setValue:@"ios" forHTTPHeaderField:@"X-Platform"];
+    [[NSURLSession.sharedSession dataTaskWithRequest:req
+        completionHandler:^(NSData *d, NSURLResponse *r, NSError *e) {
+            NSMutableSet *pids = [NSMutableSet set];
+            if (d.length > 10) {
+                NSString *body = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
+                if (body) {
+                    NSError *er = nil;
+                    NSRegularExpression *rx = [NSRegularExpression
+                        regularExpressionWithPattern:@"\"platform_product_identifier\"\\s*:\\s*\"([^\"\\\\]{3,80})\""
+                        options:0 error:&er];
+                    [rx enumerateMatchesInString:body options:0 range:NSMakeRange(0, body.length)
+                        usingBlock:^(NSTextCheckingResult *m, NSMatchingFlags f, BOOL *s) {
+                            [pids addObject:[body substringWithRange:[m rangeAtIndex:1]]];
+                        }];
+                }
+                mfLog(@"[iap] RC offerings key=%@… pids=%lu http=%@", [key substringToIndex:MIN((NSUInteger)12, key.length)], (unsigned long)pids.count, r);
+            } else {
+                mfLog(@"[iap] RC offerings fail: %@", e.localizedDescription ?: @"empty");
+            }
+            cb(pids);
+    }] resume];
 }
 
 // SKProductsRequest 查询本地 PID 的价格
@@ -515,11 +561,34 @@ void mfShowScanPage(void) {
         // 1. 本地扫描 + 网络提取（双源）
         NSArray *localCandidates = mfScanLocalProductIDs();
         NSArray *netPIDs = mfExtractPIDsFromCaptures();
-        mfLog(@"[iap] local=%d net=%lu → SK verify", (int)localCandidates.count, (unsigned long)netPIDs.count);
+
+        // 1.5 RevenueCat 路径(v2.6.4): 静态挖到的 appl_ key → offerings API 全量 productId
+        // slug 形态 ID(live_level_subscription_monthly)静态扫描易漏,RC offerings 是开发者配置的完整列表
+        NSArray *rcPIDs = @[];
+        {
+            NSSet *rcKeys = mfCollectedRCKeys();
+            if (rcKeys.count) {
+                dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+                NSMutableSet *acc = [NSMutableSet set];
+                for (NSString *k in rcKeys) {
+                    mfQueryRevenueCatOfferings(k, ^(NSSet *pids) {
+                        if (pids.count) [acc unionSet:pids];
+                        dispatch_semaphore_signal(sem);
+                    });
+                }
+                for (NSUInteger i = 0; i < rcKeys.count; i++)
+                    dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(6 * NSEC_PER_SEC)));
+                rcPIDs = acc.allObjects;
+                mfLog(@"[iap] RC offerings: %lu pids / %lu keys", (unsigned long)rcPIDs.count, (unsigned long)rcKeys.count);
+            }
+        }
+
+        mfLog(@"[iap] local=%d net=%lu rc=%lu → SK verify", (int)localCandidates.count, (unsigned long)netPIDs.count, (unsigned long)rcPIDs.count);
         dispatch_async(dispatch_get_main_queue(), ^{ mfProbeStoreKit2(); });
 
         NSMutableSet *seen = [NSMutableSet setWithArray:localCandidates];
         NSMutableArray *toVerify = [NSMutableArray arrayWithArray:netPIDs];      // 网络提取最优先
+        for (NSString *pid in rcPIDs) [toVerify addObject:pid];                  // RC offerings 次优先(v2.6.4)
         for (NSString *pid in localCandidates) [toVerify addObject:pid];
         NSString *bid2 = [[NSBundle mainBundle] bundleIdentifier] ?: @"";
         NSArray *bseg = [bid2 componentsSeparatedByString:@"."];
@@ -541,8 +610,9 @@ void mfShowScanPage(void) {
 
                 NSMutableArray *merged = [NSMutableArray array];
                 NSSet *netSet = [NSSet setWithArray:netPIDs];
+                NSSet *rcSet = [NSSet setWithArray:rcPIDs];
                 for (NSString *pid in verifiedPrices) {
-                    NSString *src = [netSet containsObject:pid] ? @"网络" : @"本地";
+                    NSString *src = [netSet containsObject:pid] ? @"网络" : ([rcSet containsObject:pid] ? @"RC" : @"本地");
                     [merged addObject:@{@"pid": pid, @"price": verifiedPrices[pid], @"src": src}];
                 }
                 [merged sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
