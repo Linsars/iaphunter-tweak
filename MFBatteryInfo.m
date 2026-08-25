@@ -49,55 +49,74 @@ NSDictionary *mfBatteryRead(void) {
     return [(__bridge NSDictionary *)props copy];
 }
 
-#pragma mark - 键名中文化与单位换算
+#pragma mark - 固定字段清单(v2.6.21 用户指定 16 项)
 
 static NSString *biFmtVal(NSString *key, id v) {
-    if ([v isKindOfClass:[NSDictionary class]]) return nil; // 子字典单独展开
-    // 温度: 0.01K → °C
-    if ([key isEqualToString:@"Temperature"] || [key isEqualToString:@"VirtualTemperature"]) {
+    if (v == nil || v == [NSNull null]) return @"—";
+    if ([key isEqualToString:@"Temperature"]) {
         NSNumber *n = [v isKindOfClass:[NSNumber class]] ? v : nil;
         return n ? [NSString stringWithFormat:@"%.1f °C", n.doubleValue / 100.0] : [v description];
     }
+    if ([key isEqualToString:@"BootVoltage"] || [key isEqualToString:@"Voltage"] || [key isEqualToString:@"AdpVoltage"]) {
+        NSNumber *n = [v isKindOfClass:[NSNumber class]] ? v : nil;
+        return n ? [NSString stringWithFormat:@"%.3f V", n.doubleValue / 1000.0] : [v description]; // mV → V
+    }
     if ([v isKindOfClass:[NSNumber class]]) return [v stringValue];
-    if ([v isKindOfClass:[NSDate class]]) return [v description];
     return [v description] ?: @"—";
 }
 
-static NSString *biCName(NSString *key) {
-    static NSDictionary *map;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        map = @{
-            @"IsCharging":                @"充电中",
-            @"ExternalConnected":         @"外部电源连接",
-            @"ExternalChargeCapable":     @"允许外部充电",
-            @"CurrentCapacity":           @"当前电量 (%)",
-            @"AppleRawCurrentCapacity":   @"原始电量 (mAh)",
-            @"NominalChargeCapacity":     @"标称满容量 (mAh)",
-            @"DesignCapacity":            @"设计容量 (mAh)",
-            @"CycleCount":                @"循环次数",
-            @"Amperage":                  @"电流 (mA)",
-            @"InstantAmperage":           @"瞬时电流 (mA)",
-            @"Voltage":                   @"电压 (mV)",
-            @"BootVoltage":               @"启动电压 (mV)",
-            @"Temperature":               @"电池温度",
-            @"VirtualTemperature":        @"虚拟温度",
-            @"BatteryInstalled":          @"电池在位",
-            @"Serial":                    @"序列号",
-            @"UpdateTime":                @"数据更新时间",
-            @"PostChargeWaitSeconds":     @"充满后等待 (s)",
-            @"PostDischargeWaitSeconds":  @"放电后等待 (s)",
-            @"AdapterDetails":            @"⚡️ 电源适配器",
-            @"Manufacturer":              @"制造商",
-            @"Name":                      @"名称",
-            @"Description":               @"描述",
-            @"Watts":                     @"功率 (W)",
-            @"IsWireless":                @"无线充电",
-            @"AdapterVoltage":            @"适配器电压",
-            @"Current":                   @"电流",
-        };
-    });
-    return map[key];
+// 充电状态: 慢充/快充/无线/未充电
+// 判定: IsWireless→无线; 功率>=18W 或适配器电压>=9V(PD)→快充; 其余→慢充
+static NSString *biChargeMode(NSDictionary *d) {
+    NSDictionary *adp = [d[@"AdapterDetails"] isKindOfClass:[NSDictionary class]] ? d[@"AdapterDetails"] : nil;
+    BOOL plugged = [d[@"ExternalConnected"] boolValue];
+    BOOL charging = [d[@"IsCharging"] boolValue];
+    if (!plugged && !charging) return @"未充电";
+    if (adp) {
+        BOOL wireless = [adp[@"IsWireless"] boolValue] ||
+            [[adp[@"Description"] stringByLowercaseString] containsString:@"wireless"];
+        NSNumber *watts = [adp[@"Watts"] isKindOfClass:[NSNumber class]] ? adp[@"Watts"] : nil;
+        NSNumber *volts = [adp[@"AdapterVoltage"] isKindOfClass:[NSNumber class]] ? adp[@"AdapterVoltage"]
+                        : ([adp[@"Voltage"] isKindOfClass:[NSNumber class]] ? adp[@"Voltage"] : nil);
+        if (wireless) return @"无线充电";
+        if ((watts && watts.doubleValue >= 18) || (volts && volts.doubleValue >= 9000)) return @"快充";
+        return @"慢充";
+    }
+    return charging ? @"充电中" : @"已接电源";
+}
+
+// 行定义: 标题 | 来源键 | 是否需要换算
+static NSArray *biBuildRows(void) {
+    NSDictionary *d = mfBatteryRead();
+    if (!d.count) return @[ @{@"t": @"读取失败", @"v": @"IOKit 不可用"} ];
+    NSNumber *design = [d[@"DesignCapacity"] isKindOfClass:[NSNumber class]] ? d[@"DesignCapacity"] : nil;
+    NSNumber *nominal = [d[@"NominalChargeCapacity"] isKindOfClass:[NSNumber class]] ? d[@"NominalChargeCapacity"] : nil;
+
+    // 健康度 = 标称满容量/设计容量
+    NSString *health = @"—";
+    if (design && nominal && design.doubleValue > 0)
+        health = [NSString stringWithFormat:@"%.1f%%", nominal.doubleValue / design.doubleValue * 100];
+
+    NSMutableArray<NSDictionary *> *rows = [NSMutableArray array];
+    void (^row)(NSString *, NSString *) = ^(NSString *t, NSString *v) { [rows addObject:@{@"t": t, @"v": v ?: @"—"}]; };
+    row(@"健康度", health);
+    row(@"电池温度", biFmtVal(@"Temperature", d[@"Temperature"]));
+    row(@"电池状态", biChargeMode(d));
+    row(@"充电次数", biFmtVal(@"CycleCount", d[@"CycleCount"]));
+    row(@"设计容量 (mAh)", biFmtVal(@"DesignCapacity", design));
+    row(@"实际容量 (mAh)", biFmtVal(@"NominalChargeCapacity", nominal));
+    row(@"当前电量 (mAh)", biFmtVal(@"AppleRawCurrentCapacity", d[@"AppleRawCurrentCapacity"]));
+    row(@"硬件电量 (%)", biFmtVal(@"CurrentCapacity", d[@"CurrentCapacity"]));
+    row(@"电池电流 (mA)", biFmtVal(@"Amperage", d[@"Amperage"]));
+    row(@"瞬时电流 (mA)", biFmtVal(@"InstantAmperage", d[@"InstantAmperage"]));
+    row(@"开机电压", biFmtVal(@"BootVoltage", d[@"BootVoltage"]));
+    row(@"电池电压", biFmtVal(@"Voltage", d[@"Voltage"]));
+    row(@"序列号", biFmtVal(@"Serial", d[@"Serial"]));
+    NSDictionary *adp = [d[@"AdapterDetails"] isKindOfClass:[NSDictionary class]] ? d[@"AdapterDetails"] : nil;
+    row(@"电源电压", biFmtVal(@"AdpVoltage", adp[@"Voltage"] ?: adp[@"AdapterVoltage"]));
+    row(@"电源电流 (mA)", biFmtVal(nil, adp[@"Current"]));
+    row(@"电源功率 (W)", biFmtVal(nil, adp[@"Watts"]));
+    return rows;
 }
 
 #pragma mark - 详情页
@@ -140,29 +159,6 @@ void mfShowBatteryPage(void);
 }
 @end
 
-static NSArray *biBuildRows(void) {
-    NSDictionary *d = mfBatteryRead();
-    if (!d.count) return @[ @{@"t": @"读取失败", @"v": @"IOKit 不可用"} ];
-    NSMutableArray *rows = [NSMutableArray array];
-    // 关键项优先
-    for (NSString *k in @[@"CurrentCapacity", @"IsCharging", @"ExternalConnected", @"ExternalChargeCapable"]) {
-        if (d[k] != nil) [rows addObject:@{@"t": biCName(k) ?: k, @"v": biFmtVal(k, d[k]) ?: @""}];
-    }
-    for (NSString *k in d) {
-        if ([@[@"CurrentCapacity", @"IsCharging", @"ExternalConnected", @"ExternalChargeCapable"] containsObject:k]) continue;
-        NSString *cn = biCName(k) ?: k;
-        if ([d[k] isKindOfClass:[NSDictionary class]]) {
-            [rows addObject:@{@"t": cn, @"v": @""}];
-            for (NSString *sk in d[k]) {
-                [rows addObject:@{@"t": [NSString stringWithFormat:@"   %@", biCName(sk) ?: sk],
-                                  @"v": biFmtVal(sk, d[k][sk]) ?: @""}];
-            }
-        } else {
-            [rows addObject:@{@"t": cn, @"v": biFmtVal(k, d[k]) ?: @""}];
-        }
-    }
-    return rows;
-}
 
 void mfShowBatteryPage(void) {
     UIView *page = mfMakePage(@"电池详情", YES);
