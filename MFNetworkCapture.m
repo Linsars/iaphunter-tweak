@@ -665,8 +665,7 @@ void mfShowDataAnalysisPage(void) {
     gy = mfGridButton(page, 16, gy, gw, @"Keychain 管理", @"🔑", @selector(mfShowKeychainManagerPage), NO, nil);
     gy = mfGridButton(page, 16 + gw + 12, gy - 92, gw, @"安全扫描", @"🛡️", @selector(mfShowSecurityScanPage), NO, nil);
     gy = mfGridButton(page, 16, gy, gw, @"MachO 深检", @"🔬", @selector(mfShowMachODeepPage), NO, nil);
-    // v2.6.17: 宿主日志(pipe+dup2 捕获 stdout/stderr)
-    gy = mfGridButton(page, 16 + gw + 12, gy - 92, gw, @"实时日志", @"📡", @selector(mfShowHostLogPage), NO, nil);
+    // v2.6.21: 实时日志/电池详情 提升到主页
     mfPushPage(page);
 }
 

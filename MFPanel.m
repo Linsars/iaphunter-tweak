@@ -263,6 +263,9 @@ extern unsigned long long mfHostLogBufferedCount(void);
 extern unsigned long long mfHostLogTotal(void);
 extern NSArray<NSString *> *mfHostLogSnapshot(void);
 extern void mfHostLogClear(void);
+// v2.6.21 电池详情 (MFBatteryInfo.m)
+extern NSDictionary *mfBatteryRead(void);
+extern void mfShowBatteryPage(void);
 
 // ====== 本地二进制扫描 ======
 // 前向声明
@@ -1314,6 +1317,8 @@ void mfShowProductPage(void) {
 - (void)mfShowDataAnalysisPage { mfShowDataAnalysisPage(); }
 // v2.6.17 实时日志
 - (void)mfShowHostLogPage { mfShowHostLogPage(); }
+// v2.6.21 电池详情
+- (void)mfShowBatteryPage { mfShowBatteryPage(); }
 - (void)mfHostLogSwitchChanged:(UISwitch *)sw {
     mfSetBoolPref(@"mfHostLogEnabled", sw.on);
     if (sw.on) mfHostLogStart();
@@ -1884,6 +1889,9 @@ static void iaphShowPanel(UIViewController *vc) {
         mfLog(@"PANEL STEP 7a: dataAnalysis btn");
         gy = mfGridButton(home, 16 + gw + 12, gy - 92, gw, @"Product", @"🛍️", @selector(mfShowProductPage), NO, nil);
         mfLog(@"PANEL STEP 7b: product btn");
+        // v2.6.21: 电池详情 + 实时日志 提到主页
+        gy = mfGridButton(home, 16, gy, gw, @"电池详情", @"🔋", @selector(mfShowBatteryPage), NO, nil);
+        gy = mfGridButton(home, 16 + gw + 12, gy - 92, gw, @"实时日志", @"📜", @selector(mfShowHostLogPage), NO, nil);
         // 网络修改已并入网络分析 → 规则管理 (v1.8.3)
         // Keychain 已并入 数据分析 板块 (v1.4.0)
 
@@ -2124,7 +2132,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define IAPTOOLS_VERSION @"2.6.20"
+#define IAPTOOLS_VERSION @"2.6.21"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {

@@ -13,7 +13,7 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME = FolderX AppHooks IAPtools
 
 # FolderX(SpringBoard: 文件夹变色 + 系统增强[充电限制/Wi-Fi永连])
-FolderX_FILES = $(filter-out MFPanel.m MFNetworkCapture.m MFJSRules.m MFAppStoreSpoof.m MFTestFlightHooks.m MFKeychainManager.m MFClassDump.m MFDiagnostics.m MFNetAnalyzer.m MFCryptoToolbox.m MFCryptoHooks.m MFMethodTrace.m MFHostLogCapture.m, $(wildcard *.xm *.m *.mm))
+FolderX_FILES = $(filter-out MFPanel.m MFNetworkCapture.m MFJSRules.m MFAppStoreSpoof.m MFTestFlightHooks.m MFKeychainManager.m MFClassDump.m MFDiagnostics.m MFNetAnalyzer.m MFCryptoToolbox.m MFCryptoHooks.m MFMethodTrace.m MFHostLogCapture.m MFBatteryInfo.m, $(wildcard *.xm *.m *.mm))
 FolderX_FRAMEWORKS = UIKit Foundation SpringBoardServices
 FolderX_CFLAGS = -fno-objc-arc -fmodules
 MFSystemEnhance.m_CFLAGS = -fobjc-arc
@@ -21,7 +21,7 @@ FolderX_ARCHS = arm64 arm64e
 FolderX_INSTALL_PATH = /usr/lib/TweakInject
 
 # IAPtools v2.4.0(原 MinisFix.dylib 改名——职责纯化: 仅 IAP工具箱面板,全局 UIKit 注入)
-IAPtools_FILES = MFPanel.m MFNetworkCapture.m MFJSRules.m MFDiagnosticCleaner.m MFKeychainManager.m MFClassDump.m MFDiagnostics.m MFNetAnalyzer.m MFCryptoToolbox.m MFCryptoHooks.m MFMethodTrace.m MFHostLogCapture.m
+IAPtools_FILES = MFPanel.m MFNetworkCapture.m MFJSRules.m MFDiagnosticCleaner.m MFKeychainManager.m MFClassDump.m MFDiagnostics.m MFNetAnalyzer.m MFCryptoToolbox.m MFCryptoHooks.m MFMethodTrace.m MFHostLogCapture.m MFBatteryInfo.m
 IAPtools_FRAMEWORKS = UIKit Foundation Security
 IAPtools_LDFLAGS = -weak_framework UIKit -weak_framework StoreKit -weak_framework JavaScriptCore -lz
 IAPtools_CFLAGS = -fobjc-arc -Wno-everything
