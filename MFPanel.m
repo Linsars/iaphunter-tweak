@@ -453,6 +453,36 @@ static NSSet *mfScanFileForPIDs(NSString *path) {
 // offerings 响应 offerings[].packages[].platform_product_identifier 是开发者配置的完整商品列表,
 // slug 形态 ID(live_level_subscription_monthly)静态扫描易漏,此处一网打尽
 static NSSet *mfCollectedRCKeys(void) { return g_mfRCKeys ?: [NSSet set]; }
+
+// v2.6.6: 从捕获的请求头提取 RC key——app 自己发的 Authorization 头,100% 准确
+// (静态挖 key 可能带拼接尾巴: RC SDK 有拼串习惯,如 com.xxxV5.81.0Q2U1.1.2Sspm_)
+static void mfHarvestRCKeysFromCaptures(void) {
+    if (!g_mfRCKeys) g_mfRCKeys = [NSMutableSet set];
+    for (MFNetRecord *r in mfCapturedRecordsSnapshot()) {
+        if (!r.reqHeaders) continue;
+        NSString *auth = r.reqHeaders[@"Authorization"] ?: r.reqHeaders[@"authorization"];
+        if (auth.length < 10) continue;
+        NSRange rng = [auth rangeOfString:@"appl_"];
+        if (rng.location == NSNotFound) continue;
+        NSString *tail = [auth substringFromIndex:rng.location];
+        NSRange end = [tail rangeOfCharacterFromSet:
+            [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        NSString *cand = end.location == NSNotFound ? tail : [tail substringToIndex:end.location];
+        if (mfIsRCPublicKey(cand)) [g_mfRCKeys addObject:cand];
+        else {
+            // appl_ 后紧跟引号等非 base62 字符时正则兜底
+            NSError *e = nil;
+            NSRegularExpression *rx = [NSRegularExpression
+                regularExpressionWithPattern:@"appl_[A-Za-z0-9]{15,60}" options:0 error:&e];
+            [rx enumerateMatchesInString:auth options:0 range:NSMakeRange(0, auth.length)
+                usingBlock:^(NSTextCheckingResult *m, NSMatchingFlags f, BOOL *s) {
+                    NSString *k = [auth substringWithRange:m.range];
+                    if (mfIsRCPublicKey(k)) [g_mfRCKeys addObject:k];
+                }];
+        }
+    }
+}
+
 static void mfQueryRevenueCatOfferings(NSString *key, void (^cb)(NSSet *pids)) {
     if (!key.length) { cb(nil); return; }
     // 一次性随机匿名 user id——RC 会自动创建空订阅者,不碰真实用户数据
@@ -480,9 +510,11 @@ static void mfQueryRevenueCatOfferings(NSString *key, void (^cb)(NSSet *pids)) {
                             [pids addObject:[body substringWithRange:[m rangeAtIndex:1]]];
                         }];
                 }
-                mfLog(@"[iap] RC offerings key=%@… pids=%lu http=%@", [key substringToIndex:MIN((NSUInteger)12, key.length)], (unsigned long)pids.count, r);
+                mfLog(@"[iap] RC offerings key=%@ pids=%lu http=%@",
+                      key, (unsigned long)pids.count, r);
             } else {
-                mfLog(@"[iap] RC offerings fail: %@", e.localizedDescription ?: @"empty");
+                mfLog(@"[iap] RC offerings fail key=%@: %@ http=%@",
+                      key, e.localizedDescription ?: @"empty-body", r);
             }
             cb(pids);
     }] resume];
@@ -591,6 +623,7 @@ void mfShowScanPage(void) {
         // slug 形态 ID(live_level_subscription_monthly)静态扫描易漏,RC offerings 是开发者配置的完整列表
         NSArray *rcPIDs = @[];
         {
+            mfHarvestRCKeysFromCaptures(); // v2.6.6: 请求头 key 优先——静态挖的可能带拼接尾巴
             NSSet *rcKeys = mfCollectedRCKeys();
             if (rcKeys.count) {
                 dispatch_semaphore_t sem = dispatch_semaphore_create(0);
