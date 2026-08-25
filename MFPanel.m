@@ -480,7 +480,7 @@ static NSArray *mfComboCandidates(void) {
     // app 名前缀动态加(pythonide_pro_monthly 形态)
     NSString *bid = [[NSBundle mainBundle] bundleIdentifier] ?: @"";
     NSArray *bseg = [bid componentsSeparatedByString:@"."];
-    if (bseg.count) [prefixes addObject:bseg.lastObject.lowercaseString];
+    if (bseg.count) [prefixes addObject:[(NSString *)bseg.lastObject lowercaseString]];
     NSMutableOrderedSet *out = [NSMutableOrderedSet orderedSet];
     for (NSString *p in prefixes) {
         for (NSString *t in g_mfSlugTokens) {
@@ -519,7 +519,7 @@ static NSArray *mfGuessIDsFromTitles(NSArray *titles) {
         if (g.length >= 5 && g.length <= 80 && ![g hasPrefix:@"_"] && ![g hasSuffix:@"_"])
             [clean addObject:g];
     }
-    return clean.array;
+    return [clean copy];
 }
 
 // v2.6.7: App Store 产品页 IAP 商品名抓取(bundleId → lookup → 产品页 HTML → title 列表)
