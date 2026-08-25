@@ -58,7 +58,7 @@ static void seFileLog(NSString *line) {
         if ([attr fileSize] > 32768) { // 砍半续命
             NSString *old = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
             if (old.length > 4096)
-                [old substringFromIndex:old.length - 16384] writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil;
+                [[old substringFromIndex:old.length - 16384] writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
         }
         NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:path];
         if (!fh) { [@"" writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil]; fh = [NSFileHandle fileHandleForWritingAtPath:path]; }
