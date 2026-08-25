@@ -857,6 +857,73 @@ static double mfParsePrice(NSString *priceStr) {
 }
 
 // 扫描购买页（本地扫描 + SKProductsRequest 验证 + 在线查询，去重合并，按价格排序）
+@interface MFScanList : NSObject <UITableViewDataSource, UITableViewDelegate>
+@property (copy) NSArray *items; // {pid, title, price, src}
+@end
+@implementation MFScanList
+- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s { return self.items.count; }
+- (CGFloat)tableView:(UITableView *)tv heightForRowAtIndexPath:(NSIndexPath *)ip { return 66; }
+- (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
+    static NSString *idt = @"mfScanRow";
+    UITableViewCell *c = [tv dequeueReusableCellWithIdentifier:idt];
+    if (!c) {
+        c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:idt];
+        c.backgroundColor = UIColor.clearColor;
+        c.selectionStyle = UITableViewCellSelectionStyleDefault;
+        UILabel *pid = [UILabel new]; pid.tag = 101;
+        pid.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+        pid.textColor = [UIColor labelColor]; pid.lineBreakMode = NSLineBreakByTruncatingMiddle;
+        UILabel *sub = [UILabel new]; sub.tag = 102;
+        sub.font = [UIFont systemFontOfSize:11]; sub.textColor = [UIColor secondaryLabelColor];
+        sub.lineBreakMode = NSLineBreakByTruncatingTail;
+        UILabel *src = [UILabel new]; src.tag = 103;
+        src.font = [UIFont systemFontOfSize:10]; src.textColor = [UIColor tertiaryLabelColor];
+        src.lineBreakMode = NSLineBreakByTruncatingTail;
+        [c.contentView addSubview:pid]; [c.contentView addSubview:sub]; [c.contentView addSubview:src];
+    }
+    NSDictionary *item = self.items[ip.row];
+    CGFloat w = g_mfCardW - 32; // 新建 cell 时 contentView 未布局,用面板固定宽
+    UILabel *pid = [c.contentView viewWithTag:101], *sub = [c.contentView viewWithTag:102], *src = [c.contentView viewWithTag:103];
+    pid.frame = CGRectMake(16, 6, w, 18);   pid.text = item[@"pid"];
+    sub.frame = CGRectMake(16, 25, w, 17);  sub.text = [item[@"title"] length] ?
+        [NSString stringWithFormat:@"%@ · %@", item[@"title"], item[@"price"]] : item[@"price"];
+    src.frame = CGRectMake(16, 43, w, 16);  src.text = [item[@"src"] length] ?
+        [NSString stringWithFormat:@"来源: %@", item[@"src"]] : @"";
+    return c;
+}
+- (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
+    [tv deselectRowAtIndexPath:ip animated:YES];
+    // 点按 = 购买(沿用 mfBuyProduct 语义)
+    NSString *pid = self.items[ip.row][@"pid"];
+    if (!pid.length) return;
+    IAPRecord(pid);
+    SKPayment *pay = [SKPayment paymentWithProductIdentifier:pid];
+    [[SKPaymentQueue defaultQueue] addPayment:pay];
+    mfLog(@"buy: %@", pid);
+}
+// 左划: 复制(蓝) / 购买(绿)——对标捕获列表
+- (UISwipeActionsConfiguration *)tableView:(UITableView *)tv trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)ip {
+    NSString *pid = self.items[ip.row][@"pid"];
+    UIContextualAction *copy = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleNormal
+        title:@"复制" handler:^(UIContextualAction *a, UIView *v, void (^done)(BOOL)) {
+            [UIPasteboard generalPasteboard].string = pid;
+            mfLog(@"copied: %@", pid);
+            done(YES);
+        }];
+    copy.backgroundColor = [UIColor systemBlueColor];
+    UIContextualAction *buy = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleNormal
+        title:@"购买" handler:^(UIContextualAction *a, UIView *v, void (^done)(BOOL)) {
+            IAPRecord(pid);
+            SKPayment *pay = [SKPayment paymentWithProductIdentifier:pid];
+            [[SKPaymentQueue defaultQueue] addPayment:pay];
+            mfLog(@"buy(swipe): %@", pid);
+            done(YES);
+        }];
+    buy.backgroundColor = [UIColor systemGreenColor];
+    return [UISwipeActionsConfiguration configurationWithActions:@[copy, buy]];
+}
+@end
+
 void mfShowScanPage(void) {
     UIView *page = mfMakePage(@"扫描购买", YES);
     // 启动即捕获开关(v2.0.0):下次启动生效——解决"App 先启动、后开捕获截不到老会话"
@@ -1109,73 +1176,6 @@ void mfShowProductPage(void) {
 
 // ====== MFPanelCtrl（所有 action 方法） ======
 // v2.6.16: 扫描结果列表(UITableView)——三行 cell(pid/商品名·价格/来源) + 系统 swipe actions
-@interface MFScanList : NSObject <UITableViewDataSource, UITableViewDelegate>
-@property (copy) NSArray *items; // {pid, title, price, src}
-@end
-@implementation MFScanList
-- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s { return self.items.count; }
-- (CGFloat)tableView:(UITableView *)tv heightForRowAtIndexPath:(NSIndexPath *)ip { return 66; }
-- (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
-    static NSString *idt = @"mfScanRow";
-    UITableViewCell *c = [tv dequeueReusableCellWithIdentifier:idt];
-    if (!c) {
-        c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:idt];
-        c.backgroundColor = UIColor.clearColor;
-        c.selectionStyle = UITableViewCellSelectionStyleDefault;
-        UILabel *pid = [UILabel new]; pid.tag = 101;
-        pid.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
-        pid.textColor = [UIColor labelColor]; pid.lineBreakMode = NSLineBreakByTruncatingMiddle;
-        UILabel *sub = [UILabel new]; sub.tag = 102;
-        sub.font = [UIFont systemFontOfSize:11]; sub.textColor = [UIColor secondaryLabelColor];
-        sub.lineBreakMode = NSLineBreakByTruncatingTail;
-        UILabel *src = [UILabel new]; src.tag = 103;
-        src.font = [UIFont systemFontOfSize:10]; src.textColor = [UIColor tertiaryLabelColor];
-        src.lineBreakMode = NSLineBreakByTruncatingTail;
-        [c.contentView addSubview:pid]; [c.contentView addSubview:sub]; [c.contentView addSubview:src];
-    }
-    NSDictionary *item = self.items[ip.row];
-    CGFloat w = g_mfCardW - 32; // 新建 cell 时 contentView 未布局,用面板固定宽
-    UILabel *pid = [c.contentView viewWithTag:101], *sub = [c.contentView viewWithTag:102], *src = [c.contentView viewWithTag:103];
-    pid.frame = CGRectMake(16, 6, w, 18);   pid.text = item[@"pid"];
-    sub.frame = CGRectMake(16, 25, w, 17);  sub.text = [item[@"title"] length] ?
-        [NSString stringWithFormat:@"%@ · %@", item[@"title"], item[@"price"]] : item[@"price"];
-    src.frame = CGRectMake(16, 43, w, 16);  src.text = [item[@"src"] length] ?
-        [NSString stringWithFormat:@"来源: %@", item[@"src"]] : @"";
-    return c;
-}
-- (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
-    [tv deselectRowAtIndexPath:ip animated:YES];
-    // 点按 = 购买(沿用 mfBuyProduct 语义)
-    NSString *pid = self.items[ip.row][@"pid"];
-    if (!pid.length) return;
-    IAPRecord(pid);
-    SKPayment *pay = [SKPayment paymentWithProductIdentifier:pid];
-    [[SKPaymentQueue defaultQueue] addPayment:pay];
-    mfLog(@"buy: %@", pid);
-}
-// 左划: 复制(蓝) / 购买(绿)——对标捕获列表
-- (UISwipeActionsConfiguration *)tableView:(UITableView *)tv trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)ip {
-    NSString *pid = self.items[ip.row][@"pid"];
-    UIContextualAction *copy = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleNormal
-        title:@"复制" handler:^(UIContextualAction *a, UIView *v, void (^done)(BOOL)) {
-            [UIPasteboard generalPasteboard].string = pid;
-            mfLog(@"copied: %@", pid);
-            done(YES);
-        }];
-    copy.backgroundColor = [UIColor systemBlueColor];
-    UIContextualAction *buy = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleNormal
-        title:@"购买" handler:^(UIContextualAction *a, UIView *v, void (^done)(BOOL)) {
-            IAPRecord(pid);
-            SKPayment *pay = [SKPayment paymentWithProductIdentifier:pid];
-            [[SKPaymentQueue defaultQueue] addPayment:pay];
-            mfLog(@"buy(swipe): %@", pid);
-            done(YES);
-        }];
-    buy.backgroundColor = [UIColor systemGreenColor];
-    return [UISwipeActionsConfiguration configurationWithActions:@[copy, buy]];
-}
-@end
-
 @interface MFPanelCtrl : NSObject @end
 @implementation MFPanelCtrl
 - (void)mfPopPage { mfPopPage(); }
