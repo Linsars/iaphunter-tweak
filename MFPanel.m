@@ -564,7 +564,7 @@ static void mfLookupTrackId(NSString *bundleId, void (^cb)(NSString *)) {
 }
 
 // v2.6.13: 档案库查询——自建库优先(数据自主),AppForge 公开库 fallback;结果均缓存
-static NSString * const mfArchiveSelf = @"https://pid-archive.jidan666-919.workers.dev";
+static NSString * const mfArchiveSelf = @"https://pid-archive.linsar.de5.net";
 static void mfFetchArchiveIDsOnce(NSString *base, NSString *trackId, BOOL quiet, void (^cb)(NSArray *)) {
     NSString *u = [NSString stringWithFormat:@"%@/v1/apps/%@/product-ids", base, trackId];
     NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:u]];
