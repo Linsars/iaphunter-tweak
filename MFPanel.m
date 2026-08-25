@@ -254,6 +254,7 @@ void mfShowDataAnalysisPage(void);  // MFNetworkCapture.m
 void mfShowNetworkCapturePage(void); // MFNetworkCapture.m
 void mfShowCryptoToolboxPage(void);  // MFNetworkCapture.m
 void mfShowNetworkModifyPage(void);  // MFNetworkCapture.m
+void mfShowHostLogPage(void);        // MFPanel.m 本文件 (v2.6.17)
 
 // ====== 本地二进制扫描 ======
 // 前向声明
@@ -924,6 +925,126 @@ static double mfParsePrice(NSString *priceStr) {
 }
 @end
 
+// v2.6.17: 宿主日志列表(对标 MFScanList) — Menlo 单列 + 左划复制, automatic 行高
+@interface MFHostLogList : NSObject <UITableViewDataSource, UITableViewDelegate>
+@property (copy) NSArray<NSString *> *items;
+@end
+@implementation MFHostLogList
+- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s { return self.items.count; }
+- (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
+    static NSString *idt = @"mfHlRow";
+    UITableViewCell *c = [tv dequeueReusableCellWithIdentifier:idt];
+    if (!c) {
+        c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:idt];
+        c.backgroundColor = UIColor.clearColor;
+        c.textLabel.font = [UIFont fontWithName:@"Menlo-Regular" size:10];
+        c.textLabel.textColor = [UIColor labelColor];
+        c.textLabel.lineBreakMode = NSLineBreakByCharWrapping;
+        c.selectionStyle = UITableViewCellSelectionStyleNone;
+    }
+    c.textLabel.text = self.items[ip.row];
+    return c;
+}
+- (CGFloat)tableView:(UITableView *)tv heightForRowAtIndexPath:(NSIndexPath *)ip {
+    // 估算: Menlo 10pt 每行约 6px/字符, 宽度按面板估
+    NSString *s = self.items[ip.row];
+    CGFloat charsPerLine = MAX(20, (g_mfCardW - 32) / 6.0);
+    CGFloat lines = ceil(MAX(1, s.length) / charsPerLine);
+    return MAX(18, lines * 13 + 4);
+}
+- (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
+    [tv deselectRowAtIndexPath:ip animated:NO];
+}
+- (UISwipeActionsConfiguration *)tableView:(UITableView *)tv trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)ip {
+    NSString *line = self.items[ip.row];
+    UIContextualAction *copy = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleNormal
+        title:@"复制" handler:^(UIContextualAction *a, UIView *v, void (^done)(BOOL)) {
+            [UIPasteboard generalPasteboard].string = line;
+            done(YES);
+        }];
+    copy.backgroundColor = [UIColor systemBlueColor];
+    return [UISwipeActionsConfiguration configurationWithActions:@[copy]];
+}
+@end
+
+void mfShowHostLogPage(void) {
+    UIView *page = mfMakePage(@"实时日志", YES);
+
+    // 控制条: 启停开关 + 状态 + 清空/复制全部
+    UIView *bar = [[UIView alloc] initWithFrame:CGRectMake(0, 42, g_mfCardW, 40)];
+    UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectMake(12, 5, 51, 31)];
+    sw.on = mfHostLogRunning();
+    [sw addTarget:g_mfCtrl action:NSSelectorFromString(@"mfHostLogSwitchChanged:") forControlEvents:UIControlEventValueChanged];
+    objc_setAssociatedObject(sw, "hlPage", page, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [bar addSubview:sw];
+
+    UILabel *status = [[UILabel alloc] initWithFrame:CGRectMake(74, 11, g_mfCardW - 250, 20)];
+    status.tag = 201;
+    status.font = [UIFont systemFontOfSize:11];
+    status.textColor = [UIColor secondaryLabelColor];
+    status.text = mfHostLogRunning() ? @"捕获中" : @"已停止";
+    [bar addSubview:status];
+
+    UIButton *clearBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    clearBtn.frame = CGRectMake(g_mfCardW - 168, 5, 60, 31);
+    [clearBtn setTitle:@"清空" forState:UIControlStateNormal];
+    clearBtn.titleLabel.font = [UIFont systemFontOfSize:12];
+    [clearBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfHostLogClearTapped:") forControlEvents:UIControlEventTouchUpInside];
+    objc_setAssociatedObject(clearBtn, "hlPage", page, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [bar addSubview:clearBtn];
+
+    UIButton *copyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    copyBtn.frame = CGRectMake(g_mfCardW - 100, 5, 80, 31);
+    [copyBtn setTitle:@"复制全部" forState:UIControlStateNormal];
+    copyBtn.titleLabel.font = [UIFont systemFontOfSize:12];
+    [copyBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfHostLogCopyAllTapped:") forControlEvents:UIControlEventTouchUpInside];
+    objc_setAssociatedObject(copyBtn, "hlPage", page, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [bar addSubview:copyBtn];
+    [page addSubview:bar];
+
+    // 列表
+    UITableView *tv = [[UITableView alloc] initWithFrame:CGRectMake(0, 82, g_mfCardW, g_mfCardH - 82) style:UITableViewStylePlain];
+    tv.tag = 210;
+    tv.backgroundColor = [UIColor tertiarySystemBackgroundColor];
+    tv.separatorStyle = UITableViewCellSeparatorStyleNone;
+    MFHostLogList *list = [MFHostLogList new];
+    list.items = mfHostLogSnapshot();
+    tv.dataSource = list;
+    tv.delegate = list;
+    objc_setAssociatedObject(page, "hlList", list, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(page, "hlLastCount", @(mfHostLogBufferedCount()), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if (list.items.count) [tv scrollToRowAtIndexPath:[NSIndexPath indexPathForRow:list.items.count-1 inSection:0] atScrollPosition:UITableViewScrollPositionBottom animated:NO];
+    [page addSubview:tv];
+
+    // 刷新: 0.5s 拉计数,变了才 reload; 页面 pop(superview==nil)自动停表
+    dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+    dispatch_source_set_timer(timer, DISPATCH_TIME_NOW, 0.5 * NSEC_PER_SEC, 0.1 * NSEC_PER_SEC);
+    dispatch_source_set_event_handler(timer, ^{
+        if (!page.superview) { dispatch_source_cancel(timer); return; }
+        unsigned long long cnt = mfHostLogBufferedCount();
+        unsigned long long last = [objc_getAssociatedObject(page, "hlLastCount") unsignedLongLongValue];
+        if (cnt == last) return;
+        objc_setAssociatedObject(page, "hlLastCount", @(cnt), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        UITableView *ltv = [page viewWithTag:210];
+        MFHostLogList *ll = objc_getAssociatedObject(page, "hlList");
+        if (!ltv || !ll) return;
+        // 在底部才跟随滚动(用户上翻查历史不打扰)
+        BOOL atBottom = ltv.contentOffset.y + ltv.bounds.size.height >= ltv.contentSize.height - 60;
+        ll.items = mfHostLogSnapshot();
+        [ltv reloadData];
+        UILabel *st = [page viewWithTag:201];
+        st.text = mfHostLogRunning()
+            ? [NSString stringWithFormat:@"捕获中 · %llu 行", cnt]
+            : [NSString stringWithFormat:@"已停止 · 缓冲 %llu 行", cnt];
+        if (atBottom && ll.items.count)
+            [ltv scrollToRowAtIndexPath:[NSIndexPath indexPathForRow:ll.items.count-1 inSection:0] atScrollPosition:UITableViewScrollPositionBottom animated:NO];
+    });
+    dispatch_resume(timer);
+    objc_setAssociatedObject(page, "hlTimer", timer, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
+    mfPushPage(page);
+}
+
 void mfShowScanPage(void) {
     UIView *page = mfMakePage(@"扫描购买", YES);
     // 启动即捕获开关(v2.0.0):下次启动生效——解决"App 先启动、后开捕获截不到老会话"
@@ -1183,6 +1304,32 @@ void mfShowProductPage(void) {
 
 // 页面入口
 - (void)mfShowDataAnalysisPage { mfShowDataAnalysisPage(); }
+// v2.6.17 实时日志
+- (void)mfShowHostLogPage { mfShowHostLogPage(); }
+- (void)mfHostLogSwitchChanged:(UISwitch *)sw {
+    mfSetBoolPref(@"mfHostLogEnabled", sw.on);
+    if (sw.on) mfHostLogStart();
+    else mfHostLogStop();
+    // 状态栏即时刷新(不等 0.5s timer)
+    UIView *page = objc_getAssociatedObject(sw, "hlPage");
+    UILabel *st = [page viewWithTag:201];
+    if (st) st.text = sw.on ? @"捕获中" : @"已停止";
+}
+- (void)mfHostLogClearTapped:(UIButton *)btn {
+    mfHostLogClear();
+    UIView *page = objc_getAssociatedObject(btn, "hlPage");
+    UITableView *tv = [page viewWithTag:210];
+    MFHostLogList *ll = objc_getAssociatedObject(page, "hlList");
+    ll.items = @[];
+    objc_setAssociatedObject(page, "hlLastCount", @(mfHostLogBufferedCount()), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [tv reloadData];
+    mfToast(@"已清空");
+}
+- (void)mfHostLogCopyAllTapped:(UIButton *)btn {
+    NSArray *lines = mfHostLogSnapshot();
+    [UIPasteboard generalPasteboard].string = [lines componentsJoinedByString:@"\n"];
+    mfToast([NSString stringWithFormat:@"已复制 %lu 行", (unsigned long)lines.count]);
+}
 - (void)mfShowNetworkCapturePage { mfShowNetworkCapturePage(); }
 - (void)mfShowCryptoPage { mfShowCryptoToolboxPage(); }
 - (void)mfShowNetworkModifyPage { mfShowNetworkModifyPage(); }
@@ -1969,7 +2116,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define IAPTOOLS_VERSION @"2.3.2"
+#define IAPTOOLS_VERSION @"2.6.17"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
@@ -1991,6 +2138,11 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
         }
 
         // v2.6.1: 移除 5s 错峰(v2.3.2 为 BT panic 加的,根因=硬依赖链已 dlopen 化修复)
+        // v2.6.17: 宿主日志(pipe+dup2)——开关默认 OFF,开过则冷启动即接管 fd
+        if (mfPrefBool(@"mfHostLogEnabled", NO)) {
+            extern void mfHostLogStart(void);
+            mfHostLogStart();
+        }
         // 实时捕获(v2.2.8):默认 OFF;用户开过则持久化,冷启动即装协议——
         // 解决"启动后才开开关截不到老会话"(v2.0.2 一刀切留下的坑)
         if (mfPrefBool(@"mfCaptureEnabled", NO)) {
