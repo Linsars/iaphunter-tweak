@@ -450,6 +450,25 @@ static NSSet *mfScanFileForPIDs(NSString *path) {
                     if (slugOK) [g_mfSlugTokens addObject:[current copy]];
                 }
             }
+            // v2.6.11: JSON 配置数组形态——"iaps":["id1","id2"](Swiftgram 编译期注入模式,通用: 任意 xxxs 键)
+            // 必须在 PIDShaped 之前: 数组串含引号/方括号,会被形态过滤拒掉
+            if (current.length >= 12 && [current rangeOfString:@"\":["].location != NSNotFound) {
+                NSError *je = nil;
+                NSRegularExpression *jrx = [NSRegularExpression
+                    regularExpressionWithPattern:@"\"[a-z_]{2,24}\":\\[([^\\[\\]]{4,600})\\]"
+                    options:0 error:&je];
+                [jrx enumerateMatchesInString:current options:0 range:NSMakeRange(0, current.length)
+                    usingBlock:^(NSTextCheckingResult *jm, NSMatchingFlags jf, BOOL *js) {
+                        NSString *arrBody = [current substringWithRange:[jm rangeAtIndex:1]];
+                        NSRegularExpression *erx = [NSRegularExpression
+                            regularExpressionWithPattern:@"\"([A-Za-z0-9._-]{4,80})\"" options:0 error:nil];
+                        [erx enumerateMatchesInString:arrBody options:0 range:NSMakeRange(0, arrBody.length)
+                            usingBlock:^(NSTextCheckingResult *em, NSMatchingFlags ef, BOOL *es) {
+                                NSString *el = [arrBody substringWithRange:[em rangeAtIndex:1]];
+                                if (mfPIDShaped(el) && !mfPIDExcluded(el)) [pids addObject:el];
+                            }];
+                    }];
+            }
             if (current.length >= 6 && mfPIDShaped(current)) {
                 NSString *sv = [current copy];
                 if (!mfPIDExcluded(sv)) [pids addObject:sv];
@@ -522,9 +541,10 @@ static NSArray *mfGuessIDsFromTitles(NSArray *titles) {
     return [clean copy];
 }
 
-// v2.6.7: App Store 产品页 IAP 商品名抓取(bundleId → lookup → 产品页 HTML → title 列表)
+// v2.6.11: App Store 产品页 IAP 商品名抓取——成功缓存到 UserDefaults,429 限流时用缓存兜底
 static void mfFetchIAPTitles(NSString *bundleId, void (^cb)(NSArray *titles)) {
     NSString *lk = [NSString stringWithFormat:@"https://itunes.apple.com/lookup?bundleId=%@", bundleId];
+    NSString *cacheKey = [NSString stringWithFormat:@"iapTitles_%@", bundleId];
     [[NSURLSession.sharedSession dataTaskWithURL:[NSURL URLWithString:lk]
         completionHandler:^(NSData *d, NSURLResponse *r, NSError *e) {
             NSString *trackId = nil;
@@ -536,7 +556,11 @@ static void mfFetchIAPTitles(NSString *bundleId, void (^cb)(NSArray *titles)) {
                 NSTextCheckingResult *m = [rx firstMatchInString:body options:0 range:NSMakeRange(0, body.length)];
                 if (m) trackId = [body substringWithRange:[m rangeAtIndex:1]];
             }
-            if (!trackId.length) { mfLog(@"[iap] guess: no trackId for %@", bundleId); cb(nil); return; }
+            if (!trackId.length) {
+                NSArray *cached = [[NSUserDefaults standardUserDefaults] objectForKey:cacheKey];
+                if (cached.count) { mfLog(@"[iap] guess: no trackId, cache %lu titles", (unsigned long)cached.count); cb(cached); return; }
+                mfLog(@"[iap] guess: no trackId for %@", bundleId); cb(nil); return;
+            }
             NSString *pu = [NSString stringWithFormat:@"https://apps.apple.com/us/app/id%@", trackId];
             NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:pu]];
             req.timeoutInterval = 10;
@@ -545,7 +569,8 @@ static void mfFetchIAPTitles(NSString *bundleId, void (^cb)(NSArray *titles)) {
             [[NSURLSession.sharedSession dataTaskWithRequest:req
                 completionHandler:^(NSData *d2, NSURLResponse *r2, NSError *e2) {
                     NSMutableArray *titles = [NSMutableArray array];
-                    if (d2.length > 1000) {
+                    NSInteger code = [(NSHTTPURLResponse *)r2 statusCode];
+                    if (d2.length > 1000 && code == 200) {
                         NSString *html = [[NSString alloc] initWithData:d2 encoding:NSUTF8StringEncoding];
                         NSRange ir = [html rangeOfString:@"In-App Purchases"];
                         if (ir.location != NSNotFound && ir.location + 12000 < html.length) {
@@ -557,6 +582,7 @@ static void mfFetchIAPTitles(NSString *bundleId, void (^cb)(NSArray *titles)) {
                             [li enumerateMatchesInString:seg options:0 range:NSMakeRange(0, seg.length)
                                 usingBlock:^(NSTextCheckingResult *m2, NSMatchingFlags f, BOOL *s) {
                                     NSString *raw = [seg substringWithRange:[m2 rangeAtIndex:1]];
+                                    if ([raw containsString:@"<"]) return; // SVG/标签噪音
                                     raw = [raw stringByReplacingOccurrencesOfString:@"&amp;" withString:@"&"];
                                     raw = [raw stringByReplacingOccurrencesOfString:@"&#183;" withString:@"·"];
                                     raw = [raw stringByReplacingOccurrencesOfString:@"&middot;" withString:@"·"];
@@ -564,7 +590,17 @@ static void mfFetchIAPTitles(NSString *bundleId, void (^cb)(NSArray *titles)) {
                                 }];
                         }
                     }
-                    mfLog(@"[iap] guess: trackId=%@ titles=%lu", trackId, (unsigned long)titles.count);
+                    if (titles.count) {
+                        [[NSUserDefaults standardUserDefaults] setObject:titles forKey:cacheKey];
+                    } else if (code == 429) {
+                        // v2.6.11: Apple 限流(retry-after 20s)——用缓存兜底
+                        NSArray *cached = [[NSUserDefaults standardUserDefaults] objectForKey:cacheKey];
+                        if (cached.count) {
+                            mfLog(@"[iap] guess: 429 rate-limited, cache %lu titles", (unsigned long)cached.count);
+                            cb(cached); return;
+                        }
+                    }
+                    mfLog(@"[iap] guess: trackId=%@ titles=%lu http=%ld", trackId, (unsigned long)titles.count, (long)code);
                     cb(titles);
             }] resume];
     }] resume];
@@ -744,6 +780,10 @@ void mfShowScanPage(void) {
     mfPushPage(page);
 
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        // 1.0 运行时截获回流(v2.6.11): SK1 hook 历史截获的 app 自查 ID——app 亲口报的,最高优先级
+        // 依据: 任何 app 要展示/购买商品必发 SKProductsRequest(init 参数含全部 ID),打开一次购买页即现形
+        NSArray *hookedPIDs = [[NSUserDefaults standardUserDefaults] objectForKey:@"SavedIAPIDs"] ?: @[];
+
         // 1. 本地扫描 + 网络提取（双源）
         NSArray *localCandidates = mfScanLocalProductIDs();
         NSArray *netPIDs = mfExtractPIDsFromCaptures();
@@ -796,7 +836,8 @@ void mfShowScanPage(void) {
         dispatch_async(dispatch_get_main_queue(), ^{ mfProbeStoreKit2(); });
 
         NSMutableSet *seen = [NSMutableSet setWithArray:localCandidates];
-        NSMutableArray *toVerify = [NSMutableArray arrayWithArray:netPIDs];      // 网络提取最优先
+        NSMutableArray *toVerify = [NSMutableArray arrayWithArray:hookedPIDs];   // 运行时截获最优先(v2.6.11)
+        for (NSString *pid in netPIDs) [toVerify addObject:pid];                 // 网络提取次之
         for (NSString *pid in rcPIDs) [toVerify addObject:pid];                  // RC offerings 次优先(v2.6.4)
         for (NSString *pid in guessPIDs) [toVerify addObject:pid];               // 商品名猜测再次优先(v2.6.7)
         for (NSString *pid in comboPIDs) [toVerify addObject:pid];               // 片段组合(v2.6.8)
@@ -820,12 +861,14 @@ void mfShowScanPage(void) {
                 [st removeFromSuperview];
 
                 NSMutableArray *merged = [NSMutableArray array];
+                NSSet *hookSet = [NSSet setWithArray:hookedPIDs];
                 NSSet *netSet = [NSSet setWithArray:netPIDs];
                 NSSet *rcSet = [NSSet setWithArray:rcPIDs];
                 NSSet *guessSet = [NSSet setWithArray:guessPIDs];
                 NSSet *comboSet = [NSSet setWithArray:comboPIDs];
                 for (NSString *pid in verifiedPrices) {
-                    NSString *src = [netSet containsObject:pid] ? @"网络"
+                    NSString *src = [hookSet containsObject:pid] ? @"钩"
+                        : [netSet containsObject:pid] ? @"网络"
                         : [rcSet containsObject:pid] ? @"RC"
                         : [guessSet containsObject:pid] ? @"猜"
                         : [comboSet containsObject:pid] ? @"组" : @"本地";
