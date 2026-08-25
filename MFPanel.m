@@ -312,6 +312,7 @@ static BOOL mfPIDExcluded(NSString *s) {
 static NSSet *mfScanFileForPIDs(NSString *path);
 static void mfQueryLocalPrices(NSArray *pids, void (^cb)(NSDictionary *pidToPrice));
 static NSMutableSet *g_mfRCKeys = nil; // v2.6.4: RevenueCat public key 静态收集池
+static NSMutableSet *g_mfSlugTokens = nil; // v2.6.8: 运行时拼接 ID 的片段池(纯小写+下划线,无点)
 
 // 从 Mach-O 的 __cstring 段提取 product ID（只匹配 bundleId. 前缀）
 
@@ -423,6 +424,7 @@ static BOOL mfIsRCPublicKey(NSString *s) {
 static NSSet *mfScanFileForPIDs(NSString *path) {
     NSMutableSet *pids = [NSMutableSet set];
     if (!g_mfRCKeys) g_mfRCKeys = [NSMutableSet set];
+    if (!g_mfSlugTokens) g_mfSlugTokens = [NSMutableSet set];
     NSData *data = [NSData dataWithContentsOfFile:path options:NSDataReadingMappedIfSafe error:nil];
     if (!data.length) return pids;
     const uint8_t *bytes = (const uint8_t *)data.bytes;
@@ -435,6 +437,19 @@ static NSSet *mfScanFileForPIDs(NSString *path) {
         } else {
             // v2.6.4: RevenueCat public SDK key 顺带收集——offerings 查询入口
             if (mfIsRCPublicKey(current)) [g_mfRCKeys addObject:[current copy]];
+            // v2.6.8: 拼接片段收集——运行时构造的 ID(pythonide 模式: "donate_"+item)在二进制里只有片段
+            if (current.length >= 4 && current.length <= 24 && g_mfSlugTokens.count < 300) {
+                BOOL slugOK = ![current hasPrefix:@"_"] && ![current hasSuffix:@"_"]
+                    && [current rangeOfString:@"__"].location == NSNotFound
+                    && [current rangeOfString:@"."].location == NSNotFound;
+                if (slugOK) {
+                    for (NSUInteger j = 0; j < current.length; j++) {
+                        char ch = [current characterAtIndex:j];
+                        if (!((ch >= 'a' && ch <= 'z') || ch == '_')) { slugOK = NO; break; }
+                    }
+                    if (slugOK) [g_mfSlugTokens addObject:[current copy]];
+                }
+            }
             if (current.length >= 6 && mfPIDShaped(current)) {
                 NSString *sv = [current copy];
                 if (!mfPIDExcluded(sv)) [pids addObject:sv];
@@ -453,6 +468,29 @@ static NSSet *mfScanFileForPIDs(NSString *path) {
 // offerings 响应 offerings[].packages[].platform_product_identifier 是开发者配置的完整商品列表,
 // slug 形态 ID(live_level_subscription_monthly)静态扫描易漏,此处一网打尽
 static NSSet *mfCollectedRCKeys(void) { return g_mfRCKeys ?: [NSSet set]; }
+
+// v2.6.8: 片段组合候选——语义前缀 × 二进制片段,喂 SK 裁决
+// 依据: pythonide 的 unlock_/byok_ 实锤拼接构造;组合命中靠 Apple 验证兜底,无效 ID 静默忽略
+static NSArray *mfComboCandidates(void) {
+    if (!g_mfSlugTokens.count) return @[];
+    NSMutableOrderedSet *prefixes = [NSMutableOrderedSet orderedSetWithArray:@[
+        @"byok", @"pro", @"premium", @"donate", @"feed", @"ssh", @"unlock", @"iap",
+        @"purchase", @"buy", @"vip", @"plus", @"pack", @"credit", @"coin", @"gem",
+        @"member", @"tier", @"upgrade", @"lifetime", @"subscription", @"subs", @"gold"]];
+    // app 名前缀动态加(pythonide_pro_monthly 形态)
+    NSString *bid = [[NSBundle mainBundle] bundleIdentifier] ?: @"";
+    NSArray *bseg = [bid componentsSeparatedByString:@"."];
+    if (bseg.count) [prefixes addObject:bseg.lastObject.lowercaseString];
+    NSMutableOrderedSet *out = [NSMutableOrderedSet orderedSet];
+    for (NSString *p in prefixes) {
+        for (NSString *t in g_mfSlugTokens) {
+            if (out.count >= 400) return out.array;
+            if ([t hasPrefix:p] || [t hasSuffix:p]) continue; // 避免重复语义
+            [out addObject:[NSString stringWithFormat:@"%@_%@", p, t]];
+        }
+    }
+    return out.array;
+}
 
 // v2.6.7: 商品名 → productId 猜测生成器
 // 依据: byok_unlock_permanent 实锤 slug 命名习惯;商品名 slug 化 + 段裁剪变体
@@ -737,13 +775,18 @@ void mfShowScanPage(void) {
             }
         }
 
-        mfLog(@"[iap] local=%d net=%lu rc=%lu guess=%lu → SK verify", (int)localCandidates.count, (unsigned long)netPIDs.count, (unsigned long)rcPIDs.count, (unsigned long)guessPIDs.count);
+        // 1.7 片段组合(v2.6.8): 语义前缀 × 二进制片段——覆盖运行时拼接构造的 ID
+        NSArray *comboPIDs = mfComboCandidates();
+        mfLog(@"[iap] combo: %lu tokens → %lu candidates", (unsigned long)g_mfSlugTokens.count, (unsigned long)comboPIDs.count);
+
+        mfLog(@"[iap] local=%d net=%lu rc=%lu guess=%lu combo=%lu → SK verify", (int)localCandidates.count, (unsigned long)netPIDs.count, (unsigned long)rcPIDs.count, (unsigned long)guessPIDs.count, (unsigned long)comboPIDs.count);
         dispatch_async(dispatch_get_main_queue(), ^{ mfProbeStoreKit2(); });
 
         NSMutableSet *seen = [NSMutableSet setWithArray:localCandidates];
         NSMutableArray *toVerify = [NSMutableArray arrayWithArray:netPIDs];      // 网络提取最优先
         for (NSString *pid in rcPIDs) [toVerify addObject:pid];                  // RC offerings 次优先(v2.6.4)
         for (NSString *pid in guessPIDs) [toVerify addObject:pid];               // 商品名猜测再次优先(v2.6.7)
+        for (NSString *pid in comboPIDs) [toVerify addObject:pid];               // 片段组合(v2.6.8)
         for (NSString *pid in localCandidates) [toVerify addObject:pid];
         NSString *bid2 = [[NSBundle mainBundle] bundleIdentifier] ?: @"";
         NSArray *bseg = [bid2 componentsSeparatedByString:@"."];
@@ -767,10 +810,12 @@ void mfShowScanPage(void) {
                 NSSet *netSet = [NSSet setWithArray:netPIDs];
                 NSSet *rcSet = [NSSet setWithArray:rcPIDs];
                 NSSet *guessSet = [NSSet setWithArray:guessPIDs];
+                NSSet *comboSet = [NSSet setWithArray:comboPIDs];
                 for (NSString *pid in verifiedPrices) {
                     NSString *src = [netSet containsObject:pid] ? @"网络"
                         : [rcSet containsObject:pid] ? @"RC"
-                        : [guessSet containsObject:pid] ? @"猜" : @"本地";
+                        : [guessSet containsObject:pid] ? @"猜"
+                        : [comboSet containsObject:pid] ? @"组" : @"本地";
                     [merged addObject:@{@"pid": pid, @"price": verifiedPrices[pid], @"src": src}];
                 }
                 [merged sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
