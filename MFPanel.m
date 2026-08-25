@@ -563,15 +563,10 @@ static void mfLookupTrackId(NSString *bundleId, void (^cb)(NSString *)) {
     }] resume];
 }
 
-// v2.6.12: AppForge 档案库——众包 productId 数据库(456 app/33k products, ToolsEric 同款接口)
-// GET /v1/apps/{trackId}/product-ids → {"productIds":[...]}；结果缓存,失败不阻塞扫描
-static void mfFetchArchiveIDs(NSString *trackId, void (^cb)(NSArray *)) {
-    if (!trackId.length) { cb(nil); return; }
-    NSString *ck = [NSString stringWithFormat:@"archiveIDs_%@", trackId];
-    NSArray *cached = [[NSUserDefaults standardUserDefaults] objectForKey:ck];
-    if (cached.count) { mfLog(@"[iap] archive: cache %lu ids", (unsigned long)cached.count); cb(cached); return; }
-    NSString *u = [NSString stringWithFormat:
-        @"https://appforge-productid-api.tranthikimchi2601.workers.dev/v1/apps/%@/product-ids", trackId];
+// v2.6.13: 档案库查询——自建库优先(数据自主),AppForge 公开库 fallback;结果均缓存
+static NSString * const mfArchiveSelf = @"https://pid-archive.jidan666-919.workers.dev";
+static void mfFetchArchiveIDsOnce(NSString *base, NSString *trackId, BOOL quiet, void (^cb)(NSArray *)) {
+    NSString *u = [NSString stringWithFormat:@"%@/v1/apps/%@/product-ids", base, trackId];
     NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:u]];
     req.timeoutInterval = 10;
     [[NSURLSession.sharedSession dataTaskWithRequest:req
@@ -594,9 +589,53 @@ static void mfFetchArchiveIDs(NSString *trackId, void (^cb)(NSArray *)) {
                     }
                 }
             }
-            if (ids.count) [[NSUserDefaults standardUserDefaults] setObject:ids forKey:ck];
-            mfLog(@"[iap] archive: %lu ids from trackId %@", (unsigned long)ids.count, trackId);
-            cb(ids);
+            cb(ids.count ? ids : nil);
+    }] resume];
+}
+static void mfFetchArchiveIDs(NSString *trackId, void (^cb)(NSArray *)) {
+    if (!trackId.length) { cb(nil); return; }
+    NSString *ck = [NSString stringWithFormat:@"archiveIDs_%@", trackId];
+    NSArray *cached = [[NSUserDefaults standardUserDefaults] objectForKey:ck];
+    if (cached.count) { mfLog(@"[iap] archive: cache %lu ids", (unsigned long)cached.count); cb(cached); return; }
+    // 自建库优先
+    mfFetchArchiveIDsOnce(mfArchiveSelf, trackId, NO, ^(NSArray *selfIds) {
+        if (selfIds.count) {
+            [[NSUserDefaults standardUserDefaults] setObject:selfIds forKey:ck];
+            mfLog(@"[iap] archive(self): %lu ids", (unsigned long)selfIds.count);
+            cb(selfIds);
+            return;
+        }
+        // AppForge fallback
+        mfFetchArchiveIDsOnce(@"https://appforge-productid-api.tranthikimchi2601.workers.dev", trackId, YES, ^(NSArray *afIds) {
+            if (afIds.count) [[NSUserDefaults standardUserDefaults] setObject:afIds forKey:ck];
+            mfLog(@"[iap] archive(af): %lu ids", (unsigned long)afIds.count);
+            cb(afIds);
+        });
+    });
+}
+
+// v2.6.13: 扫描结果回传自建库(众包闭环——装 MinisFix 的设备越多,库越全)
+static void mfContributeToArchive(NSString *trackId, NSArray *verifiedPIDs) {
+    if (!trackId.length || !verifiedPIDs.count) return;
+    // 只回传 ≤200 条(防误传大列表),字段已在 SK 裁决时验证过
+    NSArray *sub = verifiedPIDs.count > 200 ? [verifiedPIDs subarrayWithRange:NSMakeRange(0, 200)] : verifiedPIDs;
+    NSString *bid = [[NSBundle mainBundle] bundleIdentifier] ?: @"";
+    NSString *appName = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleDisplayName"]
+        ?: [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleName"] ?: @"";
+    NSMutableDictionary *payload = [NSMutableDictionary dictionaryWithObjectsAndKeys:
+        trackId, @"trackId", bid, @"bundleId", appName, @"name", sub, @"productIds", nil];
+    NSError *je = nil;
+    NSData *body = [NSJSONSerialization dataWithJSONObject:payload options:0 error:&je];
+    if (!body) return;
+    NSString *u = [NSString stringWithFormat:@"%@/v1/contribute", mfArchiveSelf];
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:u]];
+    req.HTTPMethod = @"POST";
+    req.HTTPBody = body;
+    req.timeoutInterval = 10;
+    [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+    [[NSURLSession.sharedSession dataTaskWithRequest:req
+        completionHandler:^(NSData *d, NSURLResponse *r, NSError *e) {
+            mfLog(@"[iap] contribute: %lu ids → http %@ e=%@", (unsigned long)sub.count, r, e.localizedDescription ?: @"-");
     }] resume];
 }
 
@@ -914,6 +953,10 @@ void mfShowScanPage(void) {
         // 2. SKProductsRequest 统一验证（Apple 裁判：有效才带价格回来）——v2.6.9 分批 500/批
         mfQueryPricesBatched(toVerify, [NSMutableDictionary dictionary], ^(NSDictionary *verifiedPrices) {
             mfLog(@"[iap] SK verified: %lu valid / %lu tried", (unsigned long)verifiedPrices.count, (unsigned long)toVerify.count);
+            // v2.6.13: 验证通过的 ID 回传自建档案库(众包闭环)
+            NSString *ctid = [[NSUserDefaults standardUserDefaults] stringForKey:
+                [NSString stringWithFormat:@"trackId_%@", [[NSBundle mainBundle] bundleIdentifier] ?: @""]] ?: @"";
+            mfContributeToArchive(ctid, verifiedPrices.allKeys);
             dispatch_async(dispatch_get_main_queue(), ^{
                 [st removeFromSuperview];
 
