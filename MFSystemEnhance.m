@@ -44,6 +44,28 @@ static BOOL seLoadIOKit(void) {
     return p_IOMasterPort != NULL;
 }
 
+// v2.6.19: SB 进程无 IAPtools 面板,决策日志双写固定文件(Filza/SSH 直接看)
+// 上限 32KB,超过砍半防无限增长
+static void seFileLog(NSString *line) {
+    static NSString *path = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        path = @"/var/mobile/Documents/minisfix_sysenhance.log";
+    });
+    @try {
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSDictionary *attr = [fm attributesOfItemAtPath:path error:nil];
+        if ([attr fileSize] > 32768) { // 砍半续命
+            NSString *old = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
+            if (old.length > 4096)
+                [old substringFromIndex:old.length - 16384] writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil;
+        }
+        NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:path];
+        if (!fh) { [@"" writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil]; fh = [NSFileHandle fileHandleForWritingAtPath:path]; }
+        if (fh) { [fh seekToEndOfFile]; [fh writeData:[[line stringByAppendingString:@"\n"] dataUsingEncoding:NSUTF8StringEncoding]]; [fh closeFile]; }
+    } @catch (NSException *e) {}
+}
+
 // on=YES 恢复充电 / NO=停充
 static void seSetCharging(BOOL on) {
     if (!seLoadIOKit()) return;
@@ -87,9 +109,13 @@ static void seApplyCharge(void) {
         static int seLastLoggedCmd = -2;
         if (cmd >= 0 && cmd != seLastLoggedCmd) {
             id raw = p[@"mfSysChargeLimit"];
-            NSLog(@"[SysEnhance] charge decision: lvl=%d limit=%d rawLimit=%@ (%s) charging=%d",
-                  lvl, limit, raw ?: @"nil", [raw isKindOfClass:[NSNumber class]] ? "num" : "other",
-                  charging);
+            NSString *msg = [NSString stringWithFormat:
+                @"[%@] charge decision: lvl=%d limit=%d rawLimit=%@ (%s) charging=%d",
+                [NSDateFormatter localizedStringFromDate:[NSDate date] dateStyle:NSDateFormatterShortStyle timeStyle:NSDateFormatterMediumStyle],
+                lvl, limit, raw ?: @"nil", [raw isKindOfClass:[NSNumber class]] ? "num" : "other",
+                charging];
+            NSLog(@"[SysEnhance] %@", msg);
+            seFileLog(msg);
             seLastLoggedCmd = cmd;
         }
         if (cmd >= 0 && cmd != seLastCmd) {
