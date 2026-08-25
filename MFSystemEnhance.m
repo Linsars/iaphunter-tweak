@@ -86,9 +86,9 @@ static void seSetSmartCharge(BOOL on) {
     if (!client) return;
     SEL sel = NSSelectorFromString(on ? @"enableSmartCharging:" : @"disableSmartCharging:");
     if ([client respondsToSelector:sel]) {
-        // (NSError**) 参数——直接 msgSend, err 忽略(失败仅无效不崩)
-        ((BOOL(*)(id,SEL,id*))objc_msgSend)(client, sel, (id*)NULL);
-        NSLog(@"[SysEnhance] smartCharge -> %d", on);
+        NSError *err = nil;
+        ((BOOL(*)(id,SEL,NSError**))objc_msgSend)(client, sel, &err);
+        NSLog(@"[SysEnhance] smartCharge -> %d err=%@", on, err);
     }
 }
 
@@ -117,13 +117,14 @@ static void seSetCharging(BOOL on) {
 #pragma mark - 充电上限逻辑(5% 回差防抖)
 
 static int seLastCmd = -1; // -1 未定 / 0 已停 / 1 已恢复
+static BOOL seSmartRestored = NO; // 系统智能充电是否已还原
+static BOOL seSmartKilled = NO;   // 已关掉系统智能充电
 
 static void seApplyCharge(void) {
     @autoreleasepool {
         NSDictionary *p = sePrefs();
         if (![p[@"mfSysChargeEnabled"] boolValue]) {
             // 功能关闭时还原系统智能充电(只做一次,避免反复调用)
-            static BOOL seSmartRestored = NO;
             if (!seSmartRestored) { seSetSmartCharge(YES); seSmartRestored = YES; seLastCmd = -1; }
             return;
         }
@@ -138,7 +139,6 @@ static void seApplyCharge(void) {
         if (lvl <= 0 || lvl > 100) return;
         BOOL charging = dev.batteryState == UIDeviceBatteryStateCharging;
         // 启用限制即关掉系统优化充电(卡80%元凶),对标 ChargeLimiter setSmartChargeEnable
-        static BOOL seSmartKilled = NO;
         if (!seSmartKilled) { seSetSmartCharge(NO); seSmartKilled = YES; }
         int cmd = -1;
         if (charging && lvl >= limit)           cmd = 0; // 到上限停充
