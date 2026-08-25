@@ -548,11 +548,12 @@ static void mfFetchIAPTitles(NSString *bundleId, void (^cb)(NSArray *titles)) {
                     if (d2.length > 1000) {
                         NSString *html = [[NSString alloc] initWithData:d2 encoding:NSUTF8StringEncoding];
                         NSRange ir = [html rangeOfString:@"In-App Purchases"];
-                        if (ir.location != NSNotFound && ir.location + 6000 < html.length) {
+                        if (ir.location != NSNotFound && ir.location + 12000 < html.length) {
                             NSString *seg = [html substringWithRange:
-                                NSMakeRange(ir.location, MIN((NSUInteger)6000, html.length - ir.location))];
+                                NSMakeRange(ir.location, MIN((NSUInteger)12000, html.length - ir.location))];
+                            // v2.6.9: svelte 前端 li 与 span 间有 div 包裹——(?s) 跨行懒惰匹配到首个 span
                             NSRegularExpression *li = [NSRegularExpression
-                                regularExpressionWithPattern:@"<li[^>]*>\\s*<span[^>]*>(.*?)</span>" options:0 error:nil];
+                                regularExpressionWithPattern:@"(?s)<li[^>]*>.*?<span[^>]*>(.*?)</span>" options:0 error:nil];
                             [li enumerateMatchesInString:seg options:0 range:NSMakeRange(0, seg.length)
                                 usingBlock:^(NSTextCheckingResult *m2, NSMatchingFlags f, BOOL *s) {
                                     NSString *raw = [seg substringWithRange:[m2 rangeAtIndex:1]];
@@ -671,6 +672,18 @@ static void mfQueryLocalPrices(NSArray *pids, void (^cb)(NSDictionary *pidToPric
     // 超时保护（8秒）
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 8 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         if (!done) { done = YES; cb(@{}); }
+    });
+}
+
+// v2.6.9: 分批验证——SKProductsRequest 单次大列表不可靠,500/批串行,聚合结果
+static void mfQueryPricesBatched(NSArray *pids, NSMutableDictionary *acc, void (^cb)(NSDictionary *)) {
+    if (!pids.count) { cb(acc); return; }
+    NSUInteger n = MIN((NSUInteger)500, pids.count);
+    NSArray *batch = [pids subarrayWithRange:NSMakeRange(0, n)];
+    NSArray *rest = n < pids.count ? [pids subarrayWithRange:NSMakeRange(n, pids.count - n)] : @[];
+    mfQueryLocalPrices(batch, ^(NSDictionary *map) {
+        [acc addEntriesFromDictionary:map];
+        mfQueryPricesBatched(rest, acc, cb);
     });
 }
 
@@ -795,13 +808,13 @@ void mfShowScanPage(void) {
             BOOL ah = [a.lowercaseString hasPrefix:hostPref], bh = [b.lowercaseString hasPrefix:hostPref];
             return ah == bh ? NSOrderedSame : (ah ? NSOrderedAscending : NSOrderedDescending);
         }];
-        if (toVerify.count > 500) {
-            mfLog(@"[iap] candidates %lu → capped 500 (host-prefix first)", (unsigned long)toVerify.count);
-            toVerify = [[toVerify subarrayWithRange:NSMakeRange(0, 500)] mutableCopy];
+        if (toVerify.count > 1500) {
+            mfLog(@"[iap] candidates %lu → capped 1500 (host-prefix first)", (unsigned long)toVerify.count);
+            toVerify = [[toVerify subarrayWithRange:NSMakeRange(0, 1500)] mutableCopy];
         }
 
-        // 2. SKProductsRequest 统一验证（Apple 裁判：有效才带价格回来）
-        mfQueryLocalPrices(toVerify, ^(NSDictionary *verifiedPrices) {
+        // 2. SKProductsRequest 统一验证（Apple 裁判：有效才带价格回来）——v2.6.9 分批 500/批
+        mfQueryPricesBatched(toVerify, [NSMutableDictionary dictionary], ^(NSDictionary *verifiedPrices) {
             mfLog(@"[iap] SK verified: %lu valid / %lu tried", (unsigned long)verifiedPrices.count, (unsigned long)toVerify.count);
             dispatch_async(dispatch_get_main_queue(), ^{
                 [st removeFromSuperview];
