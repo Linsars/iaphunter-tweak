@@ -1,7 +1,13 @@
 #!/bin/bash
-# v2.4.0: AppHooks.dylib(原 AppStoreSpoof)+ 清理旧版 dylib 残留
+# v2.6.2: 安装后自动重启受影响进程
 TWEAK_INJECT="/var/jb/usr/lib/TweakInject"
 mkdir -p "$TWEAK_INJECT"
+# 清理废弃名
 rm -f "$TWEAK_INJECT/MinisFix.dylib" "$TWEAK_INJECT/AppStoreSpoof.dylib"
+# AppHooks 目标进程
 killall -9 installd appstored 2>/dev/null
+# FolderX/IAPtools 目标进程(respring)
+killall -9 SpringBoard 2>/dev/null
+# Unseen 目标进程(backboardd 重启会短暂黑屏)
+killall -9 backboardd 2>/dev/null
 exit 0
