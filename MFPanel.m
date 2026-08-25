@@ -310,7 +310,7 @@ static BOOL mfPIDExcluded(NSString *s) {
            [s hasPrefix:@"com.appsflyer."] || [s hasPrefix:@"com.branch."];
 }
 static NSSet *mfScanFileForPIDs(NSString *path);
-static void mfQueryLocalPrices(NSArray *pids, void (^cb)(NSDictionary *pidToPrice));
+static void mfQueryLocalPrices(NSArray *pids, void (^cb)(NSDictionary *pidToPrice, NSDictionary *pidToTitle));
 static NSMutableSet *g_mfRCKeys = nil; // v2.6.4: RevenueCat public key 静态收集池
 static NSMutableSet *g_mfSlugTokens = nil; // v2.6.8: 运行时拼接 ID 的片段池(纯小写+下划线,无点)
 
@@ -793,7 +793,7 @@ static void mfQueryLocalPrices(NSArray *pids, void (^cb)(NSDictionary *pidToPric
     [req start];
     // 超时保护（8秒）
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 8 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-        if (!done) { done = YES; cb(@{}); }
+        if (!done) { done = YES; cb(@{}, @{}); }
     });
 }
 
