@@ -255,6 +255,14 @@ void mfShowNetworkCapturePage(void); // MFNetworkCapture.m
 void mfShowCryptoToolboxPage(void);  // MFNetworkCapture.m
 void mfShowNetworkModifyPage(void);  // MFNetworkCapture.m
 void mfShowHostLogPage(void);        // MFPanel.m 本文件 (v2.6.17)
+// v2.6.17 宿主日志引擎 (MFHostLogCapture.m) —— 必须在调用点之前声明(隐式 int 会与定义冲突)
+extern void mfHostLogStart(void);
+extern void mfHostLogStop(void);
+extern BOOL mfHostLogRunning(void);
+extern unsigned long long mfHostLogBufferedCount(void);
+extern unsigned long long mfHostLogTotal(void);
+extern NSArray<NSString *> *mfHostLogSnapshot(void);
+extern void mfHostLogClear(void);
 
 // ====== 本地二进制扫描 ======
 // 前向声明
@@ -2140,7 +2148,6 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
         // v2.6.1: 移除 5s 错峰(v2.3.2 为 BT panic 加的,根因=硬依赖链已 dlopen 化修复)
         // v2.6.17: 宿主日志(pipe+dup2)——开关默认 OFF,开过则冷启动即接管 fd
         if (mfPrefBool(@"mfHostLogEnabled", NO)) {
-            extern void mfHostLogStart(void);
             mfHostLogStart();
         }
         // 实时捕获(v2.2.8):默认 OFF;用户开过则持久化,冷启动即装协议——
