@@ -74,7 +74,7 @@ static NSString *biChargeMode(NSDictionary *d) {
     if (!plugged && !charging) return @"未充电";
     if (adp) {
         BOOL wireless = [adp[@"IsWireless"] boolValue] ||
-            [[adp[@"Description"] stringByLowercaseString] containsString:@"wireless"];
+            [[(NSString *)adp[@"Description"] lowercaseString] containsString:@"wireless"];
         NSNumber *watts = [adp[@"Watts"] isKindOfClass:[NSNumber class]] ? adp[@"Watts"] : nil;
         NSNumber *volts = [adp[@"AdapterVoltage"] isKindOfClass:[NSNumber class]] ? adp[@"AdapterVoltage"]
                         : ([adp[@"Voltage"] isKindOfClass:[NSNumber class]] ? adp[@"Voltage"] : nil);
