@@ -262,6 +262,8 @@ void mfShowNetworkModifyPage(void);  // MFNetworkCapture.m
 // 必须含 IAP 语义关键词或匹配 bundleId 主机段,否则二进制点分字符串噪声爆炸
 static BOOL mfPIDShaped(NSString *s) {
     if (s.length < 6 || s.length > 80) return NO;
+    // v2.6.5: C 符号噪音排除——_pthread_rwlock_unlock/_lck_txn_unlock 类
+    if ([s hasPrefix:@"_"]) return NO;
     NSCharacterSet *ok = [NSCharacterSet characterSetWithCharactersInString:
         @"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"];
     if ([s rangeOfCharacterFromSet:ok.invertedSet].location != NSNotFound) return NO;
@@ -279,6 +281,18 @@ static BOOL mfPIDShaped(NSString *s) {
     });
     NSArray *parts = [low componentsSeparatedByCharactersInSet:
         [[NSCharacterSet alphanumericCharacterSet] invertedSet]];
+    // v2.6.5: 全大写段噪音排除——AWS_SESSION_TOKEN/ERROR_MISSING_TOKEN 类常量
+    // (必须用原始串切段;low 是小写化的,永远不等于自己的大写版本)
+    if ([s rangeOfCharacterFromSet:[NSCharacterSet uppercaseLetterCharacterSet]].location != NSNotFound) {
+        NSArray *rawParts = [s componentsSeparatedByCharactersInSet:
+            [[NSCharacterSet alphanumericCharacterSet] invertedSet]];
+        BOOL allUpper = YES;
+        for (NSString *p in rawParts) {
+            if (p.length < 2) continue;
+            if (![p isEqualToString:p.uppercaseString]) { allUpper = NO; break; }
+        }
+        if (allUpper) return NO;
+    }
     for (NSString *part in parts) {
         if (part.length >= 3 && [segKws containsObject:part]) return YES;
     }
@@ -393,6 +407,19 @@ static NSArray *mfScanLocalProductIDs(void) {
 
 // 扫描单个文件：提取所有 com.xxx.xxx.xxx 格式的字符串（3段以上点分）
 // 后续由 SKProductsRequest 验证哪些是真正的 product ID
+// v2.6.5: RC public key 判定——appl_ + base62,总长 20-60(实测 32: appl_+27,勿再写死 44)
+static BOOL mfIsRCPublicKey(NSString *s) {
+    if (s.length < 20 || s.length > 60) return NO;
+    if (![s hasPrefix:@"appl_"]) return NO;
+    static NSCharacterSet *b62 = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        b62 = [NSCharacterSet characterSetWithCharactersInString:
+            @"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"];
+    });
+    return [[s substringFromIndex:5] rangeOfCharacterFromSet:b62.invertedSet].location == NSNotFound;
+}
+
 static NSSet *mfScanFileForPIDs(NSString *path) {
     NSMutableSet *pids = [NSMutableSet set];
     if (!g_mfRCKeys) g_mfRCKeys = [NSMutableSet set];
@@ -406,9 +433,8 @@ static NSSet *mfScanFileForPIDs(NSString *path) {
         if (c >= 0x20 && c < 0x7F) {
             [current appendFormat:@"%c", c];
         } else {
-            // v2.6.4: RevenueCat public SDK key 顺带收集(appl_+43 base62)——offerings 查询入口
-            if (current.length >= 44 && current.length <= 60 && [current hasPrefix:@"appl_"])
-                [g_mfRCKeys addObject:[current copy]];
+            // v2.6.4: RevenueCat public SDK key 顺带收集——offerings 查询入口
+            if (mfIsRCPublicKey(current)) [g_mfRCKeys addObject:[current copy]];
             if (current.length >= 6 && mfPIDShaped(current)) {
                 NSString *sv = [current copy];
                 if (!mfPIDExcluded(sv)) [pids addObject:sv];
@@ -416,8 +442,7 @@ static NSSet *mfScanFileForPIDs(NSString *path) {
             [current setString:@""];
         }
     }
-    if (current.length >= 44 && current.length <= 60 && [current hasPrefix:@"appl_"])
-        [g_mfRCKeys addObject:[current copy]];
+    if (mfIsRCPublicKey(current)) [g_mfRCKeys addObject:[current copy]];
     if (current.length >= 6 && mfPIDShaped(current) && !mfPIDExcluded(current)) {
         [pids addObject:[current copy]];
     }
