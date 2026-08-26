@@ -660,7 +660,7 @@ void mfShowDataAnalysisPage(void) {
     CGFloat gy = 48;
     gy = mfGridButton(page, 16, gy, gw, @"网络分析", @"🌐", @selector(mfShowNetAnalyzerPage), NO, nil);
     gy = mfGridButton(page, 16 + gw + 12, gy - 92, gw, @"解密工具", @"🔐", @selector(mfShowCryptoPage), NO, nil);
-    gy = mfGridButton(page, 16, gy, gw, @"方法监控", @"🔍", @selector(mfShowMethodTracePage), NO, nil);
+    gy = mfGridButton(page, 16, gy, gw, @"ObjC 规则", @"🔧", @selector(mfShowMethodTracePage), NO, nil);
     gy = mfGridButton(page, 16 + gw + 12, gy - 92, gw, @"ClassDump", @"📦", @selector(mfShowClassDumpPage), NO, nil);
     gy = mfGridButton(page, 16, gy, gw, @"Keychain 管理", @"🔑", @selector(mfShowKeychainManagerPage), NO, nil);
     gy = mfGridButton(page, 16 + gw + 12, gy - 92, gw, @"安全扫描", @"🛡️", @selector(mfShowSecurityScanPage), NO, nil);
@@ -1127,6 +1127,15 @@ void mfShowRuleManagerPage(void) {
     [page addSubview:tv];
 
     // 添加规则按钮（固定在底部）
+    UIButton *objcBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    objcBtn.frame = CGRectMake(12, g_mfCardH - 108, g_mfCardW - 24, 40);
+    objcBtn.backgroundColor = [UIColor systemIndigoColor];
+    objcBtn.layer.cornerRadius = 10;
+    [objcBtn setTitle:@"🔧 管理 ObjC 方法 Hook 规则" forState:UIControlStateNormal];
+    [objcBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    [objcBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfShowMethodTracePage") forControlEvents:UIControlEventTouchUpInside];
+    [page addSubview:objcBtn];
+
     UIButton *addBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     addBtn.frame = CGRectMake(12, g_mfCardH - 60, g_mfCardW - 24, 40);
     addBtn.backgroundColor = [UIColor systemBlueColor];

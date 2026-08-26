@@ -765,13 +765,13 @@ NSData *mfZipReadEntry(NSString *path, const MFZipEnt *e) {
     [tv deselectRowAtIndexPath:ip animated:YES];
     mfShowCDFilePage(self.zipPath, self.viewNames[ip.row]);
 }
-// 左滑「监控」——类名预填进方法监控页（v1.9.3，免手输）
+// 左滑「ObC 预填」——类名预填进 ObjC 规则页（v2.6.43 由方法监控改名，链路不变）
 - (UISwipeActionsConfiguration *)tableView:(UITableView *)tv trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)ip {
     NSString *entry = self.viewNames[ip.row];
     __block NSString *cls = entry.lastPathComponent;
     BOOL isSwift = [entry hasPrefix:@"swift/"];
     UIContextualAction *trace = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleNormal
-        title:@"🔍 监控" handler:^(UIContextualAction *a, UIView *v, void (^done)(BOOL)) {
+        title:@"🔧 ObjC 预填" handler:^(UIContextualAction *a, UIView *v, void (^done)(BOOL)) {
             if (!isSwift) {
                 cls = [cls stringByDeletingPathExtension];
                 mfTraceSetPrefill(cls);
