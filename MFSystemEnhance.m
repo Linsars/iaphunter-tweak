@@ -25,6 +25,7 @@ static CFMutableDictionaryRef (*p_IOServiceMatching)(const char *);
 static se_io_t (*p_IOServiceGetMatchingService)(mach_port_t, CFMutableDictionaryRef);
 static kern_return_t (*p_IORegistryEntrySetCFProperties)(se_io_t, CFTypeRef);
 static kern_return_t (*p_IOObjectRelease)(se_io_t);
+static kern_return_t (*p_IORegistryEntryCreateCFProperties)(se_io_t, CFMutableDictionaryRef *, CFAllocatorRef, UInt32);
 
 static BOOL seLoadIOKit(void) {
     static dispatch_once_t once;
@@ -37,6 +38,7 @@ static BOOL seLoadIOKit(void) {
         p_IOServiceGetMatchingService = dlsym(RTLD_DEFAULT, "IOServiceGetMatchingService");
         p_IORegistryEntrySetCFProperties = dlsym(RTLD_DEFAULT, "IORegistryEntrySetCFProperties");
         p_IOObjectRelease = dlsym(RTLD_DEFAULT, "IOObjectRelease");
+        p_IORegistryEntryCreateCFProperties = dlsym(RTLD_DEFAULT, "IORegistryEntryCreateCFProperties");
         if (!p_IOMasterPort || !p_IOServiceMatching || !p_IOServiceGetMatchingService ||
             !p_IORegistryEntrySetCFProperties || !p_IOObjectRelease) {
             NSLog(@"[SysEnhance] IOKit symbols missing");
@@ -72,24 +74,55 @@ static void seFileLog(NSString *line) {
 //   ① iOS>=13 键语义: IsCharging 恒 YES,PredictiveChargingInhibit 才是总开关(旧写法是 iOS12 的)
 //   ② PowerUISmartChargeClient.disableSmartCharging 关掉系统优化充电(卡80%元凶)
 //   ③ ExternalConnected 同步消除 120s 决策延迟并刷新充电图标
-static void seSetSmartCharge(BOOL on) {
+// v2.6.27: 全面诊断版——client 创建失败/查询状态/调用 err 全部落盘,失败可重试
+// 对标 ChargeLimiter utils.mm getSmartChargeClient/isSmartChargeEnable
+static id seSmartClient(void) {
     static id client = nil;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        NSBundle *b = [NSBundle bundleWithPath:@"/System/Library/PrivateFrameworks/PowerUI.framework"];
-        if (!b) return;
-        [b load];
-        Class cls = objc_getClass("PowerUISmartChargeClient");
-        if (!cls) return;
-        client = [[cls alloc] performSelector:NSSelectorFromString(@"initWithClientName:") withObject:@"Settings"];
-    });
-    if (!client) return;
-    SEL sel = NSSelectorFromString(on ? @"enableSmartCharging:" : @"disableSmartCharging:");
-    if ([client respondsToSelector:sel]) {
-        NSError *err = nil;
-        ((BOOL(*)(id,SEL,NSError**))objc_msgSend)(client, sel, &err);
-        NSLog(@"[SysEnhance] smartCharge -> %d err=%@", on, err);
+    if (client) return client;
+    NSBundle *b = [NSBundle bundleWithPath:@"/System/Library/PrivateFrameworks/PowerUI.framework"];
+    if (!b) { NSLog(@"[SysEnhance] PowerUI.framework not found"); return nil; }
+    [b load];
+    Class cls = objc_getClass("PowerUISmartChargeClient");
+    if (!cls) { NSLog(@"[SysEnhance] PowerUISmartChargeClient class missing"); return nil; }
+    client = [[cls alloc] performSelector:NSSelectorFromString(@"initWithClientName:") withObject:@"Settings"];
+    return client;
+}
+
+// 返回: -1 查询失败 / 0 disable / 1 enable / 2 fullcharge / 3 temporarily_disable (ChargeLimiter 语义)
+static int seSmartQuery(void) {
+    id client = seSmartClient();
+    if (!client) return -1;
+    SEL sel = NSSelectorFromString(@"isSmartChargingCurrentlyEnabled:");
+    if (![client respondsToSelector:sel]) {
+        seFileLog(@"[smart] isSmartChargingCurrentlyEnabled: selector missing");
+        return -1;
     }
+    NSError *err = nil;
+    int status = ((int(*)(id,SEL,NSError**))objc_msgSend)(client, sel, &err);
+    if (err) NSLog(@"[SysEnhance] smart query err=%@", err);
+    return status;
+}
+
+static void seSetSmartCharge(BOOL on) {
+    id client = seSmartClient();
+    if (!client) {
+        seFileLog([NSString stringWithFormat:@"[smart] client create FAILED, cannot set %d", on ? 1 : 0]);
+        return;
+    }
+    int before = seSmartQuery();
+    SEL sel = NSSelectorFromString(on ? @"enableSmartCharging:" : @"disableSmartCharging:");
+    if (![client respondsToSelector:sel]) {
+        seFileLog([NSString stringWithFormat:@"[smart] selector %@ missing", on ? @"enable" : @"disable"]);
+        return;
+    }
+    NSError *err = nil;
+    BOOL ok = ((BOOL(*)(id,SEL,NSError**))objc_msgSend)(client, sel, &err);
+    int after = seSmartQuery();
+    NSString *msg = [NSString stringWithFormat:@"[smart] set %d -> ok=%d before=%d after=%d err=%@",
+        on ? 1 : 0, ok, before, after,
+        err ? [err localizedDescription] : @"nil"];
+    NSLog(@"[SysEnhance] %@", msg);
+    seFileLog(msg);   // 状态变化必落盘,装机直接验
 }
 
 static void seSetCharging(BOOL on) {
@@ -114,11 +147,31 @@ static void seSetCharging(BOOL on) {
     NSLog(@"[SysEnhance] setCharging(%d) kr=%d", on ? 1 : 0, kr);
 }
 
+// v2.6.27: 充电态 IOKit 直读——UIDevice.batteryState 在 SB 里不可靠
+// (实测 smart charge inhibit 时报 NotCharging,决策被误导)
+static BOOL seReadCharging(void) {
+    if (!seLoadIOKit() || !p_IORegistryEntryCreateCFProperties) return NO;
+    mach_port_t master = 0;
+    p_IOMasterPort(0, &master);
+    se_io_t svc = p_IOServiceGetMatchingService(master, p_IOServiceMatching("AppleSmartBattery"));
+    if (!svc) svc = p_IOServiceGetMatchingService(master, p_IOServiceMatching("IOPMPowerSource"));
+    if (!svc) return NO;
+    CFMutableDictionaryRef props = NULL;
+    kern_return_t kr = p_IORegistryEntryCreateCFProperties(svc, &props, kCFAllocatorDefault, 0);
+    p_IOObjectRelease(svc);
+    if (kr != 0 || !props) return NO;
+    NSDictionary *d = (__bridge_transfer NSDictionary *)props;
+    NSNumber *ext = d[@"ExternalConnected"];
+    NSNumber *chg = d[@"IsCharging"];
+    // ExternalConnected=插着电; IsCharging=实际在充(inhibit 时为 NO)
+    // 决策用「插着电」——inhibit 状态下我们仍要能判断「该不该解除」
+    return (ext.boolValue || chg.boolValue);
+}
+
 #pragma mark - 充电上限逻辑(5% 回差防抖)
 
 static int seLastCmd = -1; // -1 未定 / 0 已停 / 1 已恢复
 static BOOL seSmartRestored = NO; // 系统智能充电是否已还原
-static BOOL seSmartKilled = NO;   // 已关掉系统智能充电
 
 static void seApplyCharge(void) {
     @autoreleasepool {
@@ -137,9 +190,17 @@ static void seApplyCharge(void) {
         UIDevice *dev = [UIDevice currentDevice];
         int lvl = (int)(dev.batteryLevel * 100 + 0.5);
         if (lvl <= 0 || lvl > 100) return;
-        BOOL charging = dev.batteryState == UIDeviceBatteryStateCharging;
-        // 启用限制即关掉系统优化充电(卡80%元凶),对标 ChargeLimiter setSmartChargeEnable
-        if (!seSmartKilled) { seSetSmartCharge(NO); seSmartKilled = YES; }
+        // v2.6.27: IOKit 直读充电态(ExternalConnected),不信 UIDevice.batteryState
+        BOOL charging = seReadCharging();
+        // v2.6.27: 常驻确保系统优化充电关闭(对标 ChargeLimiter 每轮 isSmartChargeEnable 检查)
+        //   只在状态为 enable/fullcharge 时才调 disable,避免重复调用副作用
+        static int seSmartLast = -9;
+        int sq = seSmartQuery();
+        if (sq == 1 || sq == 2) { seSetSmartCharge(NO); }
+        else if (sq != seSmartLast) {
+            seFileLog([NSString stringWithFormat:@"[smart] status=%d (no action) lvl=%d", sq, lvl]);
+        }
+        seSmartLast = sq;
         int cmd = -1;
         if (charging && lvl >= limit)           cmd = 0; // 到上限停充
         else if (!charging && lvl <= limit - 5) cmd = 1; // 回差恢复
