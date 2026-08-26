@@ -67,7 +67,7 @@ static void BatteryServerAutoStart(void) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         CFMessagePortRef local = CFMessagePortCreateLocal(
-            kCFAllocatorDefault, CFSTR("minisfix.battery"), bsCallback, NULL, NULL, FALSE);
+            kCFAllocatorDefault, CFSTR("minisfix.battery"), bsCallback, NULL, NULL);
         if (!local) {
             NSLog(@"[SysEnhance] battery server create failed");
             return;
