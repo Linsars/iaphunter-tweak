@@ -356,35 +356,6 @@ void mfObjCHookDelTapped(UIButton *b) {
     mfShowObjCHookPage();
 }
 
-// v2.6.59: 主动推送——storekitd 无真实交易时 updatedTransactions: 不回调, 我们直接推
-static void mfSK1PushFakes(void) {
-    if (!g_sk1on) return;
-    NSArray *pids = [[NSUserDefaults standardUserDefaults] objectForKey:@"SavedIAPIDs"] ?: @[];
-    if (pids.count == 0) { OH_LOG(@"SK1 push: no pids"); return; }
-    NSMutableArray *fakes = [NSMutableArray array];
-    for (NSString *pid in pids) {
-        if (pid.length == 0 || pid.length > 200) continue;
-        id tx = mfSK1FakeTx(pid);
-        if (tx) [fakes addObject:tx];
-    }
-    if (fakes.count == 0) return;
-    id q = [objc_getClass("SKPaymentQueue") performSelector:NSSelectorFromString(@"defaultQueue")];
-    if (q) {
-        ((void(*)(id,SEL,id))objc_msgSend)(q, @selector(updatedTransactions:), fakes);
-        OH_LOG(@"SK1 push: %lu fake transactions to observers", (unsigned long)fakes.count);
-    }
-}
-
-// finishTransaction 吞 fake(防 fake 发给 storekitd 出问题)
-static void (*orig_sk1_finish)(id, SEL, id);
-static void hook_sk1_finish(id self, SEL _cmd, id tx) {
-    if (objc_getAssociatedObject(tx, "mfsk1_pay")) {
-        OH_LOG(@"SK1 finish fake ignored");
-        return;
-    }
-    if (orig_sk1_finish) orig_sk1_finish(self, _cmd, tx);
-}
-
 #pragma mark - ⚡ SK1 通杀(v2.6.55)
 // 通用: hook SKPaymentQueue#transactions + SK 交易 getter 读取层
 //   无真实交易时返回伪造数组(每个已验证 pid 一条 fakeTx) —— app 遍历判断解锁通杀
@@ -513,4 +484,33 @@ void mfSK1AutoStart(void) {
     if (![[NSUserDefaults standardUserDefaults] boolForKey:@"mfSK1Enabled"]) return;
     if (g_sk1on) return;
     mfSK1Enable();
+}
+
+// v2.6.59: 主动推送——storekitd 无真实交易时 updatedTransactions: 不回调, 我们直接推
+static void mfSK1PushFakes(void) {
+    if (!g_sk1on) return;
+    NSArray *pids = [[NSUserDefaults standardUserDefaults] objectForKey:@"SavedIAPIDs"] ?: @[];
+    if (pids.count == 0) { OH_LOG(@"SK1 push: no pids"); return; }
+    NSMutableArray *fakes = [NSMutableArray array];
+    for (NSString *pid in pids) {
+        if (pid.length == 0 || pid.length > 200) continue;
+        id tx = mfSK1FakeTx(pid);
+        if (tx) [fakes addObject:tx];
+    }
+    if (fakes.count == 0) return;
+    id q = [objc_getClass("SKPaymentQueue") performSelector:NSSelectorFromString(@"defaultQueue")];
+    if (q) {
+        ((void(*)(id,SEL,id))objc_msgSend)(q, @selector(updatedTransactions:), fakes);
+        OH_LOG(@"SK1 push: %lu fake transactions to observers", (unsigned long)fakes.count);
+    }
+}
+
+// finishTransaction 吞 fake(防 fake 发给 storekitd 出问题)
+static void (*orig_sk1_finish)(id, SEL, id);
+static void hook_sk1_finish(id self, SEL _cmd, id tx) {
+    if (objc_getAssociatedObject(tx, "mfsk1_pay")) {
+        OH_LOG(@"SK1 finish fake ignored");
+        return;
+    }
+    if (orig_sk1_finish) orig_sk1_finish(self, _cmd, tx);
 }
