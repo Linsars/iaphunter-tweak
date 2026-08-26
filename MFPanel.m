@@ -2133,7 +2133,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define IAPTOOLS_VERSION @"2.6.47"
+#define IAPTOOLS_VERSION @"2.6.48"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
@@ -2187,6 +2187,9 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
             g_observer = [[MFIAPObserver alloc] init];
             [[objc_getClass("SKPaymentQueue") defaultQueue] addTransactionObserver:g_observer];
         });
+
+        // v2.6.48: ObjC 规则冷启动自动应用(每个注入的 app 进程生效——跨进程规则的根基)
+        mfObjCHookApply();
 
         // 手势注册
         Class vcCls = NSClassFromString(@"UIViewController");
