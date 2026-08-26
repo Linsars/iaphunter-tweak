@@ -124,7 +124,11 @@ static void seDumpBatteryKeys(NSString *tag) {
         CFMutableDictionaryRef props = NULL;
         if (p_IORegistryEntryCreateCFProperties(svc, &props, kCFAllocatorDefault, 0) == 0 && props) {
             NSDictionary *d = (__bridge_transfer NSDictionary *)props;
-            seFileLog([NSString stringWithFormat:@"[dump/%@][%s] ----", tag ?: @"?", names[i]]);
+            // v2.6.33: dump 必须带时间戳——无时间的温度数据无法对齐"卡住瞬间"
+            NSString *ts = [NSDateFormatter localizedStringFromDate:[NSDate date]
+                                                          dateStyle:NSDateFormatterNoStyle
+                                                          timeStyle:NSDateFormatterMediumStyle];
+            seFileLog([NSString stringWithFormat:@"[dump/%@][%s] %@", tag ?: @"?", names[i], ts]);
             for (NSString *k in keys) {
                 id v = d[k];
                 if (v) seFileLog([NSString stringWithFormat:@"[dump] %@ = %@", k, v]);
@@ -306,7 +310,14 @@ static void seApplyCharge(void) {
             BOOL isChg = [bd[@"IsCharging"] boolValue];
             BOOL full = [bd[@"FullyCharged"] boolValue];
             if (charging && !isChg && !full) {
-                seFileLog(@"[probe] plugged but not charging -> writing resume probe");
+                NSDictionary *bd2 = seReadBatteryDict();
+                int tC = [bd2[@"Temperature"] intValue] / 100;
+                int amps = [bd2[@"InstantAmperage"] intValue];
+                NSString *ts = [NSDateFormatter localizedStringFromDate:[NSDate date]
+                                                              dateStyle:NSDateFormatterNoStyle
+                                                              timeStyle:NSDateFormatterMediumStyle];
+                seFileLog([NSString stringWithFormat:@"[probe %@] plugged-not-charging lvl=%d temp=%d°C mA=%d -> writing resume",
+                    ts, lvl, tC, amps]);
                 seSetCharging(YES);
             }
         }
@@ -316,7 +327,10 @@ static void seApplyCharge(void) {
         int sq = seSmartQuery();
         if (sq == 1 || sq == 2) { seSetSmartCharge(NO); }
         else if (sq != seSmartLast) {
-            seFileLog([NSString stringWithFormat:@"[smart] status=%d (no action) lvl=%d", sq, lvl]);
+            // v2.6.33: 状态行带温度——对齐"卡住瞬间"的热状态
+            NSDictionary *bd0 = seReadBatteryDict();
+            int tempC = [bd0[@"Temperature"] intValue] / 100;
+            seFileLog([NSString stringWithFormat:@"[smart] status=%d (no action) lvl=%d temp=%d°C", sq, lvl, tempC]);
         }
         seSmartLast = sq;
         int cmd = -1;
