@@ -38,7 +38,7 @@ static int loadIOKit(void) {
 }
 
 // on=YES 恢复充电 / NO=停充(iOS>=13 语义: IsCharging 钉 YES, PredictiveChargingInhibit 总开关)
-static kern_return_t writeCharging(const char *svcName, BOOL on) {
+static kern_return_t writeCharging(const char *svcName, int on) {
     if (!p_IOMasterPort) return 0xE00002C1u; // not privileged 占位
     mach_port_t master = 0;
     p_IOMasterPort(0, &master);
