@@ -252,7 +252,7 @@ void mfObjCTxProbeTapped(void) {
     Class TI = objc_getClass("SKPaymentTransactionInternal");
     if (!TI) { OH_LOG(@"Internal class missing"); return; }
     OH_LOG(@"probe: creating internal via class_createInstance");
-    id ti = (__bridge_transfer id)class_createInstance(TI, 0);
+    id ti = class_createInstance(TI, 0);
     OH_LOG(@"probe: internal=%@", ti);
     Ivar stI = class_getInstanceVariable(TI, "__transactionState");
     if (stI) { long long st = 1; memcpy((char *)(__bridge void *)ti + ivar_getOffset(stI), &st, 8); }
@@ -260,7 +260,7 @@ void mfObjCTxProbeTapped(void) {
     // 3. 构造 SKPayment(Internal) 填 productIdentifier(同样绕过 init)
     Class PI = objc_getClass("SKPaymentInternal");
     id pi = nil;
-    if (PI) pi = (__bridge_transfer id)class_createInstance(PI, 0);
+    if (PI) pi = class_createInstance(PI, 0);
     if (pi) {
         Ivar pidI = class_getInstanceVariable(PI, "__productIdentifier");
         if (pidI) object_setIvar(pi, pidI, @"com.sugarmo.ScrollClip.pro");
@@ -269,7 +269,7 @@ void mfObjCTxProbeTapped(void) {
     if (payI && pi) object_setIvar(ti, payI, pi);
     // 4. 包壳: SKPaymentTransaction class_createInstance 后塞 internal
     OH_LOG(@"probe: creating SKPaymentTransaction shell");
-    id tx = (__bridge_transfer id)class_createInstance(TT, 0);
+    id tx = class_createInstance(TT, 0);
     Ivar intI = class_getInstanceVariable(TT, "_internal");
     if (intI) object_setIvar(tx, intI, ti);
     Ivar intI2 = class_getInstanceVariable(TT, "__internal");
