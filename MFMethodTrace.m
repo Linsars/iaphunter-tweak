@@ -91,20 +91,27 @@ static IMP mfWrapFor(char ret, int nargs, IMP orig) {
     return imp_implementationWithBlock(blk);
 }
 
-// 编码检查：ret '@'/'v'；self '@'；SEL ':'；其余参数全 '@' 且 ≤4
+// 编码检查(v2.6.35 重写): 旧版手搓字符比对被 arm64 偏移量数字坑死(@16@0:8 的 t[1]=='1')
+//   → 全部方法误判非安全签名,"已包装 0 个"。用 NSMethodSignature 正规解析。
 static int mfSafeArgs(const char *t, char *retOut) {
-    if (!t || strlen(t) < 3) return -1;
-    char ret = t[0];
-    if (ret != '@' && ret != 'v') return -1;
-    if (t[1] != '@' || t[2] != ':') return -1;
-    int n = 0;
-    for (const char *p = t + 3; *p; p++) {
-        if (*p != '@') return -1;
-        n++;
-        if (n > 4) return -1;
+    if (!t) return -1;
+    @try {
+        NSMethodSignature *sig = [NSMethodSignature signatureWithObjCTypes:t];
+        if (!sig) return -1;
+        // arg0=ret, arg1=self(@), arg2=_cmd(:), arg3..=真实参数
+        char ret = [sig getArgumentTypeAtIndex:0][0];
+        if (ret != '@' && ret != 'v') return -1;
+        NSUInteger n = sig.numberOfArguments - 3; // 实参个数
+        if (n < 0 || n > 4) return -1;
+        for (NSUInteger i = 3; i < sig.numberOfArguments; i++) {
+            const char *ty = [sig getArgumentTypeAtIndex:i];
+            if (ty[0] != '@') return -1;   // 只接受对象/block 参数(nilable 安全)
+        }
+        *retOut = ret;
+        return (int)n;
+    } @catch (NSException *e) {
+        return -1;
     }
-    *retOut = ret;
-    return n;
 }
 
 #pragma mark - 启停
