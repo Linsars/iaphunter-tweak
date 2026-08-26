@@ -252,7 +252,7 @@ void mfObjCTxProbeTapped(void) {
     if (!TI) { OH_LOG(@"Internal class missing"); return; }
     id ti = [[TI alloc] init];
     Ivar stI = class_getInstanceVariable(TI, "__transactionState");
-    if (stI) { long long st = 1; memcpy((char*)ti + ivar_getOffset(stI), &st, 8); }
+    if (stI) { long long st = 1; memcpy((char *)(__bridge void *)ti + ivar_getOffset(stI), &st, 8); }
     Ivar payI = class_getInstanceVariable(TI, "__payment");
     // 3. 构造 SKPayment(Internal) 填 productIdentifier
     Class PI = objc_getClass("SKPaymentInternal");
