@@ -19,6 +19,8 @@ void mfTraceSetPrefill(NSString *cls) {
 static NSMutableArray *g_objcHooks = nil;      // 规则(dict)
 static NSMutableArray *g_hookRestore = nil;    // 已应用 {cls,sel,origIMP,enc}
 static BOOL g_hookOn = NO;
+static UITextField *g_clsF = nil, *g_selF = nil, *g_valF = nil;   // v2.6.47 表单字段
+static UISegmentedControl *g_modeSeg = nil;
 
 #pragma mark - 安全签名解析(NSMethodSignature)
 // 只接受 ret=@/v + 参数全 @(≤4)。返回对象/void 方法可接管, 其余跳过。
@@ -192,9 +194,6 @@ void mfShowMethodTracePage(void) {
 
 #pragma mark - 编辑
 // v2.6.47: 页面内表单添加(替代弹窗)——直接读表单字段
-static UITextField *g_clsF = nil, *g_selF = nil, *g_valF = nil;
-static UISegmentedControl *g_modeSeg = nil;
-
 void mfObjCHookFormAddTapped(void) {
     if (!g_clsF) { OH_LOG(@"form not ready"); return; }
     int mode = (int)g_modeSeg.selectedSegmentIndex; // 0=透传 1=nil 2=str
