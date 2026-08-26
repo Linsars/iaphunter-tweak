@@ -153,6 +153,11 @@ void mfShowObjCHookPage(void) {
     sv.contentSize = CGSizeMake(cw, y + 20);
 }
 
+// v2.6.42: MFClassDump 左滑「方法监控」入口的 C 函数别名 → 指向 ObjC 规则页
+void mfShowMethodTracePage(void) {
+    mfShowObjCHookPage();
+}
+
 #pragma mark - 编辑
 void mfObjCHookAddTapped(void) {
     UIAlertController *ac = [UIAlertController alertControllerWithTitle:@"添加 ObjC 规则"
