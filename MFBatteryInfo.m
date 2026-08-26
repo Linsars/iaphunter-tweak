@@ -159,7 +159,17 @@ static NSArray *biBuildRows(void) {
     row(@"设计容量 (mAh)", biFmtVal(@"DesignCapacity", design));
     row(@"实际容量 (mAh)", biFmtVal(@"NominalChargeCapacity", nominal));
     row(@"当前电量 (mAh)", biFmtVal(@"AppleRawCurrentCapacity", d[@"AppleRawCurrentCapacity"]));
-    row(@"硬件电量 (%)", biFmtVal(@"CurrentCapacity", d[@"CurrentCapacity"]));
+    // v2.6.34: 对齐 ChargeLimiter 口径(app.js L589)——raw库仑计/标称容量,精确反映实际储能
+    //   旧值 CurrentCapacity 是系统UI量化值(整数+保守校准),与真实储能可差 2%+
+    {
+        NSNumber *rawCap = [d[@"AppleRawCurrentCapacity"] isKindOfClass:[NSNumber class]] ? d[@"AppleRawCurrentCapacity"] : nil;
+        NSNumber *nomCap = [d[@"NominalChargeCapacity"] isKindOfClass:[NSNumber class]] ? d[@"NominalChargeCapacity"] : nil;
+        if (!nomCap) nomCap = [d[@"AppleRawMaxCapacity"] isKindOfClass:[NSNumber class]] ? d[@"AppleRawMaxCapacity"] : nil; // CL 同款兜底
+        if (rawCap && nomCap && nomCap.doubleValue > 0)
+            row(@"硬件电量 (%)", [NSString stringWithFormat:@"%.2f%%", rawCap.doubleValue / nomCap.doubleValue * 100]);
+        else
+            row(@"硬件电量 (%)", biFmtVal(@"CurrentCapacity", d[@"CurrentCapacity"])); // 兜底回退
+    }
     row(@"电池电流 (mA)", biFmtVal(@"Amperage", d[@"Amperage"]));
     row(@"瞬时电流 (mA)", biFmtVal(@"InstantAmperage", d[@"InstantAmperage"]));
     row(@"开机电压", biFmtVal(@"BootVoltage", d[@"BootVoltage"]));
