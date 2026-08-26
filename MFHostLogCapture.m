@@ -111,7 +111,7 @@ void mfHostLogStart(void) {
     });
     dispatch_resume(g_hlSource);
     g_hlRunning = YES;
-    mfLog(@"hostlog ON — stdout/stderr piped (cap %lu lines)", HL_MAX_LINES);
+    mfLog(@"hostlog ON — stdout/stderr piped (cap 10000 lines)");
 }
 
 void mfHostLogStop(void) {

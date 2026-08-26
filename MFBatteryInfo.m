@@ -36,18 +36,31 @@ static BOOL biLoadIOKit(void) {
 // 经 SpringBoard(FolderX 注入)的 CFMessagePort 查询——app 沙盒读不了 registry 的正解
 static NSDictionary *biViaSpringBoard(void) {
     CFMessagePortRef remote = CFMessagePortCreateRemote(kCFAllocatorDefault, CFSTR("minisfix.battery"));
-    if (!remote) return nil;
+    if (!remote) {
+        NSLog(@"[MF-Bat] SB port not found (respring needed?)");
+        return nil;
+    }
     CFDataRef reply = NULL;
     SInt32 st = CFMessagePortSendRequest(remote, 0, NULL, 2.0, 2.0,
         kCFRunLoopDefaultMode, &reply);
-    CFMessagePortInvalidate(remote); CFRelease(remote);
-    if (st != kCFMessagePortSuccess || !reply) return nil;
+    if (st != kCFMessagePortSuccess || !reply) {
+        NSLog(@"[MF-Bat] SB request failed st=%d len=%lu", st, reply ? (unsigned long)CFDataGetLength(reply) : 0);
+        if (reply) CFRelease(reply);
+        CFMessagePortInvalidate(remote); CFRelease(remote);
+        return nil;
+    }
     NSData *d = (__bridge_transfer NSData *)reply;
-    return [NSPropertyListSerialization propertyListWithData:d options:0 format:NULL error:NULL];
+    NSDictionary *out = [NSPropertyListSerialization propertyListWithData:d options:0 format:NULL error:NULL];
+    NSLog(@"[MF-Bat] via SB ok: %lu keys, %lu bytes", (unsigned long)out.count, (unsigned long)d.length);
+    CFMessagePortInvalidate(remote); CFRelease(remote);
+    return out;
 }
 
 NSDictionary *mfBatteryRead(void) {
-    if (!biLoadIOKit()) return biViaSpringBoard();
+    if (!biLoadIOKit()) {
+        NSLog(@"[MF-Bat] IOKit dlsym failed -> SB relay");
+        return biViaSpringBoard();
+    }
     mach_port_t master = 0;
     bi_IOMasterPort(0, &master);
     bi_io_t svc = bi_IOServiceGetMatchingService(master, bi_IOServiceMatching("AppleSmartBattery"));
@@ -59,10 +72,15 @@ NSDictionary *mfBatteryRead(void) {
         // v2.6.23: 沙盒 app 常见 kr=0 但属性被裁剪 → 也走 SB 中转
         if (kr == 0 && props) {
             NSDictionary *d = [(__bridge_transfer NSDictionary *)props copy];
+            NSLog(@"[MF-Bat] direct read kr=0 keys=%lu", (unsigned long)d.count);
             if (d.count > 4) return d; // 少于5键视为沙盒裁剪
+            NSLog(@"[MF-Bat] sandbox-trimmed (<5 keys) -> SB relay");
+        } else {
+            NSLog(@"[MF-Bat] direct read failed kr=%d -> SB relay", kr);
         }
+    } else {
+        NSLog(@"[MF-Bat] service lookup =0 -> SB relay");
     }
-    // 本进程无权限 → 问 SpringBoard
     return biViaSpringBoard();
 }
 
