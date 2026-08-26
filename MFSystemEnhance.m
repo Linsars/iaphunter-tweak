@@ -137,7 +137,7 @@ static void seDumpBatteryKeys(NSString *tag) {
                     [k localizedCaseInsensitiveContainsString:@"nflow"] ||
                     [k localizedCaseInsensitiveContainsString:@"hermal"] ||
                     [k localizedCaseInsensitiveContainsString:@"emperature"] ||
-                    [k localizedCaseInsensitiveContainsString:"hargeInhibit"])
+                    [k localizedCaseInsensitiveContainsString:@"hargeInhibit"])
                     [suspects addObject:k];
             }
             if (suspects.count) seFileLog([NSString stringWithFormat:@"[dump] suspect keys: %@", suspects]);
