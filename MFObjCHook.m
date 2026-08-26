@@ -275,9 +275,11 @@ void mfObjCTxProbeTapped(void) {
     Ivar intI2 = class_getInstanceVariable(TT, "__internal");
     if (intI2) object_setIvar(tx, intI2, ti);
     OH_LOG(@"probe: shell=%@", tx);
-    // 5. 读写验证
+    // 5. 读写验证(修正: transaction 无 productIdentifier — pid 在 payment 上)
     long long st2 = ((long long(*)(id,SEL))objc_msgSend)(tx, NSSelectorFromString(@"transactionState"));
-    id pid2 = ((id(*)(id,SEL))objc_msgSend)(tx, NSSelectorFromString(@"productIdentifier"));
+    id pay2 = ((id(*)(id,SEL))objc_msgSend)(tx, NSSelectorFromString(@"payment"));
+    NSString *pid2 = nil;
+    if (pay2) pid2 = ((id(*)(id,SEL))objc_msgSend)(pay2, NSSelectorFromString(@"productIdentifier"));
     OH_LOG(@"probe: state=%lld pid=%@", st2, pid2);
 }
 

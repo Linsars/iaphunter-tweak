@@ -2135,7 +2135,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define IAPTOOLS_VERSION @"2.6.53"
+#define IAPTOOLS_VERSION @"2.6.54"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
