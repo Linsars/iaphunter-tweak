@@ -1368,6 +1368,8 @@ void mfShowProductPage(void) {
 - (void)mfTraceToggleTapped { mfTraceToggleTapped(); }
 - (void)mfTraceClearTapped { mfTraceClearTapped(); }
 - (void)mfTracePresetTapped { mfTraceTogglePresetTapped(); }
+- (void)mfTraceExportTapped { mfTraceExportTapped(); }
+- (void)mfTraceCopyTapped { mfTraceCopyTapped(); }
 - (void)mfNetRun:(UIButton *)btn {
     btn.enabled = NO;
     NSString *kind = objc_getAssociatedObject(btn, "kind");
@@ -2133,7 +2135,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define IAPTOOLS_VERSION @"2.6.36"
+#define IAPTOOLS_VERSION @"2.6.37"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {

@@ -177,25 +177,47 @@ static BOOL mfTraceStartInternal(NSString *className, NSArray<NSString *> *sels,
 
     __block int count = 0, skipped = 0;
     void (^traceList)(Class, BOOL) = ^(Class c, BOOL isMeta) {
-        unsigned int n = 0;
-        Method *ms = class_copyMethodList(c, &n);
-        for (unsigned int i = 0; i < n; i++) {
-            Method m = ms[i];
-            SEL sel = method_getName(m);
-            NSString *selName = NSStringFromSelector(sel);
-            if (sels && ![sels containsObject:selName]) { skipped++; continue; }
-            const char *enc = method_getTypeEncoding(m);
-            char ret;
-            int args = mfSafeArgs(enc, &ret);
-            if (args < 0) { skipped++; continue; }
-            IMP orig = method_getImplementation(m);
-            IMP wrap = mfWrapFor(ret, args, orig);
-            if (!wrap) { skipped++; continue; }
-            method_setImplementation(m, wrap);
-            [g_traceRestore addObject:@{@"m": [NSValue valueWithPointer:m], @"imp": [NSValue valueWithPointer:orig], @"cls": c, @"sel": selName}];
-            count++;
+        if (!sels) {
+            // 全量模式(旧): 只扫本类自有方法,避免误 hook 继承方法影响全局
+            unsigned int n = 0;
+            Method *ms = class_copyMethodList(c, &n);
+            for (unsigned int i = 0; i < n; i++) {
+                Method m = ms[i];
+                SEL sel = method_getName(m);
+                NSString *selName = NSStringFromSelector(sel);
+                const char *enc = method_getTypeEncoding(m);
+                char ret; int args = mfSafeArgs(enc, &ret);
+                if (args < 0) { skipped++; continue; }
+                IMP orig = method_getImplementation(m);
+                IMP wrap = mfWrapFor(ret, args, orig);
+                if (!wrap) { skipped++; continue; }
+                method_setImplementation(m, wrap);
+                [g_traceRestore addObject:@{@"cls": c, @"sel": selName, @"imp": [NSValue valueWithPointer:orig], @"enc": [NSString stringWithUTF8String:enc]}];
+                count++;
+            }
+            free(ms);
+        } else {
+            // v2.6.37 白名单模式: 沿继承链找 selector(含父类), 给本类 override 包装只影响该类实例
+            for (NSString *selName in sels) {
+                SEL sel = NSSelectorFromString(selName);
+                Method m = class_getInstanceMethod(c, sel); // 含继承链查找
+                if (!m) { skipped++; continue; }
+                const char *enc = method_getTypeEncoding(m);
+                char ret; int args = mfSafeArgs(enc, &ret);
+                if (args < 0) { skipped++; continue; }
+                IMP orig = method_getImplementation(m);
+                IMP wrap = mfWrapFor(ret, args, orig);
+                if (!wrap) { skipped++; continue; }
+                // 若 m 不是本类自有方法(来自父类), 用 class_addMethod 给本类加 override
+                if (class_getMethodImplementation(c, sel) != orig) {
+                    class_addMethod(c, sel, wrap, enc);
+                } else {
+                    method_setImplementation(m, wrap);
+                }
+                [g_traceRestore addObject:@{@"cls": c, @"sel": selName, @"imp": [NSValue valueWithPointer:orig], @"enc": [NSString stringWithUTF8String:enc]}];
+                count++;
+            }
         }
-        free(ms);
     };
     traceList(cls, NO);
     traceList(object_getClass(cls), YES);
@@ -219,9 +241,14 @@ static BOOL mfTraceStartInternal(NSString *className, NSArray<NSString *> *sels,
 void mfTraceStop(void) {
     if (!g_traceOn) return;
     for (NSDictionary *e in g_traceRestore) {
-        Method m = (Method)[e[@"m"] pointerValue];
+        Class c = e[@"cls"];
+        SEL sel = NSSelectorFromString(e[@"sel"]);
         IMP orig = (IMP)[e[@"imp"] pointerValue];
-        method_setImplementation(m, orig);
+        const char *enc = [e[@"enc"] UTF8String];
+        // class_replaceMethod 同时处理本类替换与子类 override 还原
+        Method old = class_getInstanceMethod(c, sel);
+        if (old && method_getImplementation(old) == orig) continue; // 已是原版,无需还原
+        class_replaceMethod(c, sel, orig, enc);
     }
     [g_traceRestore removeAllObjects];
     g_traceOn = NO;
@@ -294,6 +321,27 @@ void mfTraceClearTapped(void) {
     mfToast(@"🗑️ 日志已清空");
 }
 
+// v2.6.37: 导出到 Documents, 可像 sysenhance.log 一样取/发
+void mfTraceCopyTapped(void) {
+    NSMutableString *s = [NSMutableString string];
+    @synchronized (g_traceLog) { for (NSString *l in g_traceLog) [s appendFormat:@"%@\n", l]; }
+    if (s.length == 0) { mfToast(@"⚠️ 无日志可复制"); return; }
+    [UIPasteboard generalPasteboard].string = s;
+    mfToast(@"📋 已复制全部日志");
+}
+
+void mfTraceExportTapped(void) {
+    NSString *path = @"/var/mobile/Documents/minisfix_trace.log";
+    NSMutableString *s = [NSMutableString string];
+    @synchronized (g_traceLog) {
+        for (NSString *l in g_traceLog) [s appendFormat:@"%@\n", l];
+    }
+    NSError *e = nil;
+    [s writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:&e];
+    if (e) mfToast([@"⚠️ 导出失败 " stringByAppendingString:e.localizedDescription]);
+    else mfToast([NSString stringWithFormat:@"📤 已导出 %lu 行 → minisfix_trace.log", (unsigned long)g_traceLog.count]);
+}
+
 void mfShowMethodTracePage(void) {
     UIView *page = mfMakePage(@"🔍 方法监控", YES);
     CGFloat cw = g_mfCardW - 32;
@@ -354,6 +402,26 @@ void mfShowMethodTracePage(void) {
     [clrBtn setTitle:@"🗑 清空" forState:UIControlStateNormal];
     clrBtn.titleLabel.font = [UIFont boldSystemFontOfSize:13];
     [page addSubview:clrBtn];
+
+    UIButton *expBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    expBtn.frame = CGRectMake(16, 224, (cw - 16) / 2, 34);
+    expBtn.backgroundColor = [UIColor tertiarySystemBackgroundColor];
+    expBtn.layer.cornerRadius = 8;
+    expBtn.tintColor = [UIColor labelColor];
+    [expBtn setTitle:@"📤 导出" forState:UIControlStateNormal];
+    expBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
+    [expBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfTraceExportTapped") forControlEvents:UIControlEventTouchUpInside];
+    [page addSubview:expBtn];
+
+    UIButton *shareBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    shareBtn.frame = CGRectMake(24 + (cw - 16) / 2, 224, (cw - 16) / 2, 34);
+    shareBtn.backgroundColor = [UIColor tertiarySystemBackgroundColor];
+    shareBtn.layer.cornerRadius = 8;
+    shareBtn.tintColor = [UIColor labelColor];
+    [shareBtn setTitle:@"📋 复制" forState:UIControlStateNormal];
+    shareBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
+    [shareBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfTraceCopyTapped") forControlEvents:UIControlEventTouchUpInside];
+    [page addSubview:shareBtn];
 
     g_traceTV = [[UITextView alloc] initWithFrame:CGRectMake(16, 226, cw, g_mfCardH - 240)];
     g_traceTV.editable = NO;
