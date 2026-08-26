@@ -103,6 +103,40 @@ static int seSmartQuery(void) {
     return status;
 }
 
+// v2.6.28: 充电链路关键键落盘——区分软件 inhibit vs 物理CV涓流
+static void seDumpBatteryKeys(NSString *tag) {
+    if (!seLoadIOKit() || !p_IORegistryEntryCreateCFProperties) return;
+    mach_port_t master = 0;
+    p_IOMasterPort(0, &master);
+    se_io_t svc = p_IOServiceGetMatchingService(master, p_IOServiceMatching("AppleSmartBattery"));
+    if (!svc) svc = p_IOServiceGetMatchingService(master, p_IOServiceMatching("IOPMPowerSource"));
+    if (!svc) { seFileLog([@"[dump/" stringByAppendingString:tag ?: @"?"]); seFileLog(@"[dump] battery service not found"); return; }
+    CFMutableDictionaryRef props = NULL;
+    if (p_IORegistryEntryCreateCFProperties(svc, &props, kCFAllocatorDefault, 0) == 0 && props) {
+        NSDictionary *d = (__bridge_transfer NSDictionary *)props;
+        NSArray *keys = @[@"ExternalConnected", @"IsCharging", @"ExternalChargeCapable",
+            @"PredictiveChargingInhibit", @"AtCritical", @"FullyCharged",
+            @"CurrentCapacity", @"AppleRawCurrentCapacity", @"MaxCapacity",
+            @"InstantAmperage", @"Amperage", @"Voltage", @"AdapterDetails"];
+        seFileLog([NSString stringWithFormat:@"[dump/%@] ----", tag ?: @"?"]);
+        for (NSString *k in keys) {
+            id v = d[k];
+            if (v) seFileLog([NSString stringWithFormat:@"[dump] %@ = %@", k, v]);
+        }
+        // 全键名扫描: 抓 AdaptiveCharging/ChargingLimit 类隐藏键(只打名字)
+        NSMutableArray *suspects = [NSMutableArray array];
+        for (NSString *k in d) {
+            if ([k localizedCaseInsensitiveContainsString:@"daptive"] ||
+                [k localizedCaseInsensitiveContainsString:@"imit"] ||
+                [k localizedCaseInsensitiveContainsString:@"nhibit"] ||
+                [k localizedCaseInsensitiveContainsString:@"nflow"])
+                [suspects addObject:k];
+        }
+        if (suspects.count) seFileLog([NSString stringWithFormat:@"[dump] suspect keys: %@", suspects]);
+    }
+    p_IOObjectRelease(svc);
+}
+
 static void seSetSmartCharge(BOOL on) {
     id client = seSmartClient();
     if (!client) {
@@ -192,6 +226,8 @@ static void seApplyCharge(void) {
         if (lvl <= 0 || lvl > 100) return;
         // v2.6.27: IOKit 直读充电态(ExternalConnected),不信 UIDevice.batteryState
         BOOL charging = seReadCharging();
+        static BOOL seDumpedOnce = NO;
+        if (!seDumpedOnce) { seDumpedOnce = YES; seDumpBatteryKeys(@"boot"); }
         // v2.6.27: 常驻确保系统优化充电关闭(对标 ChargeLimiter 每轮 isSmartChargeEnable 检查)
         //   只在状态为 enable/fullcharge 时才调 disable,避免重复调用副作用
         static int seSmartLast = -9;
@@ -218,8 +254,13 @@ static void seApplyCharge(void) {
             seLastLoggedCmd = cmd;
         }
         if (cmd >= 0 && cmd != seLastCmd) {
+            seDumpBatteryKeys(cmd == 0 ? @"stop" : @"resume"); // 下发命令前的 registry 快照
             seSetCharging(cmd == 1);
             seLastCmd = cmd;
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC),
+                           dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+                seDumpBatteryKeys(cmd == 0 ? @"after-stop" : @"after-resume"); // 命令生效后复查
+            });
         }
     }
 }
