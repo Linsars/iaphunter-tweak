@@ -10,6 +10,9 @@
 #import <objc/message.h>
 #import <dlfcn.h>
 #import <mach/mach.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <unistd.h>
 
 #define SE_PREFS @"/var/jb/var/mobile/Library/Preferences/com.linsars.minisfix.plist"
 
