@@ -10,6 +10,8 @@
 static NSString *MF_OBJC_HOOK_PATH = @"/var/jb/Library/MinisFix/objchooks.plist";
 static NSString *g_objcPrefill = nil;
 static void mfObjCHookLoad(void);  // 前向声明
+// v2.6.44: 全程诊断日志(NSLog 双写进 hostlog 管道)
+#define OH_LOG(fmt, ...) NSLog(@"[ObCHook] " fmt, ##__VA_ARGS__)
 // v2.6.41: 实现 mfTraceSetPrefill(MFPanel.h 声明 + MFClassDump.m 调用, 之前漏实现 = undefined symbol)
 void mfTraceSetPrefill(NSString *cls) {
     g_objcPrefill = cls ? [cls copy] : nil;
@@ -62,25 +64,27 @@ static IMP mfWrapRet(char ret, int nargs, IMP orig, int mode, id val) {
 void mfObjCHookApply(void) {
     if (!g_objcHooks) mfObjCHookLoad();
     if (!g_hookRestore) g_hookRestore = [NSMutableArray new];
+    OH_LOG(@"apply: %lu rules, restore=%@", (unsigned long)g_objcHooks.count, g_hookOn ? @"exists" : @"fresh");
     for (NSDictionary *rule in g_objcHooks) {
         if (![rule[@"enabled"] boolValue]) continue;
         Class cls = NSClassFromString(rule[@"class"]);
-        if (!cls) continue;
+        if (!cls) { OH_LOG(@"skip: class %@ not found", rule[@"class"]); continue; }
         SEL sel = NSSelectorFromString(rule[@"selector"]);
         Method m = class_getInstanceMethod(cls, sel);
-        if (!m) continue;
+        if (!m) { OH_LOG(@"skip: selector %@ not found on %@", rule[@"selector"], rule[@"class"]); continue; }
         const char *enc = method_getTypeEncoding(m);
         char ret; int args = mfSafeArgs(enc, &ret);
-        if (args < 0) continue;
+        if (args < 0) { OH_LOG(@"skip: unsafe signature %@#%@", rule[@"class"], rule[@"selector"]); continue; }
         IMP orig = method_getImplementation(m);
         IMP wrap = mfWrapRet(ret, args, orig, [rule[@"mode"] intValue], rule[@"value"]);
-        if (!wrap) continue;
+        if (!wrap) { OH_LOG(@"skip: wrap fail %@#%@", rule[@"class"], rule[@"selector"]); continue; }
         if (class_getMethodImplementation(cls, sel) != orig) {
             class_addMethod(cls, sel, wrap, enc);
         } else {
             method_setImplementation(m, wrap);
         }
         [g_hookRestore addObject:@{@"cls": cls, @"sel": NSStringFromSelector(sel), @"imp": [NSValue valueWithPointer:orig], @"enc": [NSString stringWithUTF8String:enc]}];
+        OH_LOG(@"hook OK: %@#%@ mode=%d", rule[@"class"], rule[@"selector"], [rule[@"mode"] intValue]);
     }
     g_hookOn = YES;
     mfToast(@"🔧 ObjC 规则已应用");
@@ -113,6 +117,7 @@ void mfObjCHookSave(void) {
 #pragma mark - UI
 void mfShowObjCHookPage(void) {
     if (!g_objcHooks) mfObjCHookLoad();
+    OH_LOG(@"page open: rules=%lu prefill=%@", (unsigned long)g_objcHooks.count, g_objcPrefill);
     UIView *page = mfMakePage(@"🔧 ObjC 规则", YES);
     UIScrollView *sv = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 48, g_mfCardW, g_mfCardH - 48)];
     [page addSubview:sv];
@@ -177,6 +182,7 @@ void mfObjCHookAddTapped(void) {
 }
 
 void mfObjCHookPersist(NSString *cls, NSString *sel, int mode, id val) {
+    OH_LOG(@"persist: cls=%@ sel=%@ mode=%d val=%@", cls, sel, mode, val);
     if (cls.length == 0 || sel.length == 0) { mfToast(@"类名和方法必填"); return; }
     [g_objcHooks addObject:@{@"class": cls, @"selector": sel, @"mode": @(mode), @"value": (val ?: @""), @"enabled": @YES}];
     mfObjCHookSave();
