@@ -148,6 +148,13 @@ void mfShowObjCHookPage(void) {
     sbBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
     [sbBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfObjCForceSandboxTapped") forControlEvents:UIControlEventTouchUpInside];
     [sv addSubview:sbBtn]; y += 44;
+    UIButton *probeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    probeBtn.frame = CGRectMake(16, y, cw-32, 36);
+    probeBtn.backgroundColor = [UIColor systemBrownColor]; probeBtn.layer.cornerRadius = 9;
+    probeBtn.tintColor = UIColor.whiteColor; [probeBtn setTitle:@"🧪 伪造交易实验" forState:UIControlStateNormal];
+    probeBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
+    [probeBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfObjCTxProbeTapped") forControlEvents:UIControlEventTouchUpInside];
+    [sv addSubview:probeBtn]; y += 44;
 
     // v2.6.47: 页面内表单(替代系统弹窗)——对齐面板原生交互
     g_clsF = [[UITextField alloc] initWithFrame:CGRectMake(16, y, (cw-40)/2, 34)];
@@ -224,6 +231,48 @@ void mfObjCForceSandboxTapped(void) {
         OH_LOG(@"forceSandbox selector missing");
         mfToast(@"SDK 不支持此接口");
     }
+}
+
+#pragma mark - 🧪 伪造交易实验(v2.6.52)
+// 目标: hook SKPaymentQueue#transactions 返回伪造已购数组(通用 SK1 解锁)
+// 本按钮: 运行时构造 SKPaymentTransaction 并读写验证——ivar 布局 dump 有, 壳层转发未证实
+#include <string.h>
+void mfObjCTxProbeTapped(void) {
+    // 1. 枚举 SKPaymentTransaction 类 ivar(转发路径真相)
+    Class TT = objc_getClass("SKPaymentTransaction");
+    unsigned int n = 0;
+    Ivar *ivs = class_copyIvarList(TT, &n);
+    OH_LOG(@"TX ivars: %u", n);
+    for (unsigned int i = 0; i < n; i++) {
+        OH_LOG(@"  ivar %s off=%ld", ivar_getName(ivs[i]), (long)ivar_getOffset(ivs[i]));
+    }
+    free(ivs);
+    // 2. 构造 internal + 直接写 scalar/对象 ivar
+    Class TI = objc_getClass("SKPaymentTransactionInternal");
+    if (!TI) { OH_LOG(@"Internal class missing"); return; }
+    id ti = [[TI alloc] init];
+    Ivar stI = class_getInstanceVariable(TI, "__transactionState");
+    if (stI) { long long st = 1; memcpy((char*)ti + ivar_getOffset(stI), &st, 8); }
+    Ivar payI = class_getInstanceVariable(TI, "__payment");
+    // 3. 构造 SKPayment(Internal) 填 productIdentifier
+    Class PI = objc_getClass("SKPaymentInternal");
+    id pi = PI ? [[PI alloc] init] : nil;
+    if (pi) {
+        Ivar pidI = class_getInstanceVariable(PI, "__productIdentifier");
+        if (pidI) object_setIvar(pi, pidI, @"com.sugarmo.ScrollClip.pro");
+    }
+    if (payI && pi) object_setIvar(ti, payI, pi);
+    // 4. 包壳: SKPaymentTransaction alloc/init 后塞 internal
+    id tx = [[TT alloc] init];
+    // 先看 TT 有没有 _internal 这号 ivar(刚才枚举结果会告诉我们)
+    Ivar intI = class_getInstanceVariable(TT, "_internal");
+    if (intI) object_setIvar(tx, intI, ti);
+    Ivar intI2 = class_getInstanceVariable(TT, "__internal");
+    if (intI2) object_setIvar(tx, intI2, ti);
+    // 5. 读写验证
+    long long st2 = ((long long(*)(id,SEL))objc_msgSend)(tx, NSSelectorFromString(@"transactionState"));
+    id pid2 = ((id(*)(id,SEL))objc_msgSend)(tx, NSSelectorFromString(@"productIdentifier"));
+    OH_LOG(@"probe: state=%lld pid=%@", st2, pid2);
 }
 
 #pragma mark - 编辑
