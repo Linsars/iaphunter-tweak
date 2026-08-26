@@ -83,7 +83,7 @@ int main(int argc, char **argv) {
         ssize_t n = read(cfd, hdr, 5);
         uint32_t krA = 0xE0000001u, krI = 0xE0000001u;
         if (n == 5 && memcmp(hdr, "MFWR", 4) == 0 && (hdr[4] == 0 || hdr[4] == 1)) {
-            BOOL on = hdr[4];
+            int on = (int)hdr[4];
             krA = (uint32_t)writeCharging("AppleSmartBattery", on);
             krI = (uint32_t)writeCharging("IOPMPowerSource", on);
             fprintf(stderr, "[minisfixd] write on=%d krASB=0x%x krIOPS=0x%x\n", on, krA, krI);
