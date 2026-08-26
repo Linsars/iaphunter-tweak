@@ -10,6 +10,10 @@
 static NSString *MF_OBJC_HOOK_PATH = @"/var/jb/Library/MinisFix/objchooks.plist";
 static NSString *g_objcPrefill = nil;
 static void mfObjCHookLoad(void);  // 前向声明
+// v2.6.41: 实现 mfTraceSetPrefill(MFPanel.h 声明 + MFClassDump.m 调用, 之前漏实现 = undefined symbol)
+void mfTraceSetPrefill(NSString *cls) {
+    g_objcPrefill = cls ? [cls copy] : nil;
+}
 static NSMutableArray *g_objcHooks = nil;      // 规则(dict)
 static NSMutableArray *g_hookRestore = nil;    // 已应用 {cls,sel,origIMP,enc}
 static BOOL g_hookOn = NO;
