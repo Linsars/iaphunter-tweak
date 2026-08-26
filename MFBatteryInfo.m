@@ -8,6 +8,10 @@
 #import <UIKit/UIKit.h>
 #import "MFPanel.h"
 #import <IOKit/IOMessage.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
 #include <dlfcn.h>
 
 // dlsym 零链接依赖 IOKit
@@ -33,26 +37,40 @@ static BOOL biLoadIOKit(void) {
     return bi_IOMasterPort != NULL;
 }
 
-// 经 SpringBoard(FolderX 注入)的 CFMessagePort 查询——app 沙盒读不了 registry 的正解
+// 经 SpringBoard(FolderX 注入)的 loopback TCP 查询——app 沙盒 mach-lookup deny
+// CFMessagePort 不可达, 127.0.0.1 TCP 不过那道门(ChargeLimiter 同款思路)
 static NSDictionary *biViaSpringBoard(void) {
-    CFMessagePortRef remote = CFMessagePortCreateRemote(kCFAllocatorDefault, CFSTR("minisfix.battery"));
-    if (!remote) {
-        NSLog(@"[MF-Bat] SB port not found (respring needed?)");
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return nil;
+    struct timeval tv = {2, 0}; // 收发超时 2s
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = htons(39081);
+    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+        close(fd);
+        NSLog(@"[MF-Bat] connect 127.0.0.1:39081 refused (SB not listening?)");
         return nil;
     }
-    CFDataRef reply = NULL;
-    SInt32 st = CFMessagePortSendRequest(remote, 0, NULL, 2.0, 2.0,
-        kCFRunLoopDefaultMode, &reply);
-    if (st != kCFMessagePortSuccess || !reply) {
-        NSLog(@"[MF-Bat] SB request failed st=%d len=%lu", st, reply ? (unsigned long)CFDataGetLength(reply) : 0);
-        if (reply) CFRelease(reply);
-        CFMessagePortInvalidate(remote); CFRelease(remote);
-        return nil;
+    if (write(fd, "MFBA", 4) != 4) { close(fd); return nil; }
+    uint32_t nlen = 0;
+    if (read(fd, &nlen, 4) != 4) { close(fd); return nil; }
+    uint32_t len = ntohl(nlen);
+    if (len == 0 || len > 1048576) { close(fd); return nil; }
+    NSMutableData *buf = [NSMutableData dataWithLength:len];
+    uint8_t *p = buf.mutableBytes;
+    ssize_t got = 0;
+    while (got < (ssize_t)len) {
+        ssize_t n = read(fd, p + got, len - got);
+        if (n <= 0) break;
+        got += n;
     }
-    NSData *d = (__bridge_transfer NSData *)reply;
-    NSDictionary *out = [NSPropertyListSerialization propertyListWithData:d options:0 format:NULL error:NULL];
-    NSLog(@"[MF-Bat] via SB ok: %lu keys, %lu bytes", (unsigned long)out.count, (unsigned long)d.length);
-    CFMessagePortInvalidate(remote); CFRelease(remote);
+    close(fd);
+    NSDictionary *out = [NSPropertyListSerialization propertyListWithData:buf options:0 format:NULL error:NULL];
+    NSLog(@"[MF-Bat] via TCP ok: %lu keys, %u bytes", (unsigned long)out.count, len);
     return out;
 }
 

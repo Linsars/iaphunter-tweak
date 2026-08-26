@@ -1,14 +1,17 @@
-// ====== MFBatteryServer.m — 电池数据服务端 (v2.6.23, 仅 SpringBoard) ======
-// 背景: 普通 app 沙盒 deny IOKit AppleSmartBattery 属性读取(iOS15+),
-//   ChargeLimiter 同样场景用 root daemon + 私有 entitlements 解决;
-//   我们的有权限进程 = SpringBoard(FolderX 注入), 用 CFMessagePort 提供查询。
-// 协议: port 名 "minisfix.battery", msgid=0, 无请求体, 回复 = plist 二进制全量属性。
-// 极轻: 一个 mach port 监听, 查询时才读 registry。
+// ====== MFBatteryServer.m — 电池数据服务端 (v2.6.26, 仅 SpringBoard) ======
+// 背景: 普通 app 沙盒双重限制——IOKit registry 裁剪 + mach-lookup deny(CFMessagePort 不可达)。
+//   ChargeLimiter 同场景用 root daemon + GCDWebServer(HTTP) 解决。
+//   本服务端对齐该架构: 127.0.0.1:39081 TCP, 协议 = 收"MFBA"魔数回 plist 二进制。
+//   loopback 仅本机可达; 电池数据非敏感。
 
 #import <Foundation/Foundation.h>
 #import <IOKit/IOMessage.h>
 #import <mach/mach.h>
 #include <dlfcn.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <unistd.h>
+#include <pthread.h>
 
 typedef mach_port_t bs_io_t;
 static mach_port_t (*bs_IOMasterPort)(mach_port_t, mach_port_t *);
@@ -48,17 +51,8 @@ static NSDictionary *bsReadBattery(void) {
     return [(__bridge NSDictionary *)props copy];
 }
 
-static CFDataRef bsCallback(CFMessagePortRef port, SInt32 msgid, CFDataRef data, void *info) {
-    @autoreleasepool {
-        NSDictionary *props = bsReadBattery();
-        NSData *out = [NSPropertyListSerialization dataWithPropertyList:(props ?: @{})
-                                                                format:NSPropertyListBinaryFormat_v1_0
-                                                               options:0 error:NULL];
-        return out ? CFDataCreate(NULL, out.bytes, out.length) : CFDataCreate(NULL, NULL, 0);
-    }
-}
+#define BS_PORT 39081
 
-// 与 MFSystemEnhance.seFileLog 同路径,server 状态落盘可见
 static void bsFileLog(NSString *line) {
     @try {
         NSString *path = @"/var/mobile/Documents/minisfix_sysenhance.log";
@@ -66,6 +60,49 @@ static void bsFileLog(NSString *line) {
         if (!fh) { [@"" writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil]; fh = [NSFileHandle fileHandleForWritingAtPath:path]; }
         if (fh) { [fh seekToEndOfFile]; [fh writeData:[[line stringByAppendingString:@"\n"] dataUsingEncoding:NSUTF8StringEncoding]]; [fh closeFile]; }
     } @catch (NSException *e) {}
+}
+
+static void *bsServerThread(void *arg) {
+    int lfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (lfd < 0) { bsFileLog(@"[battery] socket() failed"); return NULL; }
+    int yes = 1;
+    setsockopt(lfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = htons(BS_PORT);
+    if (bind(lfd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+        bsFileLog([NSString stringWithFormat:@"[battery] bind :%d FAILED errno=%d", BS_PORT, errno]);
+        close(lfd);
+        return NULL;
+    }
+    if (listen(lfd, 4) != 0) { bsFileLog(@"[battery] listen failed"); close(lfd); return NULL; }
+    bsFileLog([NSString stringWithFormat:@"[battery] listening ok 127.0.0.1:%d %@", BS_PORT, [NSDate date]]);
+    for (;;) {
+        int cfd = accept(lfd, NULL, NULL);
+        if (cfd < 0) continue;
+        // 魔数握手
+        char magic[4] = {0};
+        ssize_t n = read(cfd, magic, 4);
+        if (n == 4 && memcmp(magic, "MFBA", 4) == 0) {
+            @autoreleasepool {
+                NSDictionary *props = bsReadBattery();
+                NSData *out = [NSPropertyListSerialization dataWithPropertyList:(props ?: @{})
+                                                                        format:NSPropertyListBinaryFormat_v1_0
+                                                                       options:0 error:NULL];
+                uint32_t len = out ? (uint32_t)out.length : 0;
+                uint32_t nlen = htonl(len);
+                write(cfd, &nlen, 4);
+                if (out && len > 0 && len < 1048576) {
+                    write(cfd, out.bytes, len);
+                }
+            }
+        }
+        shutdown(cfd, SHUT_RDWR);
+        close(cfd);
+    }
+    return NULL;
 }
 
 __attribute__((constructor))
@@ -76,15 +113,12 @@ static void BatteryServerAutoStart(void) {
 
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        CFMessagePortRef local = CFMessagePortCreateLocal(
-            kCFAllocatorDefault, CFSTR("minisfix.battery"), bsCallback, NULL, NULL);
-        if (!local) {
-            NSLog(@"[SysEnhance] battery server create failed");
-            bsFileLog([NSString stringWithFormat:@"[battery] server create FAILED %@", [NSDate date]]);
-            return;
+        pthread_t th;
+        if (pthread_create(&th, NULL, bsServerThread, NULL) == 0) {
+            pthread_detach(th);
+            NSLog(@"[SysEnhance] battery server thread started (127.0.0.1:%d)", BS_PORT);
+        } else {
+            bsFileLog(@"[battery] pthread_create failed");
         }
-        CFMessagePortSetDispatchQueue(local, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0));
-        NSLog(@"[SysEnhance] battery server listening (minisfix.battery)");
-        bsFileLog([NSString stringWithFormat:@"[battery] listening ok %@", [NSDate date]]);
     });
 }
