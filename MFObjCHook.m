@@ -23,6 +23,7 @@ static NSMutableArray *g_hookRestore = nil;    // 已应用 {cls,sel,origIMP,enc
 static BOOL g_hookOn = NO;
 static UITextField *g_clsF = nil, *g_selF = nil, *g_valF = nil;   // v2.6.47 表单字段
 static UISegmentedControl *g_modeSeg = nil;
+static BOOL g_applySilent = NO;   // v2.6.57 ctor 静默标志
 
 #pragma mark - 安全签名解析(NSMethodSignature)
 // 只接受 ret=@/v + 参数全 @(≤4)。返回对象/void 方法可接管, 其余跳过。
@@ -81,7 +82,6 @@ void mfObjCHookApplySilent(void) {
 }
 
 // v2.6.57: 全还原→再应用(幂等, restore 表不被污染) + hooked 计数 + silent(ctor 静默)
-static BOOL g_applySilent = NO;
 void mfObjCHookApply(void) {
     if (!g_objcHooks) mfObjCHookLoad();
     if (!g_hookRestore) g_hookRestore = [NSMutableArray new];
