@@ -42,6 +42,18 @@ jobs:
           if [ -n "$HDR" ]; then sudo cp "$HDR" "$THEOS/include/"; fi
           ls -la "$THEOS/lib/libdobby.a" && echo "=== Dobby installed OK ==="
 
+      - name: Build minisfixd daemon (privileged charge writer)
+        run: |
+          mkdir -p layout-rootless/usr/bin
+          xcrun -sdk iphoneos clang -arch arm64 -arch arm64e \
+            -isysroot "$THEOS/sdks/iPhoneOS14.5.sdk" \
+            -miphoneos-version-min=14.5 \
+            -framework CoreFoundation -O2 -Wall \
+            -o layout-rootless/usr/bin/minisfixd minisfixd.c
+          ldid -Sminisfixd.entitlements layout-rootless/usr/bin/minisfixd
+          ls -la layout-rootless/usr/bin/
+          echo "=== minisfixd built and entitled ==="
+
       - name: Build package
         run: make package
 
