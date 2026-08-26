@@ -45,16 +45,16 @@ include $(THEOS_MAKE_PATH)/aggregate.mk
 # IOKit power source 直写需要 powersource-write entitlement,
 # 注入 dylib 给不了宿主进程 → 独立 daemon 持证上岗(对标 ChargeLimiter)
 # ============================================================
-MINISFIXD_BIN = layout-rootless/usr/bin/minisfixd
+MINISFIXD_ENT = $(shell command -v ldid || echo $(THEOS)/bin/ldid)
 
-before-package::
-	@mkdir -p layout-rootless/usr/bin
+# internal-after-stage: 写进 theos staging 目录才会进 deb(before-package 时序不对)
+internal-after-stage::
+	@mkdir -p $(THEOS_STAGING)/usr/bin
 	$(CC) -arch arm64 -arch arm64e -isysroot $(SYSROOT) -miphoneos-version-min=14.5 \
 		-framework CoreFoundation -O2 -Wall \
-		-o $(MINISFIXD_BIN) minisfixd.c
-	LDID_BIN="$$(command -v ldid || echo $(THEOS)/bin/ldid)"; \
-	$$LDID_BIN -Sminisfixd.entitlements $(MINISFIXD_BIN)
-	@echo "[minisfixd] built and entitled: $(MINISFIXD_BIN)"
+		-o $(THEOS_STAGING)/usr/bin/minisfixd minisfixd.c
+	$(MINISFIXD_ENT) -Sminisfixd.entitlements $(THEOS_STAGING)/usr/bin/minisfixd
+	@echo "[minisfixd] built and entitled in staging"
 
 
 # ============================================================
