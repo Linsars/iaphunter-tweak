@@ -33,20 +33,37 @@ static BOOL biLoadIOKit(void) {
     return bi_IOMasterPort != NULL;
 }
 
+// 经 SpringBoard(FolderX 注入)的 CFMessagePort 查询——app 沙盒读不了 registry 的正解
+static NSDictionary *biViaSpringBoard(void) {
+    CFMessagePortRef remote = CFMessagePortCreateRemote(kCFAllocatorDefault, CFSTR("minisfix.battery"));
+    if (!remote) return nil;
+    CFDataRef reply = NULL;
+    SInt32 st = CFMessagePortSendRequest(remote, 0, NULL, 2.0, 2.0,
+        kCFRunLoopDefaultMode, &reply);
+    CFMessagePortInvalidate(remote); CFRelease(remote);
+    if (st != kCFMessagePortSuccess || !reply) return nil;
+    NSData *d = (__bridge_transfer NSData *)reply;
+    return [NSPropertyListSerialization propertyListWithData:d options:0 format:NULL error:NULL];
+}
+
 NSDictionary *mfBatteryRead(void) {
-    if (!biLoadIOKit()) return nil;
+    if (!biLoadIOKit()) return biViaSpringBoard();
     mach_port_t master = 0;
     bi_IOMasterPort(0, &master);
     bi_io_t svc = bi_IOServiceGetMatchingService(master, bi_IOServiceMatching("AppleSmartBattery"));
     if (!svc) svc = bi_IOServiceGetMatchingService(master, bi_IOServiceMatching("IOPMPowerSource"));
-    if (!svc) return nil;
-    CFMutableDictionaryRef props = NULL;
-    if (bi_IORegistryEntryCreateCFProperties(svc, &props, kCFAllocatorDefault, 0) != 0 || !props) {
+    if (svc) {
+        CFMutableDictionaryRef props = NULL;
+        kern_return_t kr = bi_IORegistryEntryCreateCFProperties(svc, &props, kCFAllocatorDefault, 0);
         bi_IOObjectRelease(svc);
-        return nil;
+        // v2.6.23: 沙盒 app 常见 kr=0 但属性被裁剪 → 也走 SB 中转
+        if (kr == 0 && props) {
+            NSDictionary *d = [(__bridge_transfer NSDictionary *)props copy];
+            if (d.count > 4) return d; // 少于5键视为沙盒裁剪
+        }
     }
-    bi_IOObjectRelease(svc);
-    return [(__bridge NSDictionary *)props copy];
+    // 本进程无权限 → 问 SpringBoard
+    return biViaSpringBoard();
 }
 
 #pragma mark - 固定字段清单(v2.6.21 用户指定 16 项)
