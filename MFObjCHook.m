@@ -112,9 +112,14 @@ void mfObjCHookStop(void) {
 void mfObjCHookLoad(void) {
     NSArray *a = [NSArray arrayWithContentsOfFile:MF_OBJC_HOOK_PATH];
     g_objcHooks = a ? [a mutableCopy] : [NSMutableArray new];
+    OH_LOG(@"load: %lu rules from %@", (unsigned long)g_objcHooks.count, MF_OBJC_HOOK_PATH);
 }
 void mfObjCHookSave(void) {
-    [g_objcHooks writeToFile:MF_OBJC_HOOK_PATH atomically:YES];
+    // v2.6.49: 先建目录——writeToFile 遇不存在目录静默失败(14:05 rules=0 实锤)
+    NSString *dir = [MF_OBJC_HOOK_PATH stringByDeletingLastPathComponent];
+    [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+    BOOL ok = [g_objcHooks writeToFile:MF_OBJC_HOOK_PATH atomically:YES];
+    OH_LOG(@"save: %lu rules -> %d", (unsigned long)g_objcHooks.count, ok);
 }
 
 #pragma mark - UI
