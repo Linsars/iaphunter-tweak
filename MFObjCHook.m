@@ -73,10 +73,29 @@ static IMP mfWrapRet(char ret, int nargs, IMP orig, int mode, id val) {
 }
 
 #pragma mark - 应用/还原
+// ctor 静默应用包装(不弹 toast)
+void mfObjCHookApplySilent(void) {
+    g_applySilent = YES;
+    mfObjCHookApply();
+    g_applySilent = NO;
+}
+
+// v2.6.57: 全还原→再应用(幂等, restore 表不被污染) + hooked 计数 + silent(ctor 静默)
+static BOOL g_applySilent = NO;
 void mfObjCHookApply(void) {
     if (!g_objcHooks) mfObjCHookLoad();
     if (!g_hookRestore) g_hookRestore = [NSMutableArray new];
-    OH_LOG(@"apply: %lu rules, restore=%@", (unsigned long)g_objcHooks.count, g_hookOn ? @"exists" : @"fresh");
+    // 先还原所有已应用的(取回真 orig)
+    for (NSDictionary *e in g_hookRestore) {
+        Class c = e[@"cls"]; SEL sel = NSSelectorFromString(e[@"sel"]);
+        IMP orig = (IMP)[e[@"imp"] pointerValue];
+        const char *enc = [e[@"enc"] UTF8String];
+        Method old = class_getInstanceMethod(c, sel);
+        if (old && method_getImplementation(old) != orig) class_replaceMethod(c, sel, orig, enc);
+    }
+    [g_hookRestore removeAllObjects];
+    // 再按规则应用
+    int hooked = 0;
     for (NSDictionary *rule in g_objcHooks) {
         if (![rule[@"enabled"] boolValue]) continue;
         Class cls = NSClassFromString(rule[@"class"]);
@@ -90,16 +109,15 @@ void mfObjCHookApply(void) {
         IMP orig = method_getImplementation(m);
         IMP wrap = mfWrapRet(ret, args, orig, [rule[@"mode"] intValue], rule[@"value"]);
         if (!wrap) { OH_LOG(@"skip: wrap fail %@#%@", rule[@"class"], rule[@"selector"]); continue; }
-        if (class_getMethodImplementation(cls, sel) != orig) {
-            class_addMethod(cls, sel, wrap, enc);
-        } else {
-            method_setImplementation(m, wrap);
-        }
+        if (class_getMethodImplementation(cls, sel) != orig) class_addMethod(cls, sel, wrap, enc);
+        else method_setImplementation(m, wrap);
         [g_hookRestore addObject:@{@"cls": cls, @"sel": NSStringFromSelector(sel), @"imp": [NSValue valueWithPointer:orig], @"enc": [NSString stringWithUTF8String:enc]}];
+        hooked++;
         OH_LOG(@"hook OK: %@#%@ mode=%d", rule[@"class"], rule[@"selector"], [rule[@"mode"] intValue]);
     }
-    g_hookOn = YES;
-    mfToast(@"🔧 ObjC 规则已应用");
+    g_hookOn = hooked > 0;
+    if (hooked > 0 && !g_applySilent) mfToast([NSString stringWithFormat:@"🔧 ObjC 规则已应用 (%d条)", hooked]);
+    else if (!g_applySilent && hooked == 0) OH_LOG(@"apply: no hook applied (silent)");
 }
 
 void mfObjCHookStop(void) {
@@ -147,28 +165,19 @@ void mfShowObjCHookPage(void) {
     hint.text = @"精确 hook 方法返回值(作用于当前 app)";
     hint.font = [UIFont systemFontOfSize:11]; hint.textColor = [UIColor tertiaryLabelColor];
     hint.numberOfLines = 0; [sv addSubview:hint]; y += 24;
-    // 🧪 强制 sandbox(官方私有 API)——优先试试,不行再回退 hook 路线
-    UIButton *sbBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    sbBtn.frame = CGRectMake(16, y, cw-32, 36);
-    sbBtn.backgroundColor = [UIColor systemOrangeColor]; sbBtn.layer.cornerRadius = 9;
-    sbBtn.tintColor = UIColor.whiteColor; [sbBtn setTitle:@"🧪 强制 sandbox(当前 App)" forState:UIControlStateNormal];
-    sbBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
-    [sbBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfObjCForceSandboxTapped") forControlEvents:UIControlEventTouchUpInside];
-    [sv addSubview:sbBtn]; y += 44;
-    UIButton *probeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    probeBtn.frame = CGRectMake(16, y, cw-32, 36);
-    probeBtn.backgroundColor = [UIColor systemBrownColor]; probeBtn.layer.cornerRadius = 9;
-    probeBtn.tintColor = UIColor.whiteColor; [probeBtn setTitle:@"🧪 伪造交易实验" forState:UIControlStateNormal];
-    probeBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
-    [probeBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfObjCTxProbeTapped") forControlEvents:UIControlEventTouchUpInside];
-    [sv addSubview:probeBtn]; y += 44;
-    UIButton *sk1Btn = [UIButton buttonWithType:UIButtonTypeSystem];
-    sk1Btn.frame = CGRectMake(16, y, cw-32, 36);
-    sk1Btn.backgroundColor = [UIColor systemTealColor]; sk1Btn.layer.cornerRadius = 9;
-    sk1Btn.tintColor = UIColor.whiteColor; [sk1Btn setTitle:@"⚡ SK1 通杀" forState:UIControlStateNormal];
-    sk1Btn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
-    [sk1Btn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfSK1Toggle") forControlEvents:UIControlEventTouchUpInside];
-    [sv addSubview:sk1Btn]; y += 44;
+    // v2.6.57: SK1 通杀 UISwitch(对齐实时捕获开关样式——持久化+冷启动自动恢复)
+    UIView *sk1Row = [[UIView alloc] initWithFrame:CGRectMake(12, y, cw-24, 40)];
+    sk1Row.backgroundColor = [UIColor secondarySystemBackgroundColor];
+    sk1Row.layer.cornerRadius = 10;
+    UILabel *sk1Lb = [[UILabel alloc] initWithFrame:CGRectMake(10, 10, cw-90, 20)];
+    sk1Lb.text = @"⚡ SK1 通杀(伪造已购交易, 通用)";
+    sk1Lb.font = [UIFont systemFontOfSize:13];
+    [sk1Row addSubview:sk1Lb];
+    UISwitch *sk1Sw = [[UISwitch alloc] initWithFrame:CGRectMake(cw-24-70, 4, 51, 31)];
+    sk1Sw.on = [[NSUserDefaults standardUserDefaults] boolForKey:@"mfSK1Enabled"];
+    [sk1Sw addTarget:g_mfCtrl action:NSSelectorFromString(@"mfSK1SwitchChanged:") forControlEvents:UIControlEventValueChanged];
+    [sk1Row addSubview:sk1Sw];
+    [sv addSubview:sk1Row]; y += 48;
 
     // v2.6.47: 页面内表单(替代系统弹窗)——对齐面板原生交互
     g_clsF = [[UITextField alloc] initWithFrame:CGRectMake(16, y, (cw-40)/2, 34)];
@@ -437,12 +446,11 @@ void mfSK1Disable(void) {
     OH_LOG(@"⚡ SK1 通杀 disabled");
 }
 // v2.6.56: 状态持久化 + 冷启动自动应用(与 ObjC 规则同机制)——重启不再丢失
-void mfSK1Toggle(void) {
-    if (g_sk1on) mfSK1Disable();
-    else mfSK1Enable();
-    [[NSUserDefaults standardUserDefaults] setBool:g_sk1on forKey:@"mfSK1Enabled"];
+void mfSK1SwitchChanged(UISwitch *sw) {
+    if (sw.on) { mfSK1Enable(); mfToast(@"⚡ SK1 通杀已开启"); }
+    else { mfSK1Disable(); mfToast(@"⏹️ SK1 通杀已关闭"); }
+    [[NSUserDefaults standardUserDefaults] setBool:sw.on forKey:@"mfSK1Enabled"];
     [[NSUserDefaults standardUserDefaults] synchronize];
-    mfToast(g_sk1on ? @"⚡ SK1 通杀已开启" : @"⏹️ SK1 通杀已关闭");
 }
 void mfSK1AutoStart(void) {
     if (![[NSUserDefaults standardUserDefaults] boolForKey:@"mfSK1Enabled"]) return;

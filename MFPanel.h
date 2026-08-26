@@ -159,11 +159,12 @@ void mfShowMethodTracePage(void);
 void mfTraceSetPrefill(NSString *cls);                         // 左滑头文件预填类名(保留别名)
 void mfShowObjCHookPage(void);                                 // 🔧 ObjC 规则(精确 hook, 取代方法监控)
 void mfObjCHookApply(void);
+void mfObjCHookApplySilent(void);   // ctor 静默应用
 void mfObjCHookStop(void);
 void mfObjCHookFormAddTapped(void);
 void mfObjCForceSandboxTapped(void);   // 🧪 强制 sandbox(私有 API)
 void mfObjCTxProbeTapped(void);   // 🧪 伪造交易实验
-void mfSK1Toggle(void);   // ⚡ SK1 通杀开关
+void mfSK1SwitchChanged(UISwitch *sw);   // ⚡ SK1 通杀开关
 void mfSK1AutoStart(void);   // 冷启动自动应用   // v2.6.47 页面内表单添加(替代弹窗)
 void mfObjCHookToggle(UISwitch *sw);
 void mfObjCHookDelTapped(UIButton *btn);

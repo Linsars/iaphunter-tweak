@@ -1368,7 +1368,7 @@ void mfShowProductPage(void) {
 - (void)mfObjCHookFormAddTapped { mfObjCHookFormAddTapped(); }
 - (void)mfObjCForceSandboxTapped { mfObjCForceSandboxTapped(); }
 - (void)mfObjCTxProbeTapped { mfObjCTxProbeTapped(); }
-- (void)mfSK1Toggle { mfSK1Toggle(); }
+- (void)mfSK1SwitchChanged:(UISwitch *)sw { mfSK1SwitchChanged(sw); }
 - (void)mfObjCHookToggle:(UISwitch *)sw { mfObjCHookToggle(sw); }
 - (void)mfObjCHookDelTapped:(UIButton *)b { mfObjCHookDelTapped(b); }
 - (void)mfNetRun:(UIButton *)btn {
@@ -2136,7 +2136,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define IAPTOOLS_VERSION @"2.6.56"
+#define IAPTOOLS_VERSION @"2.6.57"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
@@ -2192,7 +2192,7 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
         });
 
         // v2.6.48: ObjC 规则冷启动自动应用(每个注入的 app 进程生效——跨进程规则的根基)
-        mfObjCHookApply();
+        mfObjCHookApplySilent();
         // v2.6.56: SK1 通杀冷启动自动应用(持久化开关)
         mfSK1AutoStart();
 
