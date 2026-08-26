@@ -8,6 +8,8 @@
 #import <objc/runtime.h>
 
 static NSString *MF_OBJC_HOOK_PATH = @"/var/jb/Library/MinisFix/objchooks.plist";
+static NSString *g_objcPrefill = nil;
+static void mfObjCHookLoad(void);  // 前向声明
 static NSMutableArray *g_objcHooks = nil;      // 规则(dict)
 static NSMutableArray *g_hookRestore = nil;    // 已应用 {cls,sel,origIMP,enc}
 static BOOL g_hookOn = NO;
@@ -162,7 +164,7 @@ void mfObjCHookAddTapped(void) {
     }];
     UIAlertAction *cancel = [UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil];
     [ac addAction:nilA]; [ac addAction:strA]; [ac addAction:cancel];
-    [g_mfPanel.rootViewController presentViewController:ac animated:YES completion:nil];
+    [g_mfPanelRootVC presentViewController:ac animated:YES completion:nil];
 }
 
 void mfObjCHookPersist(NSString *cls, NSString *sel, int mode, id val) {
