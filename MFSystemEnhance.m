@@ -113,7 +113,8 @@ static void seDumpBatteryKeys(NSString *tag) {
     NSArray *keys = @[@"ExternalConnected", @"IsCharging", @"ExternalChargeCapable",
         @"PredictiveChargingInhibit", @"InflowOverride", @"AtCritical", @"FullyCharged",
         @"CurrentCapacity", @"AppleRawCurrentCapacity", @"MaxCapacity",
-        @"InstantAmperage", @"Amperage", @"Voltage", @"AdapterDetails"];
+        @"InstantAmperage", @"Amperage", @"Voltage", @"Temperature",
+        @"ThermalStatus", @"AdapterDetails"];
     for (int i = 0; i < 2; i++) {
         se_io_t svc = p_IOServiceGetMatchingService(master, p_IOServiceMatching(names[i]));
         if (!svc) continue;
@@ -219,6 +220,23 @@ static BOOL seReadCharging(void) {
     return (ext.boolValue || chg.boolValue);
 }
 
+// v2.6.30: 读 AppleSmartBattery 全属性(供断流探测)
+static NSDictionary *seReadBatteryDict(void) {
+    if (!seLoadIOKit() || !p_IORegistryEntryCreateCFProperties) return @{};
+    mach_port_t master = 0;
+    p_IOMasterPort(0, &master);
+    se_io_t svc = p_IOServiceGetMatchingService(master, p_IOServiceMatching("AppleSmartBattery"));
+    if (!svc) svc = p_IOServiceGetMatchingService(master, p_IOServiceMatching("IOPMPowerSource"));
+    if (!svc) return @{};
+    CFMutableDictionaryRef props = NULL;
+    if (p_IORegistryEntryCreateCFProperties(svc, &props, kCFAllocatorDefault, 0) != 0 || !props) {
+        p_IOObjectRelease(svc);
+        return @{};
+    }
+    p_IOObjectRelease(svc);
+    return [(__bridge_transfer NSDictionary *)props copy];
+}
+
 #pragma mark - 充电上限逻辑(5% 回差防抖)
 
 static int seLastCmd = -1; // -1 未定 / 0 已停 / 1 已恢复
@@ -244,7 +262,19 @@ static void seApplyCharge(void) {
         // v2.6.27: IOKit 直读充电态(ExternalConnected),不信 UIDevice.batteryState
         BOOL charging = seReadCharging();
         static BOOL seDumpedOnce = NO;
-        if (!seDumpedOnce) { seDumpedOnce = YES; seDumpBatteryKeys(@"boot"); }
+        if (!seDumpedOnce) {
+            seDumpedOnce = YES;
+            seDumpBatteryKeys(@"boot");
+            // v2.6.30 决定性实验: 插电但断流(非满电)→主动写恢复充电并回读,
+            //   验证 registry 直写在真机上是否有实权
+            NSDictionary *bd = seReadBatteryDict();
+            BOOL isChg = [bd[@"IsCharging"] boolValue];
+            BOOL full = [bd[@"FullyCharged"] boolValue];
+            if (charging && !isChg && !full) {
+                seFileLog(@"[probe] plugged but not charging -> writing resume probe");
+                seSetCharging(YES);
+            }
+        }
         // v2.6.27: 常驻确保系统优化充电关闭(对标 ChargeLimiter 每轮 isSmartChargeEnable 检查)
         //   只在状态为 enable/fullcharge 时才调 disable,避免重复调用副作用
         static int seSmartLast = -9;
