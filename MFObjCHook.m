@@ -356,6 +356,35 @@ void mfObjCHookDelTapped(UIButton *b) {
     mfShowObjCHookPage();
 }
 
+// v2.6.59: 主动推送——storekitd 无真实交易时 updatedTransactions: 不回调, 我们直接推
+static void mfSK1PushFakes(void) {
+    if (!g_sk1on) return;
+    NSArray *pids = [[NSUserDefaults standardUserDefaults] objectForKey:@"SavedIAPIDs"] ?: @[];
+    if (pids.count == 0) { OH_LOG(@"SK1 push: no pids"); return; }
+    NSMutableArray *fakes = [NSMutableArray array];
+    for (NSString *pid in pids) {
+        if (pid.length == 0 || pid.length > 200) continue;
+        id tx = mfSK1FakeTx(pid);
+        if (tx) [fakes addObject:tx];
+    }
+    if (fakes.count == 0) return;
+    id q = [objc_getClass("SKPaymentQueue") performSelector:NSSelectorFromString(@"defaultQueue")];
+    if (q) {
+        ((void(*)(id,SEL,id))objc_msgSend)(q, @selector(updatedTransactions:), fakes);
+        OH_LOG(@"SK1 push: %lu fake transactions to observers", (unsigned long)fakes.count);
+    }
+}
+
+// finishTransaction 吞 fake(防 fake 发给 storekitd 出问题)
+static void (*orig_sk1_finish)(id, SEL, id);
+static void hook_sk1_finish(id self, SEL _cmd, id tx) {
+    if (objc_getAssociatedObject(tx, "mfsk1_pay")) {
+        OH_LOG(@"SK1 finish fake ignored");
+        return;
+    }
+    if (orig_sk1_finish) orig_sk1_finish(self, _cmd, tx);
+}
+
 #pragma mark - ⚡ SK1 通杀(v2.6.55)
 // 通用: hook SKPaymentQueue#transactions + SK 交易 getter 读取层
 //   无真实交易时返回伪造数组(每个已验证 pid 一条 fakeTx) —— app 遍历判断解锁通杀
@@ -452,7 +481,11 @@ void mfSK1Enable(void) {
     mfSK1Swizzle(NSClassFromString(@"SKPaymentTransaction"), @selector(transactionDate), (IMP)hook_sk1_date, (void **)&orig_sk1_date);
     mfSK1Swizzle(NSClassFromString(@"SKPaymentTransaction"), @selector(transactionIdentifier), (IMP)hook_sk1_tid, (void **)&orig_sk1_tid);
     mfSK1Swizzle(NSClassFromString(@"SKPaymentQueue"), @selector(updatedTransactions:), (IMP)hook_sk1_updated, (void **)&orig_sk1_updated);
+    mfSK1Swizzle(NSClassFromString(@"SKPaymentQueue"), @selector(finishTransaction:), (IMP)hook_sk1_finish, (void **)&orig_sk1_finish);
     g_sk1on = YES;
+    // 主动推送(等 observer 注册完)
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC),
+                   dispatch_get_main_queue(), ^{ mfSK1PushFakes(); });
     OH_LOG(@"⚡ SK1 通杀 ENABLED");
 }
 void mfSK1Disable(void) {
@@ -465,6 +498,7 @@ void mfSK1Disable(void) {
     if (orig_sk1_date) { Method m = class_getInstanceMethod(t, @selector(transactionDate)); if (m) method_setImplementation(m, (IMP)orig_sk1_date); }
     if (orig_sk1_tid) { Method m = class_getInstanceMethod(t, @selector(transactionIdentifier)); if (m) method_setImplementation(m, (IMP)orig_sk1_tid); }
     if (orig_sk1_updated) { Method m = class_getInstanceMethod(q, @selector(updatedTransactions:)); if (m) method_setImplementation(m, (IMP)orig_sk1_updated); }
+    if (orig_sk1_finish) { Method m = class_getInstanceMethod(q, @selector(finishTransaction:)); if (m) method_setImplementation(m, (IMP)orig_sk1_finish); }
     g_sk1on = NO;
     OH_LOG(@"⚡ SK1 通杀 disabled");
 }
