@@ -1368,6 +1368,7 @@ void mfShowProductPage(void) {
 - (void)mfObjCHookFormAddTapped { mfObjCHookFormAddTapped(); }
 - (void)mfObjCForceSandboxTapped { mfObjCForceSandboxTapped(); }
 - (void)mfObjCTxProbeTapped { mfObjCTxProbeTapped(); }
+- (void)mfSK1Toggle { mfSK1Toggle(); }
 - (void)mfObjCHookToggle:(UISwitch *)sw { mfObjCHookToggle(sw); }
 - (void)mfObjCHookDelTapped:(UIButton *)b { mfObjCHookDelTapped(b); }
 - (void)mfNetRun:(UIButton *)btn {
@@ -2135,7 +2136,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define IAPTOOLS_VERSION @"2.6.54"
+#define IAPTOOLS_VERSION @"2.6.55"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {

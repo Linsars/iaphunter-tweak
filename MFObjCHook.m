@@ -32,7 +32,8 @@ static int mfSafeArgs(const char *t, char *retOut) {
         NSMethodSignature *sig = [NSMethodSignature signatureWithObjCTypes:t];
         if (!sig) return -1;
         char ret = [sig getArgumentTypeAtIndex:0][0];
-        if (ret != '@' && ret != 'v') return -1;
+        // v2.6.55: 支持 q(long long)/i(int)/c(BOOL) 返回——SK getter 多用
+        if (ret != '@' && ret != 'v' && ret != 'q' && ret != 'i' && ret != 'c') return -1;
         // v2.6.46: 无参方法 sig.numberOfArguments=2(self+_cmd), 2-3 下溢→全被拒
         NSUInteger n = sig.numberOfArguments > 2 ? sig.numberOfArguments - 3 : 0;
         if (n > 4) return -1;
@@ -61,6 +62,12 @@ static IMP mfWrapRet(char ret, int nargs, IMP orig, int mode, id val) {
         else if (nargs == 2) { blk = ^id(id s, SEL c, id a1, id a2){ if(rm==0)return ((id(*)(id,SEL,id,id))o)(s,c,a1,a2); if(rm==1)return nil; return rv; }; }
         else if (nargs == 3) { blk = ^id(id s, SEL c, id a1, id a2, id a3){ if(rm==0)return ((id(*)(id,SEL,id,id,id))o)(s,c,a1,a2,a3); if(rm==1)return nil; return rv; }; }
         else { blk = ^id(id s, SEL c, id a1, id a2, id a3, id a4){ if(rm==0)return ((id(*)(id,SEL,id,id,id,id))o)(s,c,a1,a2,a3,a4); if(rm==1)return nil; return rv; }; }
+    }
+    // v2.6.55: 数字返回(mode=3→1) — 只支持 nargs=0(transactionState 等)
+    if ((ret == 'q' || ret == 'i' || ret == 'c') && nargs == 0) {
+        if (ret == 'q') blk = ^long long(id s, SEL c){ return 1LL; };
+        else if (ret == 'i') blk = ^int(id s, SEL c){ return 1; };
+        else blk = ^BOOL(id s, SEL c){ return YES; };
     }
     return blk ? imp_implementationWithBlock(blk) : nil;
 }
@@ -155,6 +162,13 @@ void mfShowObjCHookPage(void) {
     probeBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
     [probeBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfObjCTxProbeTapped") forControlEvents:UIControlEventTouchUpInside];
     [sv addSubview:probeBtn]; y += 44;
+    UIButton *sk1Btn = [UIButton buttonWithType:UIButtonTypeSystem];
+    sk1Btn.frame = CGRectMake(16, y, cw-32, 36);
+    sk1Btn.backgroundColor = [UIColor systemTealColor]; sk1Btn.layer.cornerRadius = 9;
+    sk1Btn.tintColor = UIColor.whiteColor; [sk1Btn setTitle:@"⚡ SK1 通杀" forState:UIControlStateNormal];
+    sk1Btn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
+    [sk1Btn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfSK1Toggle") forControlEvents:UIControlEventTouchUpInside];
+    [sv addSubview:sk1Btn]; y += 44;
 
     // v2.6.47: 页面内表单(替代系统弹窗)——对齐面板原生交互
     g_clsF = [[UITextField alloc] initWithFrame:CGRectMake(16, y, (cw-40)/2, 34)];
@@ -331,4 +345,99 @@ void mfObjCHookDelTapped(UIButton *b) {
         [g_mfPages removeLastObject];
     }
     mfShowObjCHookPage();
+}
+
+#pragma mark - ⚡ SK1 通杀(v2.6.55)
+// 通用: hook SKPaymentQueue#transactions + SK 交易 getter 读取层
+//   无真实交易时返回伪造数组(每个已验证 pid 一条 fakeTx) —— app 遍历判断解锁通杀
+//   有真实交易时透传原值(不干扰正常购买流程)
+static BOOL g_sk1on = NO;
+
+static id mfSK1FakeTx(NSString *pid) {
+    id tx = class_createInstance(objc_getClass("SKPaymentTransaction"), 0);
+    id pay = class_createInstance(objc_getClass("SKPayment"), 0);
+    if (!tx) return nil;
+    if (pay) {
+        objc_setAssociatedObject(tx, "mfsk1_pay", pay, OBJC_ASSOCIATION_RETAIN);
+        objc_setAssociatedObject(pay, "mfsk1_pid", pid, OBJC_ASSOCIATION_RETAIN);
+    }
+    return tx;
+}
+
+static NSArray *(*orig_sk1_transactions)(id, SEL);
+static NSArray *hook_sk1_transactions(id self, SEL _cmd) {
+    NSArray *real = orig_sk1_transactions ? orig_sk1_transactions(self, _cmd) : nil;
+    if (!g_sk1on) return real;
+    if (real && real.count > 0) return real;   // 有真实交易 → 透传
+    NSArray *pids = [[NSUserDefaults standardUserDefaults] objectForKey:@"SavedIAPIDs"] ?: @[];
+    NSMutableArray *fakes = [NSMutableArray array];
+    for (NSString *pid in pids) {
+        if (pid.length == 0 || pid.length > 200) continue;
+        id tx = mfSK1FakeTx(pid);
+        if (tx) [fakes addObject:tx];
+    }
+    OH_LOG(@"SK1 transactions fake: %lu pids", (unsigned long)fakes.count);
+    return fakes;
+}
+static long long (*orig_sk1_state)(id, SEL);
+static long long hook_sk1_state(id self, SEL _cmd) { return 1; } // Purchased
+static id (*orig_sk1_payment)(id, SEL);
+static id hook_sk1_payment(id self, SEL _cmd) {
+    id pay = objc_getAssociatedObject(self, "mfsk1_pay");
+    if (pay) return pay;
+    return orig_sk1_payment ? orig_sk1_payment(self, _cmd) : nil;
+}
+static id (*orig_sk1_pid)(id, SEL);
+static id hook_sk1_pid(id self, SEL _cmd) {
+    NSString *pid = objc_getAssociatedObject(self, "mfsk1_pid");
+    if (pid) return pid;
+    return orig_sk1_pid ? orig_sk1_pid(self, _cmd) : nil;
+}
+static id (*orig_sk1_date)(id, SEL);
+static id hook_sk1_date(id self, SEL _cmd) { return [NSDate date]; }
+static NSString *(*orig_sk1_tid)(id, SEL);
+static NSString *hook_sk1_tid(id self, SEL _cmd) {
+    NSString *pid = objc_getAssociatedObject(self, "mfsk1_pay");
+    if (pid) {
+        id pay = pid;
+        NSString *pidS = objc_getAssociatedObject(pay, "mfsk1_pid");
+        if (pidS) return [NSString stringWithFormat:@"mfsk1.fake.%@", pidS];
+    }
+    return orig_sk1_tid ? orig_sk1_tid(self, _cmd) : nil;
+}
+
+static void mfSK1Swizzle(Class cls, SEL sel, IMP hook, void **origPtr) {
+    Method m = class_getInstanceMethod(cls, sel);
+    if (!m) { OH_LOG(@"SK1 swizzle skip: %@#%@", NSStringFromClass(cls), NSStringFromSelector(sel)); return; }
+    *origPtr = (void *)method_getImplementation(m);
+    method_setImplementation(m, hook);
+}
+
+void mfSK1Enable(void) {
+    if (g_sk1on) return;
+    mfSK1Swizzle(NSClassFromString(@"SKPaymentQueue"), @selector(transactions), (IMP)hook_sk1_transactions, (void **)&orig_sk1_transactions);
+    mfSK1Swizzle(NSClassFromString(@"SKPaymentTransaction"), @selector(transactionState), (IMP)hook_sk1_state, (void **)&orig_sk1_state);
+    mfSK1Swizzle(NSClassFromString(@"SKPaymentTransaction"), @selector(payment), (IMP)hook_sk1_payment, (void **)&orig_sk1_payment);
+    mfSK1Swizzle(NSClassFromString(@"SKPayment"), @selector(productIdentifier), (IMP)hook_sk1_pid, (void **)&orig_sk1_pid);
+    mfSK1Swizzle(NSClassFromString(@"SKPaymentTransaction"), @selector(transactionDate), (IMP)hook_sk1_date, (void **)&orig_sk1_date);
+    mfSK1Swizzle(NSClassFromString(@"SKPaymentTransaction"), @selector(transactionIdentifier), (IMP)hook_sk1_tid, (void **)&orig_sk1_tid);
+    g_sk1on = YES;
+    OH_LOG(@"⚡ SK1 通杀 ENABLED");
+}
+void mfSK1Disable(void) {
+    if (!g_sk1on) return;
+    Class q = NSClassFromString(@"SKPaymentQueue"), t = NSClassFromString(@"SKPaymentTransaction"), p = NSClassFromString(@"SKPayment");
+    if (orig_sk1_transactions) { Method m = class_getInstanceMethod(q, @selector(transactions)); if (m) method_setImplementation(m, (IMP)orig_sk1_transactions); }
+    if (orig_sk1_state) { Method m = class_getInstanceMethod(t, @selector(transactionState)); if (m) method_setImplementation(m, (IMP)orig_sk1_state); }
+    if (orig_sk1_payment) { Method m = class_getInstanceMethod(t, @selector(payment)); if (m) method_setImplementation(m, (IMP)orig_sk1_payment); }
+    if (orig_sk1_pid) { Method m = class_getInstanceMethod(p, @selector(productIdentifier)); if (m) method_setImplementation(m, (IMP)orig_sk1_pid); }
+    if (orig_sk1_date) { Method m = class_getInstanceMethod(t, @selector(transactionDate)); if (m) method_setImplementation(m, (IMP)orig_sk1_date); }
+    if (orig_sk1_tid) { Method m = class_getInstanceMethod(t, @selector(transactionIdentifier)); if (m) method_setImplementation(m, (IMP)orig_sk1_tid); }
+    g_sk1on = NO;
+    OH_LOG(@"⚡ SK1 通杀 disabled");
+}
+void mfSK1Toggle(void) {
+    if (g_sk1on) mfSK1Disable();
+    else mfSK1Enable();
+    mfToast(g_sk1on ? @"⚡ SK1 通杀已开启(重启 App 生效更稳)" : @"⏹️ SK1 通杀已关闭");
 }
