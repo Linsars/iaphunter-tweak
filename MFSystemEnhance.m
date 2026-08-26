@@ -104,37 +104,39 @@ static int seSmartQuery(void) {
 }
 
 // v2.6.28: 充电链路关键键落盘——区分软件 inhibit vs 物理CV涓流
+// v2.6.29: 两个 service 各读一份,验证直写到底在哪个 service 生效
 static void seDumpBatteryKeys(NSString *tag) {
     if (!seLoadIOKit() || !p_IORegistryEntryCreateCFProperties) return;
     mach_port_t master = 0;
     p_IOMasterPort(0, &master);
-    se_io_t svc = p_IOServiceGetMatchingService(master, p_IOServiceMatching("AppleSmartBattery"));
-    if (!svc) svc = p_IOServiceGetMatchingService(master, p_IOServiceMatching("IOPMPowerSource"));
-    if (!svc) { seFileLog([@"[dump/" stringByAppendingString:tag ?: @"?"]); seFileLog(@"[dump] battery service not found"); return; }
-    CFMutableDictionaryRef props = NULL;
-    if (p_IORegistryEntryCreateCFProperties(svc, &props, kCFAllocatorDefault, 0) == 0 && props) {
-        NSDictionary *d = (__bridge_transfer NSDictionary *)props;
-        NSArray *keys = @[@"ExternalConnected", @"IsCharging", @"ExternalChargeCapable",
-            @"PredictiveChargingInhibit", @"AtCritical", @"FullyCharged",
-            @"CurrentCapacity", @"AppleRawCurrentCapacity", @"MaxCapacity",
-            @"InstantAmperage", @"Amperage", @"Voltage", @"AdapterDetails"];
-        seFileLog([NSString stringWithFormat:@"[dump/%@] ----", tag ?: @"?"]);
-        for (NSString *k in keys) {
-            id v = d[k];
-            if (v) seFileLog([NSString stringWithFormat:@"[dump] %@ = %@", k, v]);
+    const char *names[] = {"AppleSmartBattery", "IOPMPowerSource"};
+    NSArray *keys = @[@"ExternalConnected", @"IsCharging", @"ExternalChargeCapable",
+        @"PredictiveChargingInhibit", @"InflowOverride", @"AtCritical", @"FullyCharged",
+        @"CurrentCapacity", @"AppleRawCurrentCapacity", @"MaxCapacity",
+        @"InstantAmperage", @"Amperage", @"Voltage", @"AdapterDetails"];
+    for (int i = 0; i < 2; i++) {
+        se_io_t svc = p_IOServiceGetMatchingService(master, p_IOServiceMatching(names[i]));
+        if (!svc) continue;
+        CFMutableDictionaryRef props = NULL;
+        if (p_IORegistryEntryCreateCFProperties(svc, &props, kCFAllocatorDefault, 0) == 0 && props) {
+            NSDictionary *d = (__bridge_transfer NSDictionary *)props;
+            seFileLog([NSString stringWithFormat:@"[dump/%@][%s] ----", tag ?: @"?", names[i]]);
+            for (NSString *k in keys) {
+                id v = d[k];
+                if (v) seFileLog([NSString stringWithFormat:@"[dump] %@ = %@", k, v]);
+            }
+            NSMutableArray *suspects = [NSMutableArray array];
+            for (NSString *k in d) {
+                if ([k localizedCaseInsensitiveContainsString:@"daptive"] ||
+                    [k localizedCaseInsensitiveContainsString:@"imit"] ||
+                    [k localizedCaseInsensitiveContainsString:@"nhibit"] ||
+                    [k localizedCaseInsensitiveContainsString:@"nflow"])
+                    [suspects addObject:k];
+            }
+            if (suspects.count) seFileLog([NSString stringWithFormat:@"[dump] suspect keys: %@", suspects]);
         }
-        // 全键名扫描: 抓 AdaptiveCharging/ChargingLimit 类隐藏键(只打名字)
-        NSMutableArray *suspects = [NSMutableArray array];
-        for (NSString *k in d) {
-            if ([k localizedCaseInsensitiveContainsString:@"daptive"] ||
-                [k localizedCaseInsensitiveContainsString:@"imit"] ||
-                [k localizedCaseInsensitiveContainsString:@"nhibit"] ||
-                [k localizedCaseInsensitiveContainsString:@"nflow"])
-                [suspects addObject:k];
-        }
-        if (suspects.count) seFileLog([NSString stringWithFormat:@"[dump] suspect keys: %@", suspects]);
+        p_IOObjectRelease(svc);
     }
-    p_IOObjectRelease(svc);
 }
 
 static void seSetSmartCharge(BOOL on) {
@@ -163,22 +165,37 @@ static void seSetCharging(BOOL on) {
     if (!seLoadIOKit()) return;
     mach_port_t master = 0;
     p_IOMasterPort(0, &master);
-    // iPhone 8+ 优先 AppleSmartBattery,IOPMPowerSource 兜底(对标 ChargeLimiter getIOPMPSServ)
-    se_io_t svc = p_IOServiceGetMatchingService(master, p_IOServiceMatching("AppleSmartBattery"));
-    if (!svc) svc = p_IOServiceGetMatchingService(master, p_IOServiceMatching("IOPMPowerSource"));
-    if (!svc) { NSLog(@"[SysEnhance] battery service not found"); return; }
-    CFMutableDictionaryRef props = CFDictionaryCreateMutable(kCFAllocatorDefault, 3,
-        &kCFCopyStringDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-    // iOS>=13: IsCharging 钉死 YES, PredictiveChargingInhibit 为总开关
-    CFDictionarySetValue(props, CFSTR("IsCharging"), kCFBooleanTrue);
-    CFDictionarySetValue(props, CFSTR("PredictiveChargingInhibit"),
-                         on ? kCFBooleanFalse : kCFBooleanTrue);
-    CFDictionarySetValue(props, CFSTR("ExternalConnected"),
-                         on ? kCFBooleanTrue : kCFBooleanFalse);
-    kern_return_t kr = p_IORegistryEntrySetCFProperties(svc, props);
+    // v2.6.29: 双 service 都写——ChargeLimiter 默认用 IOPMPowerSource,
+    //   AppleSmartBattery 要手动 opt-in(实测本机 AppleSmartBattery 疑似只读)
+    CFDictionaryRef props = nil;
+    {
+        CFMutableDictionaryRef d = CFDictionaryCreateMutable(kCFAllocatorDefault, 3,
+            &kCFCopyStringDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+        // iOS>=13: IsCharging 钉死 YES, PredictiveChargingInhibit 为总开关
+        CFDictionarySetValue(d, CFSTR("IsCharging"), kCFBooleanTrue);
+        CFDictionarySetValue(d, CFSTR("PredictiveChargingInhibit"),
+                             on ? kCFBooleanFalse : kCFBooleanTrue);
+        CFDictionarySetValue(d, CFSTR("ExternalConnected"),
+                             on ? kCFBooleanTrue : kCFBooleanFalse);
+        props = d;
+    }
+    const char *names[] = {"AppleSmartBattery", "IOPMPowerSource"};
+    for (int i = 0; i < 2; i++) {
+        se_io_t svc = p_IOServiceGetMatchingService(master, p_IOServiceMatching(names[i]));
+        if (!svc) { NSLog(@"[SysEnhance] %s not found", names[i]); continue; }
+        kern_return_t kr = p_IORegistryEntrySetCFProperties(svc, props);
+        p_IOObjectRelease(svc);
+        NSString *msg = [NSString stringWithFormat:@"[set] write %s on=%d kr=%d",
+            names[i], on ? 1 : 0, kr];
+        NSLog(@"[SysEnhance] %@", msg);
+        if (kr != 0) seFileLog(msg);   // 失败必落盘; 成功由回读验证
+    }
     CFRelease(props);
-    p_IOObjectRelease(svc);
-    NSLog(@"[SysEnhance] setCharging(%d) kr=%d", on ? 1 : 0, kr);
+    // 写后 3s 回读验证——直写是否真生效,数据说话
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC),
+                   dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        seDumpBatteryKeys(on ? @"verify-resume" : @"verify-stop");
+    });
 }
 
 // v2.6.27: 充电态 IOKit 直读——UIDevice.batteryState 在 SB 里不可靠
@@ -255,12 +272,8 @@ static void seApplyCharge(void) {
         }
         if (cmd >= 0 && cmd != seLastCmd) {
             seDumpBatteryKeys(cmd == 0 ? @"stop" : @"resume"); // 下发命令前的 registry 快照
-            seSetCharging(cmd == 1);
+            seSetCharging(cmd == 1); // 内部含 3s 后回读验证(verify-*)
             seLastCmd = cmd;
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC),
-                           dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-                seDumpBatteryKeys(cmd == 0 ? @"after-stop" : @"after-resume"); // 命令生效后复查
-            });
         }
     }
 }
