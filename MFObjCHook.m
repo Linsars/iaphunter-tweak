@@ -29,8 +29,9 @@ static int mfSafeArgs(const char *t, char *retOut) {
         if (!sig) return -1;
         char ret = [sig getArgumentTypeAtIndex:0][0];
         if (ret != '@' && ret != 'v') return -1;
-        NSUInteger n = sig.numberOfArguments - 3;
-        if (n < 0 || n > 4) return -1;
+        // v2.6.46: 无参方法 sig.numberOfArguments=2(self+_cmd), 2-3 下溢→全被拒
+        NSUInteger n = sig.numberOfArguments > 2 ? sig.numberOfArguments - 3 : 0;
+        if (n > 4) return -1;
         for (NSUInteger i = 3; i < sig.numberOfArguments; i++) {
             const char *ty = [sig getArgumentTypeAtIndex:i];
             if (ty[0] != '@') return -1;
