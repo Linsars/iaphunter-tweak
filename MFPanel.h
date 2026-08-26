@@ -161,6 +161,8 @@ BOOL mfTraceStart(NSString *className, NSString **errOut);
 void mfTraceStop(void);
 NSArray *mfTraceLines(void);
 BOOL mfTraceRunning(void);
+BOOL mfTraceStartPreset(NSString **errOut);                    // 🧪 SK 收银台侦察包
+void mfTraceTogglePresetTapped(void);
 
 // ====== 网络分析（MFNetAnalyzer.m） ======
 void mfShowNetAnalyzerPage(void);           // 网络功能统一入口（含捕获开关）

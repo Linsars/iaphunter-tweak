@@ -116,8 +116,58 @@ static int mfSafeArgs(const char *t, char *retOut) {
 
 #pragma mark - 启停
 
+// v2.6.36: selector 白名单制——NSBundle 等基础设施类全量包装 = 崩溃(Picsew 实测)
+//   只 hook 明确列出的 selector; sels=nil 保持旧的全量模式(仅限小型业务类)
+static BOOL mfTraceStartInternal(NSString *className, NSArray<NSString *> *sels, NSString **errOut);
+
 BOOL mfTraceStart(NSString *className, NSString **errOut) {
+    return mfTraceStartInternal(className, nil, errOut);
+}
+
+// 🧪 SK 收银台侦察包: 环境判定点定位专用(AS vs TF 双端对照)
+NSDictionary<NSString *, NSArray<NSString *> *> *mfSKPresetMap(void) {
+    return @{
+        @"NSBundle": @[@"appStoreReceiptURL"],
+        @"SKPaymentQueue": @[@"addPayment:", @"addTransactions:", @"restoreCompletedTransactions",
+                             @"finishTransaction:", @"paymentQueue:updatedTransactions:"],
+        @"SKReceiptRefreshRequest": @[@"start"],
+    };
+}
+
+BOOL mfTraceStartPreset(NSString **errOut) {
     if (g_traceOn) { if (errOut) *errOut = @"已在监控中，请先停止"; return NO; }
+    if (!g_traceLog) g_traceLog = [NSMutableArray new];
+    if (!g_traceRestore) g_traceRestore = [NSMutableArray new];
+
+    __block int totalCount = 0, totalSkip = 0;
+    NSMutableString *report = [NSMutableString string];
+    for (NSString *clsName in mfSKPresetMap()) {
+        Class cls = NSClassFromString(clsName);
+        if (!cls) { [report appendFormat:@"✗ %@ 不存在\n", clsName]; continue; }
+        int before = (int)g_traceRestore.count;
+        NSString *subErr = nil;
+        BOOL ok = mfTraceStartInternal(clsName, mfSKPresetMap()[clsName], &subErr);
+        if (ok) {
+            int added = (int)g_traceRestore.count - before;
+            [report appendFormat:@"✓ %@ ×%d\n", clsName, added];
+            totalCount += added;
+        } else {
+            [report appendFormat:@"✗ %@ 失败 %@\n", clsName, subErr ?: @""];
+        }
+        totalSkip++;
+    }
+    if (totalCount == 0) {
+        if (errOut) *errOut = [@"侦察包无可用方法:\n" stringByAppendingString:report];
+        g_traceOn = NO;
+        return NO;
+    }
+    g_traceOn = YES;
+    mfTraceLine([NSString stringWithFormat:@"▶ 🧪SK侦察包 启动 (%d methods)\n%@", totalCount, report]);
+    return YES;
+}
+
+static BOOL mfTraceStartInternal(NSString *className, NSArray<NSString *> *sels, NSString **errOut) {
+    if (g_traceOn && !sels) { if (errOut) *errOut = @"已在监控中，请先停止"; return NO; }
     Class cls = NSClassFromString(className) ?: objc_getClass(className.UTF8String);
     if (!cls) { if (errOut) *errOut = [NSString stringWithFormat:@"类不存在: %@", className]; return NO; }
 
@@ -131,16 +181,18 @@ BOOL mfTraceStart(NSString *className, NSString **errOut) {
         Method *ms = class_copyMethodList(c, &n);
         for (unsigned int i = 0; i < n; i++) {
             Method m = ms[i];
+            SEL sel = method_getName(m);
+            NSString *selName = NSStringFromSelector(sel);
+            if (sels && ![sels containsObject:selName]) { skipped++; continue; }
             const char *enc = method_getTypeEncoding(m);
             char ret;
             int args = mfSafeArgs(enc, &ret);
             if (args < 0) { skipped++; continue; }
-            SEL sel = method_getName(m);
             IMP orig = method_getImplementation(m);
             IMP wrap = mfWrapFor(ret, args, orig);
             if (!wrap) { skipped++; continue; }
             method_setImplementation(m, wrap);
-            [g_traceRestore addObject:@{@"m": [NSValue valueWithPointer:m], @"imp": [NSValue valueWithPointer:orig], @"cls": c, @"sel": NSStringFromSelector(sel)}];
+            [g_traceRestore addObject:@{@"m": [NSValue valueWithPointer:m], @"imp": [NSValue valueWithPointer:orig], @"cls": c, @"sel": selName}];
             count++;
         }
         free(ms);
@@ -148,10 +200,20 @@ BOOL mfTraceStart(NSString *className, NSString **errOut) {
     traceList(cls, NO);
     traceList(object_getClass(cls), YES);
 
-    g_traceOn = YES;
-    mfTraceLine([NSString stringWithFormat:@"▶ 监控 %@ 开始（已包装 %d 个方法，跳过 %d 个非安全签名）", className, count, skipped]);
-    if (count == 0 && errOut) *errOut = @"该类没有符合安全签名的可监控方法";
-    return count > 0 ? YES : (g_traceOn = NO, NO);
+    if (count == 0) {
+        if (errOut) *errOut = sels.count
+            ? [NSString stringWithFormat:@"%@ 无白名单方法可包装(目标 %@)", className, sels]
+            : @"该类没有符合安全签名的可监控方法";
+        if (!g_traceOn) g_traceCls = nil;
+        return NO;
+    }
+    if (!g_traceOn) {
+        g_traceOn = YES;
+        mfTraceLine([NSString stringWithFormat:@"▶ 监控 %@ 开始（已包装 %d 个方法，跳过 %d 个）", className, count, skipped]);
+    } else {
+        mfTraceLine([NSString stringWithFormat:@"▶ + %@（+%d 个方法）", className, count]);
+    }
+    return YES;
 }
 
 void mfTraceStop(void) {
@@ -212,6 +274,20 @@ void mfTraceToggleTapped(void) {
     mfTraceRefreshUI();
 }
 
+void mfTraceTogglePresetTapped(void) {
+    if (g_traceOn) {
+        mfTraceStop();
+        mfToast(@"⏹️ 已停止");
+    } else {
+        NSString *err = nil;
+        if (!mfTraceStartPreset(&err) && err) { mfToast([@"⚠️ " stringByAppendingString:err]); }
+        else mfToast(@"▶️ SK 侦察包启动");
+    }
+    [g_traceToggleBtn setTitle:g_traceOn ? @"⏹ 停止监控" : @"▶ 开始监控" forState:UIControlStateNormal];
+    [g_traceToggleBtn setBackgroundColor:g_traceOn ? [UIColor systemRedColor] : [UIColor systemGreenColor]];
+    mfTraceRefreshUI();
+}
+
 void mfTraceClearTapped(void) {
     @synchronized (g_traceLog) { [g_traceLog removeAllObjects]; }
     mfTraceRefreshUI();
@@ -252,16 +328,26 @@ void mfShowMethodTracePage(void) {
 
     // 操作行：启停 / 清空 / 分享
     g_traceToggleBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    g_traceToggleBtn.frame = CGRectMake(16, 178, (cw - 16) / 2, 38);
+    g_traceToggleBtn.frame = CGRectMake(16, 178, (cw - 24) / 3, 38);
     g_traceToggleBtn.backgroundColor = [UIColor systemGreenColor];
     g_traceToggleBtn.layer.cornerRadius = 9;
     g_traceToggleBtn.tintColor = UIColor.whiteColor;
-    [g_traceToggleBtn setTitle:g_traceOn ? @"⏹ 停止监控" : @"▶ 开始监控" forState:UIControlStateNormal];
+    [g_traceToggleBtn setTitle:g_traceOn ? @"⏹ 停止" : @"▶ 开始" forState:UIControlStateNormal];
     g_traceToggleBtn.titleLabel.font = [UIFont boldSystemFontOfSize:13];
     [page addSubview:g_traceToggleBtn];
 
+    UIButton *presetBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    presetBtn.frame = CGRectMake(20 + (cw - 24) / 3, 178, (cw - 24) / 3, 38);
+    presetBtn.backgroundColor = [UIColor systemIndigoColor];
+    presetBtn.layer.cornerRadius = 9;
+    presetBtn.tintColor = UIColor.whiteColor;
+    [presetBtn setTitle:@"🧪 SK侦察包" forState:UIControlStateNormal];
+    presetBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
+    [presetBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfTracePresetTapped") forControlEvents:UIControlEventTouchUpInside];
+    [page addSubview:presetBtn];
+
     UIButton *clrBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    clrBtn.frame = CGRectMake(24 + (cw - 16) / 2, 178, (cw - 16) / 2, 38);
+    clrBtn.frame = CGRectMake(24 + (cw - 24) * 2 / 3, 178, (cw - 24) / 3, 38);
     clrBtn.backgroundColor = [UIColor secondarySystemBackgroundColor];
     clrBtn.layer.cornerRadius = 9;
     clrBtn.tintColor = [UIColor labelColor];

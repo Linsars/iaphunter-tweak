@@ -1367,6 +1367,7 @@ void mfShowProductPage(void) {
 - (void)mfShowCDHistoryPage { mfShowCDHistoryPage(); }
 - (void)mfTraceToggleTapped { mfTraceToggleTapped(); }
 - (void)mfTraceClearTapped { mfTraceClearTapped(); }
+- (void)mfTracePresetTapped { mfTraceTogglePresetTapped(); }
 - (void)mfNetRun:(UIButton *)btn {
     btn.enabled = NO;
     NSString *kind = objc_getAssociatedObject(btn, "kind");
@@ -2132,7 +2133,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define IAPTOOLS_VERSION @"2.6.35"
+#define IAPTOOLS_VERSION @"2.6.36"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
