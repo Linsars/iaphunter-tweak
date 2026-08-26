@@ -7,7 +7,9 @@
 #import "MFPanel.h"
 #import <objc/runtime.h>
 
-static NSString *MF_OBJC_HOOK_PATH = @"/var/jb/Library/MinisFix/objchooks.plist";
+// v2.6.50: /var/jb/Library/MinisFix/ 在 rootless 下不可写(实测 save fail)
+//   改用用户空间路径(与网络规则/电池日志同层)
+static NSString *MF_OBJC_HOOK_PATH = @"/var/jb/var/mobile/Library/MinisFix/objchooks.plist";
 static NSString *g_objcPrefill = nil;
 static void mfObjCHookLoad(void);  // 前向声明
 // v2.6.44: 全程诊断日志(NSLog 双写进 hostlog 管道)
