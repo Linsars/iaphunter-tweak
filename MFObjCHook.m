@@ -117,6 +117,8 @@ void mfObjCHookSave(void) {
 #pragma mark - UI
 void mfShowObjCHookPage(void) {
     if (!g_objcHooks) mfObjCHookLoad();
+    // v2.6.45: 防重入——重复点击不叠加页面(v2.6.44 日志暴露 page open 循环)
+    if ([[(UIView *)g_mfPages.lastObject accessibilityIdentifier] isEqualToString:@"mf_objcrules"]) return;
     OH_LOG(@"page open: rules=%lu prefill=%@", (unsigned long)g_objcHooks.count, g_objcPrefill);
     UIView *page = mfMakePage(@"🔧 ObjC 规则", YES);
     UIScrollView *sv = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 48, g_mfCardW, g_mfCardH - 48)];
@@ -156,6 +158,9 @@ void mfShowObjCHookPage(void) {
         [sv addSubview:row]; y += 72;
     }
     sv.contentSize = CGSizeMake(cw, y + 20);
+    // v2.6.45: 缺失的 push——页面从未显示(「点不动」真凶)
+    [page setAccessibilityIdentifier:@"mf_objcrules"];
+    mfPushPage(page);
 }
 
 // v2.6.42: MFClassDump 左滑「方法监控」入口的 C 函数别名 → 指向 ObjC 规则页
@@ -187,6 +192,12 @@ void mfObjCHookPersist(NSString *cls, NSString *sel, int mode, id val) {
     [g_objcHooks addObject:@{@"class": cls, @"selector": sel, @"mode": @(mode), @"value": (val ?: @""), @"enabled": @YES}];
     mfObjCHookSave();
     mfObjCHookApply();
+    // v2.6.45: 弹旧页重建刷新列表(配合防重入)
+    if ([[(UIView *)g_mfPages.lastObject accessibilityIdentifier] isEqualToString:@"mf_objcrules"]) {
+        UIView *top = g_mfPages.lastObject;
+        [top removeFromSuperview];
+        [g_mfPages removeLastObject];
+    }
     mfShowObjCHookPage();
 }
 
@@ -207,5 +218,11 @@ void mfObjCHookDelTapped(UIButton *b) {
     [g_objcHooks removeObjectAtIndex:idx];
     mfObjCHookSave();
     [g_hookRestore removeAllObjects]; g_hookOn = NO;
+    // v2.6.45: 弹旧页重建
+    if ([[(UIView *)g_mfPages.lastObject accessibilityIdentifier] isEqualToString:@"mf_objcrules"]) {
+        UIView *top = g_mfPages.lastObject;
+        [top removeFromSuperview];
+        [g_mfPages removeLastObject];
+    }
     mfShowObjCHookPage();
 }
