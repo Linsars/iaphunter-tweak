@@ -162,37 +162,66 @@ static void seSetSmartCharge(BOOL on) {
     seFileLog(msg);   // 状态变化必落盘,装机直接验
 }
 
+// v2.6.31: 经 minisfixd(特权 LaunchDaemon)执行写入——SB 进程无 powersource-write
+// entitlement(实测 kr=0xE0000001),daemon 持证上岗。协议见 minisfixd.c
+static int seDaemonWriteCharging(BOOL on, uint32_t *krA, uint32_t *krI) {
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return -1;
+    struct timeval tv = {2, 0};
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = htons(39082);
+    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) { close(fd); return -2; }
+    unsigned char req[5] = {'M', 'F', 'W', 'R', on ? 1 : 0};
+    if (write(fd, req, 5) != 5) { close(fd); return -3; }
+    uint32_t out[2] = {0, 0};
+    if (read(fd, out, 8) != 8) { close(fd); return -4; }
+    close(fd);
+    *krA = out[0];
+    *krI = out[1];
+    return 0;
+}
+
 static void seSetCharging(BOOL on) {
-    if (!seLoadIOKit()) return;
-    mach_port_t master = 0;
-    p_IOMasterPort(0, &master);
-    // v2.6.29: 双 service 都写——ChargeLimiter 默认用 IOPMPowerSource,
-    //   AppleSmartBattery 要手动 opt-in(实测本机 AppleSmartBattery 疑似只读)
-    CFDictionaryRef props = nil;
-    {
+    // 主路径: minisfixd 特权写入
+    uint32_t krA = 0, krI = 0;
+    int rc = seDaemonWriteCharging(on, &krA, &krI);
+    NSString *msg;
+    if (rc == 0 && (krA == 0 || krI == 0)) {
+        msg = [NSString stringWithFormat:@"[set] via daemon on=%d krASB=%u krIOPS=%u",
+            on ? 1 : 0, krA, krI];
+    } else {
+        msg = [NSString stringWithFormat:@"[set] daemon write FAILED rc=%d krASB=%u krIOPS=%u -> fallback direct",
+            rc, krA, krI];
+        seFileLog(msg);
+        // fallback: SB 直写(预期被拒,留作诊断证据)
+        if (!seLoadIOKit()) return;
+        mach_port_t master = 0;
+        p_IOMasterPort(0, &master);
         CFMutableDictionaryRef d = CFDictionaryCreateMutable(kCFAllocatorDefault, 3,
             &kCFCopyStringDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-        // iOS>=13: IsCharging 钉死 YES, PredictiveChargingInhibit 为总开关
         CFDictionarySetValue(d, CFSTR("IsCharging"), kCFBooleanTrue);
         CFDictionarySetValue(d, CFSTR("PredictiveChargingInhibit"),
                              on ? kCFBooleanFalse : kCFBooleanTrue);
         CFDictionarySetValue(d, CFSTR("ExternalConnected"),
                              on ? kCFBooleanTrue : kCFBooleanFalse);
-        props = d;
+        const char *names[] = {"AppleSmartBattery", "IOPMPowerSource"};
+        for (int i = 0; i < 2; i++) {
+            se_io_t svc = p_IOServiceGetMatchingService(master, p_IOServiceMatching(names[i]));
+            if (!svc) continue;
+            kern_return_t kr = p_IORegistryEntrySetCFProperties(svc, d);
+            p_IOObjectRelease(svc);
+            seFileLog([NSString stringWithFormat:@"[set] direct %s on=%d kr=%d", names[i], on ? 1 : 0, kr]);
+        }
+        CFRelease(d);
     }
-    const char *names[] = {"AppleSmartBattery", "IOPMPowerSource"};
-    for (int i = 0; i < 2; i++) {
-        se_io_t svc = p_IOServiceGetMatchingService(master, p_IOServiceMatching(names[i]));
-        if (!svc) { NSLog(@"[SysEnhance] %s not found", names[i]); continue; }
-        kern_return_t kr = p_IORegistryEntrySetCFProperties(svc, props);
-        p_IOObjectRelease(svc);
-        NSString *msg = [NSString stringWithFormat:@"[set] write %s on=%d kr=%d",
-            names[i], on ? 1 : 0, kr];
-        NSLog(@"[SysEnhance] %@", msg);
-        if (kr != 0) seFileLog(msg);   // 失败必落盘; 成功由回读验证
-    }
-    CFRelease(props);
-    // 写后 3s 回读验证——直写是否真生效,数据说话
+    NSLog(@"[SysEnhance] %@", msg);
+    seFileLog(msg);
+    // 写后 3s 回读验证——生效与否数据说话
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC),
                    dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
         seDumpBatteryKeys(on ? @"verify-resume" : @"verify-stop");

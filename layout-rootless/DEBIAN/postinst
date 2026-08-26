@@ -10,4 +10,10 @@ killall -9 installd appstored 2>/dev/null
 killall -9 SpringBoard 2>/dev/null
 # Unseen 目标进程(backboardd 重启会短暂黑屏)
 killall -9 backboardd 2>/dev/null
+# v2.6.31: minisfixd 特权充电 daemon(bootstrap 幂等,已加载则跳过)
+PLIST="/var/jb/Library/LaunchDaemons/com.linsars.minisfixd.plist"
+if [ -f "$PLIST" ]; then
+  /var/jb/bin/launchctl bootout system "$PLIST" >/dev/null 2>&1
+  /var/jb/bin/launchctl bootstrap system "$PLIST" >/dev/null 2>&1
+fi
 exit 0

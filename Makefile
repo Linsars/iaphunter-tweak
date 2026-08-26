@@ -41,6 +41,22 @@ SUBPROJECTS += folderx
 include $(THEOS_MAKE_PATH)/aggregate.mk
 
 # ============================================================
+# minisfixd(v2.6.31): 特权充电控制 LaunchDaemon
+# IOKit power source 直写需要 powersource-write entitlement,
+# 注入 dylib 给不了宿主进程 → 独立 daemon 持证上岗(对标 ChargeLimiter)
+# ============================================================
+MINISFIXD_BIN = layout-rootless/usr/bin/minisfixd
+
+before-package::
+	@mkdir -p layout-rootless/usr/bin
+	$(CC) -arch arm64 -arch arm64e -isysroot $(SYSROOT) -miphoneos-version-min=14.5 \
+		-framework CoreFoundation -O2 -Wall \
+		-o $(MINISFIXD_BIN) minisfixd.c
+	$(THEOS)/bin/ldid -Sminisfixd.entitlements $(MINISFIXD_BIN)
+	@echo "[minisfixd] built and entitled: $(MINISFIXD_BIN)"
+
+
+# ============================================================
 # 外部依赖: Dobby(github.com/jmpews/Dobby)需预编译静态库
 # 方案:CI 中 git submodule 添加 Dobby,编译 libdobby.a 到 $(THEOS)/lib/
 # 临时占位:若无 libdobby.a,UnseenHooks 会链接失败(CI 日志会报错)
