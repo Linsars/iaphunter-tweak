@@ -160,7 +160,7 @@ void mfTraceSetPrefill(NSString *cls);                         // 左滑头文�
 void mfShowObjCHookPage(void);                                 // 🔧 ObjC 规则(精确 hook, 取代方法监控)
 void mfObjCHookApply(void);
 void mfObjCHookStop(void);
-void mfObjCHookAddTapped(void);
+void mfObjCHookFormAddTapped(void);   // v2.6.47 页面内表单添加(替代弹窗)
 void mfObjCHookToggle(UISwitch *sw);
 void mfObjCHookDelTapped(UIButton *btn);
 void mfObjCHookPersist(NSString *cls, NSString *sel, int mode, id val);

@@ -132,11 +132,32 @@ void mfShowObjCHookPage(void) {
     hint.font = [UIFont systemFontOfSize:11]; hint.textColor = [UIColor tertiaryLabelColor];
     hint.numberOfLines = 0; [sv addSubview:hint]; y += 48;
 
+    // v2.6.47: 页面内表单(替代系统弹窗)——对齐面板原生交互
+    g_clsF = [[UITextField alloc] initWithFrame:CGRectMake(16, y, (cw-40)/2, 34)];
+    g_clsF.placeholder = @"类名 (NSBundle)";
+    [sv addSubview:g_clsF];
+    g_selF = [[UITextField alloc] initWithFrame:CGRectMake(24+(cw-40)/2, y, (cw-40)/2, 34)];
+    g_selF.placeholder = @"方法 (appStoreReceiptURL)";
+    [sv addSubview:g_selF]; y += 40;
+    g_modeSeg = [[UISegmentedControl alloc] initWithItems:@[@"透传", @"返回 nil", @"str 值"]];
+    g_modeSeg.frame = CGRectMake(16, y, (cw-40)/2, 30);
+    g_modeSeg.selectedSegmentIndex = 1;
+    [sv addSubview:g_modeSeg];
+    g_valF = [[UITextField alloc] initWithFrame:CGRectMake(24+(cw-40)/2, y, (cw-40)/2, 34)];
+    g_valF.placeholder = @"str 值(str 模式用)";
+    [sv addSubview:g_valF]; y += 42;
+    for (UITextField *f in @[g_clsF, g_selF, g_valF]) {
+        f.font = [UIFont systemFontOfSize:12];
+        f.borderStyle = UITextBorderStyleRoundedRect;
+        f.autocapitalizationType = UITextAutocapitalizationTypeNone;
+        f.autocorrectionType = UITextAutocorrectionTypeNo;
+    }
+    if (g_objcPrefill) { g_clsF.text = g_objcPrefill; g_objcPrefill = nil; }
     UIButton *addBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     addBtn.frame = CGRectMake(16, y, cw-32, 38);
     addBtn.backgroundColor = [UIColor systemIndigoColor]; addBtn.layer.cornerRadius = 9;
-    addBtn.tintColor = UIColor.whiteColor; [addBtn setTitle:@"➕ 添加规则" forState:UIControlStateNormal];
-    [addBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfObjCHookAddTapped") forControlEvents:UIControlEventTouchUpInside];
+    addBtn.tintColor = UIColor.whiteColor; [addBtn setTitle:@"➕ 添加" forState:UIControlStateNormal];
+    [addBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfObjCHookFormAddTapped") forControlEvents:UIControlEventTouchUpInside];
     [sv addSubview:addBtn]; y += 46;
 
     for (NSDictionary *r in g_objcHooks) {
@@ -170,21 +191,15 @@ void mfShowMethodTracePage(void) {
 }
 
 #pragma mark - 编辑
-void mfObjCHookAddTapped(void) {
-    UIAlertController *ac = [UIAlertController alertControllerWithTitle:@"添加 ObjC 规则"
-        message:@"类 + 方法 + 返回值模式" preferredStyle:UIAlertControllerStyleAlert];
-    [ac addTextFieldWithConfigurationHandler:^(UITextField *t){ t.placeholder = @"类名 (如 NSBundle)"; }];
-    [ac addTextFieldWithConfigurationHandler:^(UITextField *t){ t.placeholder = @"方法 (如 appStoreReceiptURL)"; }];
-    [ac addTextFieldWithConfigurationHandler:^(UITextField *t){ t.placeholder = @"str 值(可选)"; }];
-    UIAlertAction *nilA = [UIAlertAction actionWithTitle:@"短路 nil" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a){
-        mfObjCHookPersist(ac.textFields[0].text, ac.textFields[1].text, 1, nil);
-    }];
-    UIAlertAction *strA = [UIAlertAction actionWithTitle:@"返回 str 值" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a){
-        mfObjCHookPersist(ac.textFields[0].text, ac.textFields[1].text, 2, ac.textFields[2].text);
-    }];
-    UIAlertAction *cancel = [UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil];
-    [ac addAction:nilA]; [ac addAction:strA]; [ac addAction:cancel];
-    [g_mfPanelRootVC presentViewController:ac animated:YES completion:nil];
+// v2.6.47: 页面内表单添加(替代弹窗)——直接读表单字段
+static UITextField *g_clsF = nil, *g_selF = nil, *g_valF = nil;
+static UISegmentedControl *g_modeSeg = nil;
+
+void mfObjCHookFormAddTapped(void) {
+    if (!g_clsF) { OH_LOG(@"form not ready"); return; }
+    int mode = (int)g_modeSeg.selectedSegmentIndex; // 0=透传 1=nil 2=str
+    id val = mode == 2 ? (g_valF.text ?: @"") : nil;
+    mfObjCHookPersist(g_clsF.text, g_selF.text, mode, val);
 }
 
 void mfObjCHookPersist(NSString *cls, NSString *sel, int mode, id val) {

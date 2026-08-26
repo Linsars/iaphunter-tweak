@@ -1365,7 +1365,7 @@ void mfShowProductPage(void) {
 - (void)mfCryptoClearTapped { mfCryptoClearTapped(); }
 - (void)mfShowMethodTracePage { mfShowObjCHookPage(); }
 - (void)mfShowCDHistoryPage { mfShowCDHistoryPage(); }
-- (void)mfObjCHookAddTapped { mfObjCHookAddTapped(); }
+- (void)mfObjCHookFormAddTapped { mfObjCHookFormAddTapped(); }
 - (void)mfObjCHookToggle:(UISwitch *)sw { mfObjCHookToggle(sw); }
 - (void)mfObjCHookDelTapped:(UIButton *)b { mfObjCHookDelTapped(b); }
 - (void)mfNetRun:(UIButton *)btn {
@@ -2133,7 +2133,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define IAPTOOLS_VERSION @"2.6.46"
+#define IAPTOOLS_VERSION @"2.6.47"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
