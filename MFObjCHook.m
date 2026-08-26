@@ -366,7 +366,21 @@ static void (*orig_sk1_finish)(id, SEL, id);
 static void hook_sk1_finish(id self, SEL _cmd, id tx);
 static void mfSK1PushFakes(void);
 
+// v2.6.61: SwiftyStoreKit 把 SKPaymentTransaction 当下标用(崩溃实锤) —— 动态补 objectForKeyedSubscript: 兜底
+static BOOL g_sk1SubscriptInstalled = NO;
+static void mfSK1InstallSubscript(void) {
+    if (g_sk1SubscriptInstalled) return;
+    Class T = objc_getClass("SKPaymentTransaction");
+    if (!T) return;
+    if (class_getInstanceMethod(T, @selector(objectForKeyedSubscript:))) { g_sk1SubscriptInstalled = YES; return; }
+    IMP imp = imp_implementationWithBlock(^id(id s, SEL c, id key){ return nil; });
+    BOOL ok = class_addMethod(T, @selector(objectForKeyedSubscript:), imp, "@@:@");
+    OH_LOG(@"SK1 subscript guard installed: %d", ok);
+    g_sk1SubscriptInstalled = YES;
+}
+
 static id mfSK1FakeTx(NSString *pid) {
+    mfSK1InstallSubscript();
     id tx = class_createInstance(objc_getClass("SKPaymentTransaction"), 0);
     id pay = class_createInstance(objc_getClass("SKPayment"), 0);
     if (!tx) return nil;
