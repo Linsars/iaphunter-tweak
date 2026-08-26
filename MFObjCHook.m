@@ -361,6 +361,10 @@ void mfObjCHookDelTapped(UIButton *b) {
 //   无真实交易时返回伪造数组(每个已验证 pid 一条 fakeTx) —— app 遍历判断解锁通杀
 //   有真实交易时透传原值(不干扰正常购买流程)
 static BOOL g_sk1on = NO;
+// v2.6.60: 前向声明(定义在模块尾部, mfSK1Enable 引用)
+static void (*orig_sk1_finish)(id, SEL, id);
+static void hook_sk1_finish(id self, SEL _cmd, id tx);
+static void mfSK1PushFakes(void);
 
 static id mfSK1FakeTx(NSString *pid) {
     id tx = class_createInstance(objc_getClass("SKPaymentTransaction"), 0);
@@ -506,7 +510,6 @@ static void mfSK1PushFakes(void) {
 }
 
 // finishTransaction 吞 fake(防 fake 发给 storekitd 出问题)
-static void (*orig_sk1_finish)(id, SEL, id);
 static void hook_sk1_finish(id self, SEL _cmd, id tx) {
     if (objc_getAssociatedObject(tx, "mfsk1_pay")) {
         OH_LOG(@"SK1 finish fake ignored");
