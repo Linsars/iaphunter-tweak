@@ -248,27 +248,33 @@ void mfObjCTxProbeTapped(void) {
     }
     free(ivs);
     // 2. 构造 internal + 直接写 scalar/对象 ivar
+    // v2.6.53: class_createInstance 绕过 alloc/init——SK 内部类 init 可能连 XPC/断言(闪退点)
     Class TI = objc_getClass("SKPaymentTransactionInternal");
     if (!TI) { OH_LOG(@"Internal class missing"); return; }
-    id ti = [[TI alloc] init];
+    OH_LOG(@"probe: creating internal via class_createInstance");
+    id ti = CFBridgingRelease(class_createInstance(TI, 0));
+    OH_LOG(@"probe: internal=%@", ti);
     Ivar stI = class_getInstanceVariable(TI, "__transactionState");
     if (stI) { long long st = 1; memcpy((char *)(__bridge void *)ti + ivar_getOffset(stI), &st, 8); }
     Ivar payI = class_getInstanceVariable(TI, "__payment");
-    // 3. 构造 SKPayment(Internal) 填 productIdentifier
+    // 3. 构造 SKPayment(Internal) 填 productIdentifier(同样绕过 init)
     Class PI = objc_getClass("SKPaymentInternal");
-    id pi = PI ? [[PI alloc] init] : nil;
+    id pi = nil;
+    if (PI) pi = CFBridgingRelease(class_createInstance(PI, 0));
     if (pi) {
         Ivar pidI = class_getInstanceVariable(PI, "__productIdentifier");
         if (pidI) object_setIvar(pi, pidI, @"com.sugarmo.ScrollClip.pro");
     }
+    OH_LOG(@"probe: payment built=%@", pi);
     if (payI && pi) object_setIvar(ti, payI, pi);
-    // 4. 包壳: SKPaymentTransaction alloc/init 后塞 internal
-    id tx = [[TT alloc] init];
-    // 先看 TT 有没有 _internal 这号 ivar(刚才枚举结果会告诉我们)
+    // 4. 包壳: SKPaymentTransaction class_createInstance 后塞 internal
+    OH_LOG(@"probe: creating SKPaymentTransaction shell");
+    id tx = CFBridgingRelease(class_createInstance(TT, 0));
     Ivar intI = class_getInstanceVariable(TT, "_internal");
     if (intI) object_setIvar(tx, intI, ti);
     Ivar intI2 = class_getInstanceVariable(TT, "__internal");
     if (intI2) object_setIvar(tx, intI2, ti);
+    OH_LOG(@"probe: shell=%@", tx);
     // 5. 读写验证
     long long st2 = ((long long(*)(id,SEL))objc_msgSend)(tx, NSSelectorFromString(@"transactionState"));
     id pid2 = ((id(*)(id,SEL))objc_msgSend)(tx, NSSelectorFromString(@"productIdentifier"));
