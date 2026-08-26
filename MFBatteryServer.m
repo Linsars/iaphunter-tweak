@@ -58,6 +58,16 @@ static CFDataRef bsCallback(CFMessagePortRef port, SInt32 msgid, CFDataRef data,
     }
 }
 
+// 与 MFSystemEnhance.seFileLog 同路径,server 状态落盘可见
+static void bsFileLog(NSString *line) {
+    @try {
+        NSString *path = @"/var/mobile/Documents/minisfix_sysenhance.log";
+        NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:path];
+        if (!fh) { [@"" writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil]; fh = [NSFileHandle fileHandleForWritingAtPath:path]; }
+        if (fh) { [fh seekToEndOfFile]; [fh writeData:[[line stringByAppendingString:@"\n"] dataUsingEncoding:NSUTF8StringEncoding]]; [fh closeFile]; }
+    } @catch (NSException *e) {}
+}
+
 __attribute__((constructor))
 static void BatteryServerAutoStart(void) {
     // 双保险: filter=springboard 已定向, 这里再验身份防误注入
@@ -70,9 +80,11 @@ static void BatteryServerAutoStart(void) {
             kCFAllocatorDefault, CFSTR("minisfix.battery"), bsCallback, NULL, NULL);
         if (!local) {
             NSLog(@"[SysEnhance] battery server create failed");
+            bsFileLog([NSString stringWithFormat:@"[battery] server create FAILED %@", [NSDate date]]);
             return;
         }
         CFMessagePortSetDispatchQueue(local, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0));
         NSLog(@"[SysEnhance] battery server listening (minisfix.battery)");
+        bsFileLog([NSString stringWithFormat:@"[battery] listening ok %@", [NSDate date]]);
     });
 }
