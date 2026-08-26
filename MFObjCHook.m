@@ -136,10 +136,18 @@ void mfShowObjCHookPage(void) {
     CGFloat cw = g_mfCardW;
     CGFloat y = 8;
 
-    UILabel *hint = [[UILabel alloc] initWithFrame:CGRectMake(16, y, cw-32, 40)];
-    hint.text = @"精确 hook 方法返回值(作用于当前 app)。定音实验: NSBundle.appStoreReceiptURL → nil";
+    UILabel *hint = [[UILabel alloc] initWithFrame:CGRectMake(16, y, cw-32, 20)];
+    hint.text = @"精确 hook 方法返回值(作用于当前 app)";
     hint.font = [UIFont systemFontOfSize:11]; hint.textColor = [UIColor tertiaryLabelColor];
-    hint.numberOfLines = 0; [sv addSubview:hint]; y += 48;
+    hint.numberOfLines = 0; [sv addSubview:hint]; y += 24;
+    // 🧪 强制 sandbox(官方私有 API)——优先试试,不行再回退 hook 路线
+    UIButton *sbBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    sbBtn.frame = CGRectMake(16, y, cw-32, 36);
+    sbBtn.backgroundColor = [UIColor systemOrangeColor]; sbBtn.layer.cornerRadius = 9;
+    sbBtn.tintColor = UIColor.whiteColor; [sbBtn setTitle:@"🧪 强制 sandbox(当前 App)" forState:UIControlStateNormal];
+    sbBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
+    [sbBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfObjCForceSandboxTapped") forControlEvents:UIControlEventTouchUpInside];
+    [sv addSubview:sbBtn]; y += 44;
 
     // v2.6.47: 页面内表单(替代系统弹窗)——对齐面板原生交互
     g_clsF = [[UITextField alloc] initWithFrame:CGRectMake(16, y, (cw-40)/2, 34)];
@@ -197,6 +205,25 @@ void mfShowObjCHookPage(void) {
 // v2.6.42: MFClassDump 左滑「方法监控」入口的 C 函数别名 → 指向 ObjC 规则页
 void mfShowMethodTracePage(void) {
     mfShowObjCHookPage();
+}
+
+#pragma mark - 🧪 强制 sandbox(v2.6.51: dump 挖到官方私有 API)
+// [[SKPaymentQueue defaultQueue] forceSandboxForBundleIdentifier:untilDate:]
+// storekitd 配合强制 bundle 走 sandbox——比进程内任何伪装都正
+void mfObjCForceSandboxTapped(void) {
+    id q = nil;
+    Class qcls = objc_getClass("SKPaymentQueue");
+    if (qcls) q = ((id(*)(id,SEL))objc_msgSend)((id)qcls, NSSelectorFromString(@"defaultQueue"));
+    SEL sel = NSSelectorFromString(@"forceSandboxForBundleIdentifier:untilDate:");
+    if (q && [q respondsToSelector:sel]) {
+        ((void(*)(id,SEL,NSString*,NSDate*))objc_msgSend)(q, sel,
+            mfCurrentBundleId(), [NSDate dateWithTimeIntervalSinceNow:365*24*3600]);
+        OH_LOG(@"forceSandbox requested for %@", mfCurrentBundleId());
+        mfToast(@"🧪 已强制 sandbox——重启 App 点购买验证");
+    } else {
+        OH_LOG(@"forceSandbox selector missing");
+        mfToast(@"SDK 不支持此接口");
+    }
 }
 
 #pragma mark - 编辑
