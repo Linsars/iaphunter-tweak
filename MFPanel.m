@@ -1363,13 +1363,11 @@ void mfShowProductPage(void) {
 - (void)mfShowCryptoCapturePage { mfShowCryptoCapturePage(); }
 - (void)mfCryptoSwitchChanged:(UISwitch *)sw { mfCryptoCapSwitchChanged(sw); }
 - (void)mfCryptoClearTapped { mfCryptoClearTapped(); }
-- (void)mfShowMethodTracePage { mfShowMethodTracePage(); }
+- (void)mfShowMethodTracePage { mfShowObjCHookPage(); }
 - (void)mfShowCDHistoryPage { mfShowCDHistoryPage(); }
-- (void)mfTraceToggleTapped { mfTraceToggleTapped(); }
-- (void)mfTraceClearTapped { mfTraceClearTapped(); }
-- (void)mfTracePresetTapped { mfTraceTogglePresetTapped(); }
-- (void)mfTraceExportTapped { mfTraceExportTapped(); }
-- (void)mfTraceCopyTapped { mfTraceCopyTapped(); }
+- (void)mfObjCHookAddTapped { mfObjCHookAddTapped(); }
+- (void)mfObjCHookToggle:(UISwitch *)sw { mfObjCHookToggle(sw); }
+- (void)mfObjCHookDelTapped:(UIButton *)b { mfObjCHookDelTapped(b); }
 - (void)mfNetRun:(UIButton *)btn {
     btn.enabled = NO;
     NSString *kind = objc_getAssociatedObject(btn, "kind");
@@ -2135,7 +2133,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define IAPTOOLS_VERSION @"2.6.37"
+#define IAPTOOLS_VERSION @"2.6.38"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {

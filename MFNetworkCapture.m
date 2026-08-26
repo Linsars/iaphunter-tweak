@@ -989,6 +989,16 @@ void mfShowNetworkModifyPage(void) {
             y += 82;
         }
     }
+    // 🔧 ObjC 规则入口(精确 hook, 与网络规则统一范式) — 取代已废除的方法监控
+    UIButton *objcBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    objcBtn.frame = CGRectMake(12, y + 4, g_mfCardW - 24, 38);
+    objcBtn.backgroundColor = [UIColor systemIndigoColor];
+    objcBtn.layer.cornerRadius = 10;
+    [objcBtn setTitle:@"🔧 管理 ObjC 方法 Hook 规则" forState:UIControlStateNormal];
+    [objcBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    [objcBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfShowMethodTracePage") forControlEvents:UIControlEventTouchUpInside];
+    [sv addSubview:objcBtn];
+    y += 46;
     // 添加规则按钮
     UIButton *addBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     addBtn.frame = CGRectMake(12, y + 4, g_mfCardW - 24, 38);

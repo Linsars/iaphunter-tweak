@@ -156,13 +156,14 @@ void mfInstallCryptoHooks(void);             // 首次开启时安装 CCCrypt/HM
 
 // ====== T1 方法监控（MFMethodTrace.m） ======
 void mfShowMethodTracePage(void);
-void mfTraceSetPrefill(NSString *cls);                         // 左滑头文件预填类名
-BOOL mfTraceStart(NSString *className, NSString **errOut);
-void mfTraceStop(void);
-NSArray *mfTraceLines(void);
-BOOL mfTraceRunning(void);
-BOOL mfTraceStartPreset(NSString **errOut);                    // 🧪 SK 收银台侦察包
-void mfTraceTogglePresetTapped(void);
+void mfTraceSetPrefill(NSString *cls);                         // 左滑头文件预填类名(保留别名)
+void mfShowObjCHookPage(void);                                 // 🔧 ObjC 规则(精确 hook, 取代方法监控)
+void mfObjCHookApply(void);
+void mfObjCHookStop(void);
+void mfObjCHookAddTapped(void);
+void mfObjCHookToggle(UISwitch *sw);
+void mfObjCHookDelTapped(UIButton *btn);
+void mfObjCHookPersist(NSString *cls, NSString *sel, int mode, id val);
 
 // ====== 网络分析（MFNetAnalyzer.m） ======
 void mfShowNetAnalyzerPage(void);           // 网络功能统一入口（含捕获开关）
