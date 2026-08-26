@@ -52,7 +52,8 @@ before-package::
 	$(CC) -arch arm64 -arch arm64e -isysroot $(SYSROOT) -miphoneos-version-min=14.5 \
 		-framework CoreFoundation -O2 -Wall \
 		-o $(MINISFIXD_BIN) minisfixd.c
-	$(THEOS)/bin/ldid -Sminisfixd.entitlements $(MINISFIXD_BIN)
+	LDID_BIN="$$(command -v ldid || echo $(THEOS)/bin/ldid)"; \
+	$$LDID_BIN -Sminisfixd.entitlements $(MINISFIXD_BIN)
 	@echo "[minisfixd] built and entitled: $(MINISFIXD_BIN)"
 
 
