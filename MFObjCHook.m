@@ -404,6 +404,27 @@ static id hook_sk1_pid(id self, SEL _cmd) {
 }
 static id (*orig_sk1_date)(id, SEL);
 static id hook_sk1_date(id self, SEL _cmd) { return [NSDate date]; }
+// v2.6.58: hook updatedTransactions:(storekitd 推送回调)——SwiftyStoreKit 用回调参数不用队列读取
+static void (*orig_sk1_updated)(id, SEL, id);
+static void hook_sk1_updated(id self, SEL _cmd, id txs) {
+    if (g_sk1on) {
+        NSArray *real = [txs isKindOfClass:[NSArray class]] ? txs : nil;
+        NSArray *pids = [[NSUserDefaults standardUserDefaults] objectForKey:@"SavedIAPIDs"] ?: @[];
+        NSMutableArray *all = [NSMutableArray array];
+        if (real.count) [all addObjectsFromArray:real];
+        for (NSString *pid in pids) {
+            if (pid.length == 0 || pid.length > 200) continue;
+            id tx = mfSK1FakeTx(pid);
+            if (tx) [all addObject:tx];
+        }
+        if (all.count > (real ? real.count : 0)) {
+            OH_LOG(@"SK1 updatedTransactions: +%lu fake", (unsigned long)(all.count - (real ? real.count : 0)));
+            txs = all;
+        }
+    }
+    if (orig_sk1_updated) orig_sk1_updated(self, _cmd, txs);
+}
+
 static NSString *(*orig_sk1_tid)(id, SEL);
 static NSString *hook_sk1_tid(id self, SEL _cmd) {
     NSString *pid = objc_getAssociatedObject(self, "mfsk1_pay");
@@ -430,6 +451,7 @@ void mfSK1Enable(void) {
     mfSK1Swizzle(NSClassFromString(@"SKPayment"), @selector(productIdentifier), (IMP)hook_sk1_pid, (void **)&orig_sk1_pid);
     mfSK1Swizzle(NSClassFromString(@"SKPaymentTransaction"), @selector(transactionDate), (IMP)hook_sk1_date, (void **)&orig_sk1_date);
     mfSK1Swizzle(NSClassFromString(@"SKPaymentTransaction"), @selector(transactionIdentifier), (IMP)hook_sk1_tid, (void **)&orig_sk1_tid);
+    mfSK1Swizzle(NSClassFromString(@"SKPaymentQueue"), @selector(updatedTransactions:), (IMP)hook_sk1_updated, (void **)&orig_sk1_updated);
     g_sk1on = YES;
     OH_LOG(@"⚡ SK1 通杀 ENABLED");
 }
@@ -442,6 +464,7 @@ void mfSK1Disable(void) {
     if (orig_sk1_pid) { Method m = class_getInstanceMethod(p, @selector(productIdentifier)); if (m) method_setImplementation(m, (IMP)orig_sk1_pid); }
     if (orig_sk1_date) { Method m = class_getInstanceMethod(t, @selector(transactionDate)); if (m) method_setImplementation(m, (IMP)orig_sk1_date); }
     if (orig_sk1_tid) { Method m = class_getInstanceMethod(t, @selector(transactionIdentifier)); if (m) method_setImplementation(m, (IMP)orig_sk1_tid); }
+    if (orig_sk1_updated) { Method m = class_getInstanceMethod(q, @selector(updatedTransactions:)); if (m) method_setImplementation(m, (IMP)orig_sk1_updated); }
     g_sk1on = NO;
     OH_LOG(@"⚡ SK1 通杀 disabled");
 }
