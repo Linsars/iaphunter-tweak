@@ -163,7 +163,8 @@ void mfObjCHookStop(void);
 void mfObjCHookFormAddTapped(void);
 void mfObjCForceSandboxTapped(void);   // 🧪 强制 sandbox(私有 API)
 void mfObjCTxProbeTapped(void);   // 🧪 伪造交易实验
-void mfSK1Toggle(void);   // ⚡ SK1 通杀开关   // v2.6.47 页面内表单添加(替代弹窗)
+void mfSK1Toggle(void);   // ⚡ SK1 通杀开关
+void mfSK1AutoStart(void);   // 冷启动自动应用   // v2.6.47 页面内表单添加(替代弹窗)
 void mfObjCHookToggle(UISwitch *sw);
 void mfObjCHookDelTapped(UIButton *btn);
 void mfObjCHookPersist(NSString *cls, NSString *sel, int mode, id val);

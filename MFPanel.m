@@ -2136,7 +2136,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define IAPTOOLS_VERSION @"2.6.55"
+#define IAPTOOLS_VERSION @"2.6.56"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
@@ -2193,6 +2193,8 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
 
         // v2.6.48: ObjC 规则冷启动自动应用(每个注入的 app 进程生效——跨进程规则的根基)
         mfObjCHookApply();
+        // v2.6.56: SK1 通杀冷启动自动应用(持久化开关)
+        mfSK1AutoStart();
 
         // 手势注册
         Class vcCls = NSClassFromString(@"UIViewController");

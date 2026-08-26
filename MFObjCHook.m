@@ -436,8 +436,16 @@ void mfSK1Disable(void) {
     g_sk1on = NO;
     OH_LOG(@"⚡ SK1 通杀 disabled");
 }
+// v2.6.56: 状态持久化 + 冷启动自动应用(与 ObjC 规则同机制)——重启不再丢失
 void mfSK1Toggle(void) {
     if (g_sk1on) mfSK1Disable();
     else mfSK1Enable();
-    mfToast(g_sk1on ? @"⚡ SK1 通杀已开启(重启 App 生效更稳)" : @"⏹️ SK1 通杀已关闭");
+    [[NSUserDefaults standardUserDefaults] setBool:g_sk1on forKey:@"mfSK1Enabled"];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+    mfToast(g_sk1on ? @"⚡ SK1 通杀已开启" : @"⏹️ SK1 通杀已关闭");
+}
+void mfSK1AutoStart(void) {
+    if (![[NSUserDefaults standardUserDefaults] boolForKey:@"mfSK1Enabled"]) return;
+    if (g_sk1on) return;
+    mfSK1Enable();
 }
