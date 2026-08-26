@@ -117,7 +117,7 @@ static void seDumpBatteryKeys(NSString *tag) {
         @"PredictiveChargingInhibit", @"InflowOverride", @"AtCritical", @"FullyCharged",
         @"CurrentCapacity", @"AppleRawCurrentCapacity", @"MaxCapacity",
         @"InstantAmperage", @"Amperage", @"Voltage", @"Temperature",
-        @"ThermalStatus", @"AdapterDetails"];
+        @"BatteryThermalState", @"ChargingInhibited", @"AdapterDetails"];
     for (int i = 0; i < 2; i++) {
         se_io_t svc = p_IOServiceGetMatchingService(master, p_IOServiceMatching(names[i]));
         if (!svc) continue;
@@ -134,7 +134,10 @@ static void seDumpBatteryKeys(NSString *tag) {
                 if ([k localizedCaseInsensitiveContainsString:@"daptive"] ||
                     [k localizedCaseInsensitiveContainsString:@"imit"] ||
                     [k localizedCaseInsensitiveContainsString:@"nhibit"] ||
-                    [k localizedCaseInsensitiveContainsString:@"nflow"])
+                    [k localizedCaseInsensitiveContainsString:@"nflow"] ||
+                    [k localizedCaseInsensitiveContainsString:@"hermal"] ||
+                    [k localizedCaseInsensitiveContainsString:@"emperature"] ||
+                    [k localizedCaseInsensitiveContainsString:"hargeInhibit"])
                     [suspects addObject:k];
             }
             if (suspects.count) seFileLog([NSString stringWithFormat:@"[dump] suspect keys: %@", suspects]);
