@@ -375,16 +375,21 @@ static NSArray *mfGetFrontmostAppContainerIdentifiers(NSString **outBundleID, NS
     }
 }
 
-// 核心查询函数：查单个容器的 Record ID 并回调
-// v2.6.79 修复：恢复 CloudKit 直连。逆向成品 iCloudID.dylib(用户提供)确认正确做法是
-// 直接 fetchUserRecordIDWithCompletionHandler（异步），绝不预检 accountStatus——
-// 之前的 SIGTRAP(0x1b489189c) 正是 accountStatusWithCompletionHandler 触发 CK 框架内部断言导致。
-// 成品(ref impl) selrefs 里只有 fetchUserRecordID，无 accountStatus，证明该预检是非必需且有害的。
+// v2.6.81 修复：不用 entitlements 预检（dopamine/越狱下 SecTaskCopyValueForEntitlement 会返回非空值导致误调 CK trap）
+// 改用 [NSBundle mainBundle].bundleIdentifier 探测，iCloud container 探测交给 fetchUserRecordID 实际调用：
+//   - 返回 recordName → 显示
+//   - 返回 error domain=CKErrorDomain → 说明无 iCloud capability
+//   - 进程级 SIGTRAP → @try 拦不住，所以另外需要 `containerWithIdentifier:` 后判 nil 早退
 static void mfQueryRecordIDForContainer(NSString *containerIdentifier,
                                          void (^completion)(NSString *recordName, NSError *error)) {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         @try {
-            CKContainer *container = [CKContainer containerWithIdentifier:containerIdentifier];
+            CKContainer *container = nil;
+            if (containerIdentifier && ![containerIdentifier isEqualToString:@"(默认容器)"]) {
+                container = [CKContainer containerWithIdentifier:containerIdentifier];
+            } else {
+                container = [CKContainer defaultContainer];
+            }
             // v2.6.79: 直接异步查询，completion 抛回主线程。去掉 accountStatus 预检。
             [container fetchUserRecordIDWithCompletionHandler:^(CKRecordID *recordID, NSError *error) {
                 dispatch_async(dispatch_get_main_queue(), ^{
@@ -508,18 +513,31 @@ static void mfShowICloudIDListPage(NSString *bundleID, NSString *appName, NSArra
         [sv addSubview:cell];
         y += 80;
         
-        // 无 iCloud 容器的 App：无 entitle 声明 → 没有可查询的 container id，直接显示占位状态即可。
-        // （有 entit 时 mfGetFrontmostAppContainerIdentifiers 返回的是真实 container id 列表）
+        // 无 iCloud 容器的 App：先 probe `[CKContainer defaultContainer]` 拿对象本身，不发网络请求；
+        // 拿不到对象（CK 框架未链接/未初始化）→ 安全降级；拿得到 → 让 fetch 去试。
+        // v2.6.81 修复：原先用 SecTask 读 entitlements 不可靠（dopamine 越狱下会返回非空值），导致无 iCloud
+        // capability 的 App（如 Picsew）也调了 fetch 触发 SIGTRAP @ CloudKit+0x9e89c。
         if ([containerID isEqualToString:@"(默认容器)"]) {
-            statusLabel.text = @"🚫 该 App 未声明 iCloud 容器\n（未启用 iCloud capability，无法查询）";
-            statusLabel.textColor = [UIColor systemGrayColor];
-            pendingCount--;
-            if (pendingCount <= 0) {
-                [spinner stopAnimating];
-                [spinner removeFromSuperview];
-                [loadingLabel removeFromSuperview];
+            @try {
+                CKContainer *probe = [CKContainer defaultContainer];
+                if (!probe) {
+                    statusLabel.text = @"🚫 该进程未启用 iCloud";
+                    statusLabel.textColor = [UIColor systemGrayColor];
+                    pendingCount--;
+                    if (pendingCount <= 0) {
+                        [spinner stopAnimating]; [spinner removeFromSuperview]; [loadingLabel removeFromSuperview];
+                    }
+                    continue;
+                }
+            } @catch (NSException *e) {
+                statusLabel.text = @"🚫 CloudKit 不可用";
+                statusLabel.textColor = [UIColor systemGrayColor];
+                pendingCount--;
+                if (pendingCount <= 0) {
+                    [spinner stopAnimating]; [spinner removeFromSuperview]; [loadingLabel removeFromSuperview];
+                }
+                continue;
             }
-            continue;
         }
         
         // 异步查询
@@ -568,24 +586,33 @@ void mfCopyICloudRecordIDFromCell(UIViewController *vc, UIView *cell) {
     mfKLog(@"Copied iCloud Record ID: %@ (container: %@)", recordID, containerID);
     mfToast(@"✅ 已复制 Record ID");
 }
+// v2.6.81 修复：不用 SecTask 读 entitlements（越狱环境下 SecTaskCopyValueForEntitlement 对
+// 没 iCloud capability 的 app 也会返回非空值，导致误调 CK fetch 触发 SIGTRAP @ CloudKit+0x9e89c）
+// 改用「试调」模式：直接给个默认容器 cell，点击后让 fetchUserRecordID 实际去问，错误是错误就显示。
 void mfFetchCloudKitRecordIDAuto(void) {
     mfKLog(@"mfFetchCloudKitRecordIDAuto called");
     
-    NSString *bundleID = nil;
-    NSString *appName = nil;
+    NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier] ?: @"未知";
+    NSDictionary *infoDict = [[NSBundle mainBundle] infoDictionary];
+    NSString *appName = infoDict[@"CFBundleDisplayName"] ?: infoDict[@"CFBundleName"] ?: bundleID;
+    
+    // KVS 信息仍可读(SecTask 读 KVS 安全不触发 CK 调用)，失败就当没开
     BOOL hasKVS = NO;
-    NSArray *containers = mfGetFrontmostAppContainerIdentifiers(&bundleID, &appName, &hasKVS);
+    @try {
+        SecTaskRef task = SecTaskCreateFromSelf(kCFAllocatorDefault);
+        if (task) {
+            CFTypeRef kvsRef = SecTaskCopyValueForEntitlement(task,
+                (__bridge CFStringRef)@"com.apple.developer.ubiquity-kvstore-identifier", NULL);
+            hasKVS = (kvsRef != NULL);
+            if (kvsRef) CFRelease(kvsRef);
+            CFRelease(task);
+        }
+    } @catch (NSException *e) { mfKLog(@"KVS check exception: %@", e); }
     
-    if (!containers || containers.count == 0) {
-        mfKLog(@"No iCloud containers found (kvs=%@), opening list page", hasKVS ? @"YES" : @"NO");
-        // 无容器：不碰 CloudKit，列表页显示降级说明（v17 查询前拦截）
-        NSMutableArray *arr = [NSMutableArray arrayWithObject:@"(默认容器)"];
-        mfShowICloudIDListPage(bundleID ?: @"未知", appName ?: @"未知", arr, hasKVS);
-        return;
-    }
-    
-    mfKLog(@"Found %lu containers (kvs=%@), opening list page", (unsigned long)containers.count, hasKVS ? @"YES" : @"NO");
-    mfShowICloudIDListPage(bundleID, appName, containers, hasKVS);
+    // 永远给一个「默认容器」cell，点了试调 fetch，错了就告诉用户原因——不再依赖 entitlements 预检
+    NSMutableArray *arr = [NSMutableArray arrayWithObject:@"(默认容器)"];
+    mfKLog(@"Open list page (v2.6.81 trial-mode, kvs=%@)", hasKVS ? @"YES" : @"NO");
+    mfShowICloudIDListPage(bundleID, appName, arr, hasKVS);
 }
 
 // ====== 面板页面 ======
