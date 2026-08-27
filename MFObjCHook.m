@@ -207,6 +207,15 @@ void mfShowObjCHookPage(void) {
     [addBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfObjCHookFormAddTapped") forControlEvents:UIControlEventTouchUpInside];
     [sv addSubview:addBtn]; y += 46;
 
+    // v2.6.71: 方法定位器——输入 selector 扫全类找宿主(混淆 app 判定方法的归属类)
+    UIButton *locBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    locBtn.frame = CGRectMake(16, y, cw-32, 38);
+    locBtn.backgroundColor = [UIColor systemTealColor]; locBtn.layer.cornerRadius = 9;
+    locBtn.tintColor = UIColor.whiteColor;
+    [locBtn setTitle:@"🎯 定位方法(找类名)" forState:UIControlStateNormal];
+    [locBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfObjCLocatorTapped") forControlEvents:UIControlEventTouchUpInside];
+    [sv addSubview:locBtn]; y += 46;
+
     for (NSDictionary *r in g_objcHooks) {
         UIView *row = [[UIView alloc] initWithFrame:CGRectMake(12, y, cw-24, 64)];
         row.backgroundColor = [UIColor secondarySystemBackgroundColor];
@@ -557,4 +566,136 @@ static void hook_sk1_finish(id self, SEL _cmd, id tx) {
         return;
     }
     if (orig_sk1_finish) orig_sk1_finish(self, _cmd, tx);
+}
+
+// ====== v2.6.71 方法定位器：全类扫描 selector → 宿主类名(混淆 app 判定方法定位) ======
+
+NSArray *mfFindClassesForSelector(NSString *selName) {
+    SEL target = NSSelectorFromString(selName);
+    if (!target) return @[];
+    NSMutableArray *hits = [NSMutableArray array];
+    int nClasses = objc_getClassList(NULL, 0);
+    Class *buffer = (Class *)malloc(sizeof(Class) * nClasses);
+    objc_getClassList(buffer, nClasses);
+    for (int i = 0; i < nClasses; i++) {
+        Class cls = buffer[i];
+        const char *clsName = class_getName(cls);
+        if (!clsName || strncmp(clsName, "NS", 2) == 0) continue;
+        if (strncmp(clsName, "UI", 2) == 0) continue;
+        if (!strstr(clsName, "Scroll") && !strstr(clsName, "sugarmo") && !strstr(clsName, "Picsew") && !strstr(clsName, "Swift")) {
+            // 只要可能的主 app 类 —— 宽松: 全部保留, 系统框架方法名也几乎不会撞混淆名
+        }
+        BOOL isInst = NO;
+        @try {
+            isInst = [cls instancesRespondToSelector:target];
+        } @catch (NSException *e) { continue; }
+        BOOL isClass = NO;
+        @try {
+            isClass = class_respondsToSelector(objc_getMetaClass(clsName), target);
+        } @catch (NSException *e) { }
+        if (isInst || isClass) {
+            [hits addObject:@{@"class": @(clsName), @"kind": isClass ? @"类方法" : @"实例方法"}];
+        }
+    }
+    free(buffer);
+    return hits;
+}
+
+static NSString *g_locatorSel = @"";
+
+// 定位页控制器
+@interface MFSelectorLocator : NSObject <UITableViewDataSource, UITableViewDelegate>
+@property (copy) NSArray *results;
+@property (nonatomic, weak) UITableView *table;
+@property (nonatomic, weak) UILabel *stateLabel;
+@property (nonatomic, weak) UITextField *tf;
+@end
+@implementation MFSelectorLocator
+- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s { return (NSInteger)self.results.count; }
+- (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
+    static NSString *rid = @"loc2";
+    UITableViewCell *c = [tv dequeueReusableCellWithIdentifier:rid];
+    if (!c) c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:rid];
+    NSDictionary *r = self.results[ip.row];
+    c.textLabel.text = r[@"class"];
+    c.textLabel.font = [UIFont monospacedSystemFontOfSize:13 weight:UIFontWeightMedium];
+    c.detailTextLabel.text = r[@"kind"];
+    c.detailTextLabel.font = [UIFont systemFontOfSize:10];
+    c.backgroundColor = UIColor.clearColor;
+    return c;
+}
+- (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
+    [tv deselectRowAtIndexPath:ip animated:YES];
+    NSDictionary *r = self.results[ip.row];
+    // 生成 ObjC 规则(强制返回 YES): class + selector + mode=强制返回
+    mfObjCHookPersist(r[@"class"], g_locatorSel, 1, nil);
+    mfToast([NSString stringWithFormat:@"✅ 规则: %@ %@", r[@"class"], g_locatorSel]);
+    mfPopPage();
+    mfPopPage();
+}
+@end
+
+void mfShowSelectorLocatorPage(void) {
+    UIView *page = mfMakePage(@"定位方法", YES);
+    UILabel *hint = [[UILabel alloc] initWithFrame:CGRectMake(16, 46, g_mfCardW - 32, 34)];
+    hint.text = @"输入 selector(如 canLicenseunzfj:)，扫全类找宿主类名。点击命中类→自动建强制返回YES规则。";
+    hint.font = [UIFont systemFontOfSize:11];
+    hint.textColor = [UIColor secondaryLabelColor];
+    hint.numberOfLines = 3;
+    [page addSubview:hint];
+
+    UITextField *tf = [[UITextField alloc] initWithFrame:CGRectMake(16, 86, g_mfCardW - 32, 36)];
+    tf.borderStyle = UITextBorderStyleRoundedRect;
+    tf.font = [UIFont monospacedSystemFontOfSize:12 weight:UIFontWeightRegular];
+    tf.autocapitalizationType = UITextAutocapitalizationTypeNone;
+    tf.autocorrectionType = UITextAutocorrectionTypeNo;
+    tf.text = g_locatorSel.length ? g_locatorSel : @"canLicenseunzfj:";
+    [page addSubview:tf];
+
+    UIButton *scanBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    scanBtn.frame = CGRectMake(16, 128, g_mfCardW - 32, 36);
+    [scanBtn setTitle:@"🔍 扫描" forState:UIControlStateNormal];
+    scanBtn.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
+    scanBtn.backgroundColor = [UIColor systemBlueColor];
+    scanBtn.tintColor = UIColor.whiteColor;
+    scanBtn.layer.cornerRadius = 8;
+    objc_setAssociatedObject(scanBtn, "locTF", tf, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [scanBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfObjCLocateScan:") forControlEvents:UIControlEventTouchUpInside];
+    [page addSubview:scanBtn];
+
+    UILabel *state = [[UILabel alloc] initWithFrame:CGRectMake(16, 170, g_mfCardW - 32, 18)];
+    state.text = @"";
+    state.font = [UIFont systemFontOfSize:11];
+    state.textColor = [UIColor secondaryLabelColor];
+    [page addSubview:state];
+
+    UITableView *tb = [[UITableView alloc] initWithFrame:CGRectMake(0, 192, g_mfCardW, g_mfCardH - 192)
+                                                   style:UITableViewStylePlain];
+    tb.backgroundColor = UIColor.clearColor;
+    [page addSubview:tb];
+
+    MFSelectorLocator *loc = [[MFSelectorLocator alloc] init];
+    loc.table = tb; loc.stateLabel = state; loc.tf = tf;
+    tb.dataSource = loc; tb.delegate = loc;
+    objc_setAssociatedObject(page, "locator", loc, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    mfPushPage(page);
+}
+
+void mfRunSelectorLocatorFromButton(UIButton *btn) {
+    UITextField *tf = objc_getAssociatedObject(btn, "locTF");
+    if (!tf) return;
+    NSString *sel = [tf.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (sel.length == 0) { mfToast(@"⚠️ 输入 selector"); return; }
+    g_locatorSel = sel;
+    OH_LOG(@"locator scan: %@", sel);
+    UIView *pg = tf;
+    while (pg && !objc_getAssociatedObject(pg, "locator")) pg = pg.superview;
+    MFSelectorLocator *loc = objc_getAssociatedObject(pg, "locator");
+    if (!loc) return;
+    loc.stateLabel.text = [NSString stringWithFormat:@"🔍 扫描 %@ …", sel];
+    NSArray *hits = mfFindClassesForSelector(sel);
+    loc.results = hits;
+    [loc.table reloadData];
+    loc.stateLabel.text = [NSString stringWithFormat:@"命中 %lu 个类（点击建规则）", (unsigned long)hits.count];
+    OH_LOG(@"locator: %lu hits", (unsigned long)hits.count);
 }

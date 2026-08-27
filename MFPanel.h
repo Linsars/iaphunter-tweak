@@ -175,6 +175,9 @@ void mfObjCTxProbeTapped(void);   // 🧪 伪造交易实验
 void mfSK1SwitchChanged(UISwitch *sw);   // ⚡ SK1 通杀开关
 void mfSK1AutoStart(void);   // 冷启动自动应用   // v2.6.47 页面内表单添加(替代弹窗)
 void mfObjCHookToggle(UISwitch *sw);
+void mfShowSelectorLocatorPage(void);      // v2.6.71 方法定位器页
+void mfRunSelectorLocatorFromButton(UIButton *btn);
+NSArray *mfFindClassesForSelector(NSString *selName);
 void mfObjCHookDelTapped(UIButton *btn);
 void mfObjCHookPersist(NSString *cls, NSString *sel, int mode, id val);
 
