@@ -73,6 +73,8 @@ void mfKeychainDataDisplayFromButton(UIButton *btn);    // 详情：Base64/Hex/U
 void mfCopyKeychainDataFromDetailButton(UIButton *btn); // 详情：复制数据
 void mfEditKeychainDataFromDetailButton(UIButton *btn); // 详情：编辑/保存数据
 void mfDoRestoreFromPageButton(UIButton *btn);          // 恢复页：执行恢复
+void mfKbSaveAndDismissFromBar(UIBarButtonItem *item);  // 键盘工具条：保存并收起
+void mfKbDismissKeyboardFromBar(UIBarButtonItem *item); // 键盘工具条：收起
 
 // ====== JS 规则引擎（MFJSRules.m） ======
 BOOL mfJSLoadScript(NSString *script);

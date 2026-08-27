@@ -380,69 +380,22 @@ static NSArray *mfGetFrontmostAppContainerIdentifiers(NSString **outBundleID, NS
 static void mfQueryRecordIDForContainer(NSString *containerIdentifier,
                                          void (^completion)(NSString *recordName, NSError *error)) {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        // v2.6.68 预检：无 iCloud entitlement 的进程调 CKContainer 会直接 SIGTRAP(CloudKit 内部断言)，@try 接不住
-        // 必须在发出任何 CK 调用前用 SecTask 检查
-        SecTaskRef st = SecTaskCreateFromSelf(NULL);
-        if (st) {
-            id svc = CFBridgingRelease(SecTaskCopyValueForEntitlement(st, (__bridge CFStringRef)@"com.apple.developer.icloud-services", NULL));
-            CFRelease(st);
-            if (!svc) {
-                mfKLog(@"fetchRecordID aborted: no com.apple.developer.icloud-services entitlement");
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    completion(nil, [NSError errorWithDomain:@"MFCloudKit" code:-3 userInfo:@{NSLocalizedDescriptionKey: @"此 App 无 iCloud entitlement，跳过 CK 调用"}]);
-                });
-                return;
-            }
-        }
+        // v2.6.69: CloudKit 调用在本环境(越狱+注入)实测必 SIGTRAP 且 @try/entitlement 预检均拦不住
+        // (Picsew 正版本身有 icloud-services entitlement, trap 发生在 CK 框架内部与账号环境检查,
+        //  reference: 053020/060826 两份 .ips 同一地址 0x1b489189c)。已三次失败标记 dead end，
+        // 停用直接调用；后续如需恢复须走 cloudd XPC 方案。
+        mfKLog(@"fetchRecordID: CK direct call disabled since v2.6.69 (SIGTRAP in CloudKit framework)");
+        dispatch_async(dispatch_get_main_queue(), ^{
+            completion(nil, [NSError errorWithDomain:@"MFCloudKit" code:-99 userInfo:@{NSLocalizedDescriptionKey: @"此环境(iCloud 权限正常)下 CloudKit 框架内部断言必崩，已停用直连。Record ID 可在关闭插件的纯净环境查看"}]);
+        });
+        return;
         
-        CKContainer *container = nil;
-        NSString *fetchError = nil;
-        
-        @try {
-            if (containerIdentifier && ![containerIdentifier isEqualToString:@"(默认容器)"]) {
-                dlopen("/System/Library/Frameworks/CloudKit.framework/CloudKit", RTLD_LAZY); // v2.3.2 惰性加载
-                container = [(id)objc_getClass("CKContainer") containerWithIdentifier:containerIdentifier];
-            } else {
-                dlopen("/System/Library/Frameworks/CloudKit.framework/CloudKit", RTLD_LAZY);
-                container = [(id)objc_getClass("CKContainer") defaultContainer];
-            }
-            if (!container) fetchError = @"CKContainer 为空";
-        } @catch (NSException *e) {
-            mfKLog(@"CKContainer exception: %@", e);
-            fetchError = e.reason ?: @"无 iCloud 权限";
-            container = nil;
-        }
-        
-        if (!container) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                completion(nil, [NSError errorWithDomain:@"MFCloudKit" code:-1 userInfo:@{NSLocalizedDescriptionKey: fetchError ?: @"无 iCloud 权限"}]);
-            });
-            return;
-        }
-        
-        // 有权限才发查询（fetchUserRecordID 回调式，正常登录态下不会再 trap）
-        @try {
-            [container accountStatusWithCompletionHandler:^(CKAccountStatus status, NSError *err) {
-                if (status == CKAccountStatusAvailable) {
-                    [container fetchUserRecordIDWithCompletionHandler:^(CKRecordID *recordID, NSError *error) {
-                        dispatch_async(dispatch_get_main_queue(), ^{
-                            completion(recordID.recordName, error);
-                        });
-                    }];
-                } else {
-                    dispatch_async(dispatch_get_main_queue(), ^{
-                        NSString *why = err.localizedDescription ?: (status == CKAccountStatusNoAccount ? @"未登录 iCloud" : @"账户不可用");
-                        mfKLog(@"account status=%ld err=%@", (long)status, why);
-                        completion(nil, [NSError errorWithDomain:@"MFCloudKit" code:-4 userInfo:@{NSLocalizedDescriptionKey: why}]);
-                    });
-                }
-            }];
-        } @catch (NSException *e) {
-            mfKLog(@"accountStatus/fetchUserRecordID exception: %@", e);
-            dispatch_async(dispatch_get_main_queue(), ^{
-                completion(nil, [NSError errorWithDomain:@"MFCloudKit" code:-2 userInfo:@{NSLocalizedDescriptionKey: e.reason ?: @"查询异常"}]);
-            });
-        }
+        /* ---- 原实现存档（历史三杀记录勿轻易重启）----
+        ...SecTask entitlement 预检...
+        ...CKContainer containerWithIdentifier:...
+        ...accountStatusWithCompletionHandler 分流...
+        ...fetchUserRecordIDWithCompletionHandler...
+        */
     });
 }
 
@@ -1002,6 +955,20 @@ static void mfShowKeychainDetailMode(NSDictionary *item, BOOL autoEdit) {
     }
     objc_setAssociatedObject(dataView, "modeBtns", modeBtns, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     
+    // v2.6.69 键盘附件工具条：💾保存并收起 / ⌨️收起（键盘弹出时底部按钮被遮，toolbar 是唯一操作入口）
+    UIToolbar *kbBar = [[UIToolbar alloc] initWithFrame:CGRectMake(0, 0, g_mfCardW, 44)];
+    kbBar.barStyle = UIBarStyleDefault;
+    UIBarButtonItem *saveI = [[UIBarButtonItem alloc] initWithTitle:@"💾 保存并收起" style:UIBarButtonItemStylePlain target:g_mfCtrl action:@selector(mfKbSaveAndDismiss:)];
+    saveI.tintColor = [UIColor systemGreenColor];
+    UIBarButtonItem *dismissI = [[UIBarButtonItem alloc] initWithTitle:@"⌨️ 收起" style:UIBarButtonItemStylePlain target:g_mfCtrl action:@selector(mfKbDismissKeyboard:)];
+    dismissI.tintColor = [UIColor labelColor];
+    kbBar.items = @[[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:nil action:nil],
+                    dismissI,
+                    saveI];
+    dataView.inputAccessoryView = kbBar;
+    objc_setAssociatedObject(saveI, "dataView", dataView, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(dismissI, "dataView", dataView, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    
     y = dvY + (g_mfCardH - dvY - bottomZone) + 8;
     
     // 底部按钮行（复制/编辑/删除 → g_mfCtrl 转发，与列表 swipe 动作一致）
@@ -1023,6 +990,7 @@ static void mfShowKeychainDetailMode(NSDictionary *item, BOOL autoEdit) {
     editBtn.layer.cornerRadius = 8;
     objc_setAssociatedObject(editBtn, "item", item, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(editBtn, "dataView", dataView, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(dataView, "detailEditBtn", editBtn, OBJC_ASSOCIATION_RETAIN_NONATOMIC); // toolbar 保存回查用
     [editBtn addTarget:g_mfCtrl action:@selector(mfEditKeychainData:) forControlEvents:UIControlEventTouchUpInside];
     [sv addSubview:editBtn];
     y += 44;
@@ -1147,6 +1115,27 @@ void mfEditKeychainDataFromDetailButton(UIButton *btn) {
     BOOL editing = [objc_getAssociatedObject(btn, "editing") boolValue];
     if (!editing) mfKeychainEnterEdit(btn);
     else mfKeychainSaveEdit(btn);
+}
+
+// v2.6.69 键盘附件工具条：💾 保存并收起（走详情页编辑按钮的保存逻辑）
+void mfKbSaveAndDismissFromBar(UIBarButtonItem *item) {
+    UITextView *dv = objc_getAssociatedObject(item, "dataView");
+    if (!dv) return;
+    UIButton *editBtn = objc_getAssociatedObject(dv, "detailEditBtn");
+    if (editBtn && [objc_getAssociatedObject(editBtn, "editing") boolValue]) {
+        mfKeychainSaveEdit(editBtn);   // 保存(内部已 resignFirstResponder)
+    } else {
+        [dv resignFirstResponder];     // 不在编辑态则直接收起
+    }
+}
+
+// v2.6.69 键盘附件工具条：⌨️ 收起
+void mfKbDismissKeyboardFromBar(UIBarButtonItem *item) {
+    UITextView *dv = objc_getAssociatedObject(item, "dataView");
+    if (dv) {
+        [dv resignFirstResponder];
+        mfKLog(@"keyboard dismissed via accessory bar");
+    }
 }
 
 // 删除 Keychain 项 (从列表页按钮调用) - 外部可见
