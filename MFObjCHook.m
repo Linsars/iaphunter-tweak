@@ -70,6 +70,10 @@ static IMP mfWrapRet(char ret, int nargs, IMP orig, int mode, id val) {
         else if (ret == 'i') blk = ^int(id s, SEL c){ return 1; };
         else blk = ^BOOL(id s, SEL c){ return YES; };
     }
+    // v2.6.77: Swift Bool ('B') 支持——PurchasesReceiptParser.receiptHasTransactionsWithReceiptData: 返回 _Bool
+    if ((ret == 'B' || ret == 'b') && nargs == 1) {
+        blk = ^BOOL(id s, SEL c, id a1){ return YES; };
+    }
     return blk ? imp_implementationWithBlock(blk) : nil;
 }
 
