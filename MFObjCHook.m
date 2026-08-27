@@ -73,6 +73,59 @@ static IMP mfWrapRet(char ret, int nargs, IMP orig, int mode, id val) {
     return blk ? imp_implementationWithBlock(blk) : nil;
 }
 
+// v2.6.75 观察模式：mode=3 → 调原方法 + 完整打日志（找出判定读取的 key/参数），不改行为
+static IMP mfObjCWrapObserve(Method m, NSString *cls, NSString *sel) {
+    IMP orig = method_getImplementation(m);
+    NSMethodSignature *sig = [NSMethodSignature signatureWithObjCTypes:method_getTypeEncoding(m)];
+    NSUInteger nargs = sig.numberOfArguments;
+    char ret = sig.methodReturnType[0];
+    if (orig) {
+#define MFOBS_LOG(KEY...) do { OH_LOG(@"OBS[%@ %@] %@", cls, sel, [NSString stringWithFormat:KEY]); } while(0)
+        if (ret == '@' && nargs == 3) {
+            id (*or3)(id,SEL,id) = (void *)orig;
+            return imp_implementationWithBlock(^id(id s, SEL c, id a0){
+                MFOBS_LOG(@"a0=%@", a0);
+                return or3(s, c, a0);
+            });
+        } else if (ret == '@' && nargs == 2) {
+            id (*or2)(id,SEL) = (void *)orig;
+            return imp_implementationWithBlock(^id(id s, SEL c){
+                MFOBS_LOG(@"(no-arg)");
+                return or2(s, c);
+            });
+        } else if ((ret == 'c' || ret == 'B') && nargs == 3) {
+            BOOL (*orB)(id,SEL,id) = (void *)orig;
+            return imp_implementationWithBlock(^BOOL(id s, SEL c, id a0){
+                BOOL v = orB(s, c, a0);
+                MFOBS_LOG(@"a0=%@ -> %d", a0, v);
+                return v;
+            });
+        } else if ((ret == 'c' || ret == 'B') && nargs == 2) {
+            BOOL (*orB2)(id,SEL) = (void *)orig;
+            return imp_implementationWithBlock(^BOOL(id s, SEL c){
+                BOOL v = orB2(s, c);
+                MFOBS_LOG(@"(no-arg) -> %d", v);
+                return v;
+            });
+        } else if (ret == 'q' && nargs == 2) {
+            long long (*orQ2)(id,SEL) = (void *)orig;
+            return imp_implementationWithBlock(^long long(id s, SEL c){
+                long long v = orQ2(s, c);
+                MFOBS_LOG(@"(no-arg) -> %lld", v);
+                return v;
+            });
+        } else if (ret == 'q' && nargs == 3) {
+            long long (*orQ3)(id,SEL,id) = (void *)orig;
+            return imp_implementationWithBlock(^long long(id s, SEL c, id a0){
+                long long v = orQ3(s, c, a0);
+                MFOBS_LOG(@"a0=%@ -> %lld", a0, v);
+                return v;
+            });
+        }
+    }
+    return NULL;
+}
+
 #pragma mark - 应用/还原
 // ctor 静默应用包装(不弹 toast)
 void mfObjCHookApplySilent(void) {
@@ -108,6 +161,10 @@ void mfObjCHookApply(void) {
         if (args < 0) { OH_LOG(@"skip: unsafe signature %@#%@", rule[@"class"], rule[@"selector"]); continue; }
         IMP orig = method_getImplementation(m);
         IMP wrap = mfWrapRet(ret, args, orig, [rule[@"mode"] intValue], rule[@"value"]);
+        // v2.6.75 观察模式(mode=3)：透传原实现 + 完整打日志，观察判定读取的 key/参数
+        if (!wrap && [rule[@"mode"] intValue] == 3) {
+            wrap = mfObjCWrapObserve(m, rule[@"class"], rule[@"selector"]);
+        }
         if (!wrap) { OH_LOG(@"skip: wrap fail %@#%@", rule[@"class"], rule[@"selector"]); continue; }
         if (class_getMethodImplementation(cls, sel) != orig) class_addMethod(cls, sel, wrap, enc);
         else method_setImplementation(m, wrap);
@@ -186,7 +243,7 @@ void mfShowObjCHookPage(void) {
     g_selF = [[UITextField alloc] initWithFrame:CGRectMake(24+(cw-40)/2, y, (cw-40)/2, 34)];
     g_selF.placeholder = @"方法 (appStoreReceiptURL)";
     [sv addSubview:g_selF]; y += 40;
-    g_modeSeg = [[UISegmentedControl alloc] initWithItems:@[@"透传", @"返回 nil", @"str 值"]];
+    g_modeSeg = [[UISegmentedControl alloc] initWithItems:@[@"透传", @"返回 nil", @"str 值", @"观察"]];
     g_modeSeg.frame = CGRectMake(16, y, (cw-40)/2, 30);
     g_modeSeg.selectedSegmentIndex = 1;
     [sv addSubview:g_modeSeg];
@@ -319,7 +376,7 @@ void mfObjCTxProbeTapped(void) {
 // v2.6.47: 页面内表单添加(替代弹窗)——直接读表单字段
 void mfObjCHookFormAddTapped(void) {
     if (!g_clsF) { OH_LOG(@"form not ready"); return; }
-    int mode = (int)g_modeSeg.selectedSegmentIndex; // 0=透传 1=nil 2=str
+    int mode = (int)g_modeSeg.selectedSegmentIndex; // 0=透传 1=nil 2=str 3=观察
     id val = mode == 2 ? (g_valF.text ?: @"") : nil;
     mfObjCHookPersist(g_clsF.text, g_selF.text, mode, val);
 }
