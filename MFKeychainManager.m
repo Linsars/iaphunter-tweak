@@ -62,6 +62,9 @@ static void mfPresentOnPanelVC(UIAlertController *alert) {
 }
 
 // 删除单个 Keychain 项 (静态内部函数)
+static BOOL mfDeleteKeychainItemInternal(NSDictionary *item);
+static void mfRefreshKeychainListIfVisible(void);
+
 static BOOL mfDeleteKeychainItemInternal(NSDictionary *item) {
     mfKLog(@"mfDeleteKeychainItemInternal called for account=%@", item[(__bridge id)kSecAttrAccount] ?: @"(nil)");
     NSDictionary *deleteQuery = @{
