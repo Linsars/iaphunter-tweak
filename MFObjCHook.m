@@ -71,8 +71,11 @@ static IMP mfWrapRet(char ret, int nargs, IMP orig, int mode, id val) {
         else blk = ^BOOL(id s, SEL c){ return YES; };
     }
     // v2.6.77: Swift Bool ('B') 支持——PurchasesReceiptParser.receiptHasTransactionsWithReceiptData: 返回 _Bool
-    if ((ret == 'B' || ret == 'b') && nargs == 1) {
+    if ((ret == 'B' || ret == 'b') && nargs == 1 && mode == 4) {
         blk = ^BOOL(id s, SEL c, id a1){ return YES; };
+    } else if ((ret == 'B' || ret == 'b') && nargs == 1) {
+        BOOL (*orB)(id,SEL,id) = (void *)orig;
+        blk = ^BOOL(id s, SEL c, id a1){ return orB(s, c, a1); };
     }
     return blk ? imp_implementationWithBlock(blk) : nil;
 }
@@ -162,17 +165,20 @@ void mfObjCHookApply(void) {
             continue;
         }
         IMP orig = method_getImplementation(m);
-        IMP wrap = mfWrapRet(ret, args, orig, [rule[@"mode"] intValue], rule[@"value"]);
-        // v2.6.75 观察模式(mode=3)：透传原实现 + 完整打日志，观察判定读取的 key/参数
-        if (!wrap && [rule[@"mode"] intValue] == 3) {
+        int ruleMode = [rule[@"mode"] intValue];
+        IMP wrap = NULL;
+        if (ruleMode == 3) {
+            // v2.6.78 观察模式独立旁路：绝不强制，纯透传+日志（避免 'B' 分支误伤）
             wrap = mfObjCWrapObserve(m, rule[@"class"], rule[@"selector"], rule[@"value"]);
+        } else {
+            wrap = mfWrapRet(ret, args, orig, ruleMode, rule[@"value"]);
         }
         if (!wrap) { OH_LOG(@"skip: wrap fail %@#%@", rule[@"class"], rule[@"selector"]); continue; }
         if (class_getMethodImplementation(cls, sel) != orig) class_addMethod(cls, sel, wrap, enc);
         else method_setImplementation(m, wrap);
         [g_hookRestore addObject:@{@"cls": cls, @"sel": NSStringFromSelector(sel), @"imp": [NSValue valueWithPointer:orig], @"enc": [NSString stringWithUTF8String:enc]}];
         hooked++;
-        OH_LOG(@"hook OK: %@#%@ mode=%d", rule[@"class"], rule[@"selector"], [rule[@"mode"] intValue]);
+        OH_LOG(@"hook OK: %@#%@ mode=%d", rule[@"class"], rule[@"selector"], ruleMode);
     }
     g_hookOn = hooked > 0;
     if (hooked > 0 && !g_applySilent) mfToast([NSString stringWithFormat:@"🔧 ObjC 规则已应用 (%d条)", hooked]);
@@ -245,7 +251,7 @@ void mfShowObjCHookPage(void) {
     g_selF = [[UITextField alloc] initWithFrame:CGRectMake(24+(cw-40)/2, y, (cw-40)/2, 34)];
     g_selF.placeholder = @"方法 (appStoreReceiptURL)";
     [sv addSubview:g_selF]; y += 40;
-    g_modeSeg = [[UISegmentedControl alloc] initWithItems:@[@"透传", @"返回 nil", @"str 值", @"观察"]];
+    g_modeSeg = [[UISegmentedControl alloc] initWithItems:@[@"透传", @"返回 nil", @"str 值", @"观察", @"✔YES"]];
     g_modeSeg.frame = CGRectMake(16, y, (cw-40)/2, 30);
     g_modeSeg.selectedSegmentIndex = 1;
     [sv addSubview:g_modeSeg];
