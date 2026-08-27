@@ -1265,8 +1265,8 @@ void mfShowKeychainManagerPage(void) {
     gy = mfGridButton(page, 16, gy, gw, @"查看列表", @"📋", @selector(mfShowKeychainListPage), NO, nil);
     gy = mfGridButton(page, 16 + gw + 12, gy - 92, gw, @"Dump 当前 App", @"🔎", @selector(mfDumpCurrentApp), NO, nil);
     gy = mfGridButton(page, 16, gy, gw, @"获取 iCloud ID", @"☁️", @selector(mfFetchCloudKitRecordIDAuto), NO, nil);
-    gy = mfGridButton(page, 16 + gw + 12, gy - 92, gw, @"导出到剪贴板", @"📤", @selector(mfShowCopyAction), NO, nil);
-    gy = mfGridButton(page, 16, gy, gw, @"从剪贴板恢复", @"📥", @selector(mfShowRestorePrompt), NO, nil);
+    gy = mfGridButton(page, 16 + gw + 12, gy - 92, gw, @"导出到剪贴板", @"📤", @selector(mfCopyKeychainAction), NO, nil);
+    gy = mfGridButton(page, 16, gy, gw, @"从剪贴板恢复", @"📥", @selector(mfShowRestorePromptAction), NO, nil);
     
     mfPushPage(page);
 }
