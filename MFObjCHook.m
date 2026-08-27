@@ -582,7 +582,7 @@ NSArray *mfFindClassesForSelector(NSString *selName) {
         const char *clsName = class_getName(cls);
         if (!clsName || strncmp(clsName, "NS", 2) == 0) continue;
         if (strncmp(clsName, "UI", 2) == 0) continue;
-        if (strncmp(clsName, "_", 1) == 0) continue;  // 占位/私有
+        if (strncmp(clsName, "__", 2) == 0) continue;   // 只跳系统双下划线私有; _TtC 开头的 Swift 主类必须保留!
         // v2.6.72: 关键——绝不用 instancesRespondToSelector:/respondsToSelector:(会对脆类触发消息转发 → SIGTRAP,
         //          实测 131944.ips ___forwarding___ crash)。只查 objc runtime 方法表(class_getInstanceMethod),
         //          不产生任何消息发送, 对随意类安全。
