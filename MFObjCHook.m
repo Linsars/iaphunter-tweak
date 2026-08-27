@@ -693,4 +693,27 @@ void mfRunSelectorLocatorFromButton(UIButton *btn) {
     [loc.table reloadData];
     loc.stateLabel.text = [NSString stringWithFormat:@"命中 %lu 个类（点击建规则）", (unsigned long)hits.count];
     OH_LOG(@"locator: %lu hits", (unsigned long)hits.count);
+    if (hits.count == 0) {
+        // v2.6.74 诊断：0 命中时 dump 所有 app 相关类(Scroll/Clip/sugarmo/Picsew/App)+ 每类方法数+目标命中，定位 Swift 宿主
+        int nc = objc_getClassList(NULL, 0);
+        Class *buf = (Class *)malloc(sizeof(Class) * nc);
+        objc_getClassList(buf, nc);
+        for (int i = 0; i < nc; i++) {
+            const char *nm = class_getName(buf[i]);
+            if (!nm) continue;
+            NSString *nn = @(nm);
+            BOOL rel = [nn containsString:@"Scroll"] || [nn containsString:@"sugarmo"] || [nn containsString:@"Picsew"] || [nn containsString:@"App"] || [nn containsString:@"TtC9"];
+            if (!rel) continue;
+            unsigned mc_inst = 0, mc_cls = 0;
+            Method *mi = class_copyMethodList(buf[i], &mc_inst);
+            free(mi);
+            Method *mc = class_copyMethodList(objc_getMetaClass(nm), &mc_cls);
+            free(mc);
+            BOOL hasTarget = class_getInstanceMethod(buf[i], NSSelectorFromString(g_locatorSel)) != NULL
+                          || class_getClassMethod(buf[i], NSSelectorFromString(g_locatorSel)) != NULL;
+            OH_LOG(@"loc-diag: %s inst=%u cls=%u target=%@", nm, mc_inst, mc_cls, hasTarget ? @"YES" : @"no");
+        }
+        free(buf);
+        OH_LOG(@"loc-diag: total classes=%d", nc);
+    }
 }
