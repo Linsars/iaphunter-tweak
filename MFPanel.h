@@ -72,6 +72,7 @@ void mfCopyDumpJsonFromButton(UIButton *btn);  // 复制 Dump JSON（按钮）
 void mfKeychainDataDisplayFromButton(UIButton *btn);    // 详情：Base64/Hex/UTF8 切换
 void mfCopyKeychainDataFromDetailButton(UIButton *btn); // 详情：复制数据
 void mfEditKeychainDataFromDetailButton(UIButton *btn); // 详情：编辑/保存数据
+void mfDoRestoreFromPageButton(UIButton *btn);          // 恢复页：执行恢复
 
 // ====== JS 规则引擎（MFJSRules.m） ======
 BOOL mfJSLoadScript(NSString *script);

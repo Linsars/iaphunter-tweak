@@ -1551,6 +1551,9 @@ void mfShowProductPage(void) {
 // Keychain Dump 页：复制 JSON
 - (void)mfCopyDumpJson:(UIButton *)btn { mfCopyDumpJsonFromButton(btn); }
 
+// Keychain 恢复页：执行恢复
+- (void)mfDoRestoreFromPage:(UIButton *)btn { mfDoRestoreFromPageButton(btn); }
+
 // iCloud Record ID 复制 (从列表页点击 cell)
 - (void)mfCopyICloudRecordID:(UITapGestureRecognizer *)tap {
     UIView *cell = tap.view;
@@ -2151,7 +2154,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define IAPTOOLS_VERSION @"2.6.65"
+#define IAPTOOLS_VERSION @"2.6.66"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {

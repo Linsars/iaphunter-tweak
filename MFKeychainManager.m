@@ -79,7 +79,7 @@ static BOOL mfDeleteKeychainItemInternal(NSDictionary *item) {
 
 // ====== 核心操作 (在后台线程执行) ======
 
-// 导出 Keychain -> Base64 JSON -> 粘贴板
+// 导出 Keychain -> Base64 JSON -> 粘贴板（提示全部用浮层 toast，不用弹窗）
 static void mfCopyKeychainInBackground(void) {
     mfKLog(@"mfCopyKeychainInBackground START");
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
@@ -87,11 +87,7 @@ static void mfCopyKeychainInBackground(void) {
         NSArray *items = mfGetKeychainItems();
         if (items.count == 0) {
             mfKLog(@"no items to copy");
-            dispatch_async(dispatch_get_main_queue(), ^{
-                UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"提示" message:@"无 Keychain 项可导出" preferredStyle:UIAlertControllerStyleAlert];
-                [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
-                mfPresentOnPanelVC(alert);
-            });
+            dispatch_async(dispatch_get_main_queue(), ^{ mfToast(@"⚠️ 无 Keychain 项可导出"); });
             return;
         }
         
@@ -137,24 +133,12 @@ static void mfCopyKeychainInBackground(void) {
             mfKLog(@"copied to pasteboard");
             
             dispatch_async(dispatch_get_main_queue(), ^{
-                @try {
-                    mfKLog(@"presenting toast alert");
-                    UIAlertController *toast = [UIAlertController alertControllerWithTitle:nil message:[NSString stringWithFormat:@"✅ 已复制到剪贴板 (%lu 项, %lu 字符)", (unsigned long)items.count, (unsigned long)base64.length] preferredStyle:UIAlertControllerStyleAlert];
-                    mfPresentOnPanelVC(toast);
-                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1.5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-                        [toast dismissViewControllerAnimated:YES completion:nil];
-                    });
-                } @catch (NSException *e) {
-                    mfKLog(@"toast crash: %@", e);
-                }
+                mfKLog(@"copy done -> toast");
+                mfToast([NSString stringWithFormat:@"✅ 已复制到剪贴板 (%lu 项, %lu 字符)", (unsigned long)items.count, (unsigned long)base64.length]);
             });
         } @catch (NSException *e) {
             mfKLog(@"JSON serialization exception: %@", e);
-            dispatch_async(dispatch_get_main_queue(), ^{
-                UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"导出失败" message:[NSString stringWithFormat:@"JSON 编码异常: %@", e.reason] preferredStyle:UIAlertControllerStyleAlert];
-                [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
-                mfPresentOnPanelVC(alert);
-            });
+            dispatch_async(dispatch_get_main_queue(), ^{ mfToast([NSString stringWithFormat:@"❌ 导出失败: %@", e.reason ?: @""]); });
         }
     });
     mfKLog(@"mfCopyKeychainInBackground END (async)");
@@ -170,22 +154,14 @@ static void mfRestoreKeychainInBackground(NSString *base64) {
         mfKLog(@"background queue: processing restore");
         if (!base64 || base64.length == 0) {
             mfKLog(@"ERROR: empty base64 input");
-            dispatch_async(dispatch_get_main_queue(), ^{
-                UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"失败" message:@"输入为空" preferredStyle:UIAlertControllerStyleAlert];
-                [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
-                mfPresentOnPanelVC(alert);
-            });
+            dispatch_async(dispatch_get_main_queue(), ^{ mfToast(@"❌ 输入为空"); });
             return;
         }
         
         NSData *jsonData = [[NSData alloc] initWithBase64EncodedString:base64 options:0];
         if (!jsonData) {
             mfKLog(@"Base64 decode failed, first 50 chars: %@", [base64 substringToIndex:MIN(50, base64.length)]);
-            dispatch_async(dispatch_get_main_queue(), ^{
-                UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"失败" message:@"Base64 解码失败，请确认粘贴的是导出时的完整字符串" preferredStyle:UIAlertControllerStyleAlert];
-                [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
-                mfPresentOnPanelVC(alert);
-            });
+            dispatch_async(dispatch_get_main_queue(), ^{ mfToast(@"❌ Base64 解码失败，请粘贴完整导出字符串"); });
             return;
         }
         
@@ -217,11 +193,7 @@ static void mfRestoreKeychainInBackground(NSString *base64) {
                 mfKLog(@"Parsed single item, data length=%lu", (unsigned long)itemData.length);
             } else {
                 mfKLog(@"JSON parse failed and not valid base64: %@", jsonErr);
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"失败" message:[NSString stringWithFormat:@"无法解析输入：既不是有效的导出 JSON，也不是有效的 Base64 数据\n%@", jsonErr ?: @"" ] preferredStyle:UIAlertControllerStyleAlert];
-                    [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
-                    mfPresentOnPanelVC(alert);
-                });
+                dispatch_async(dispatch_get_main_queue(), ^{ mfToast(@"❌ 无法解析输入：不是导出 JSON 也不是 Base64"); });
                 return;
             }
         } else {
@@ -244,36 +216,12 @@ static void mfRestoreKeychainInBackground(NSString *base64) {
                 if (![key isEqualToString:@"data"]) addQuery[key] = item[key];
             }
             
-            // 单个 item 模式且无 account/service 时，弹窗让用户输入
+            // 单个 item 模式且无 account/service 时：拒绝（提示走面板内说明，不再弹输入窗）
             if (isSingleItem && (!item[(__bridge id)kSecAttrAccount] || !item[(__bridge id)kSecAttrService])) {
                 dispatch_async(dispatch_get_main_queue(), ^{
-                    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"恢复单个项目"
-                                                                                   message:@"请输入账号和服务名"
-                                                                        preferredStyle:UIAlertControllerStyleAlert];
-                    [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
-                        tf.placeholder = @"账号";
-                        tf.text = @"restored_item";
-                    }];
-                    [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
-                        tf.placeholder = @"服务";
-                        tf.text = @"MinisFix_Restore";
-                    }];
-                    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-                    [alert addAction:[UIAlertAction actionWithTitle:@"恢复" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-                        NSString *account = alert.textFields[0].text ?: @"restored_item";
-                        NSString *service = alert.textFields[1].text ?: @"MinisFix_Restore";
-                        // 创建 mutable copy 并设置 account/service
-                        NSMutableDictionary *mutableItem = [item mutableCopy];
-                        mutableItem[(__bridge id)kSecAttrAccount] = account;
-                        mutableItem[(__bridge id)kSecAttrService] = service;
-                        // 在后台处理这个 item
-                        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-                            mfProcessSingleRestoreItem(mutableItem);
-                        });
-                    }]];
-                    mfPresentOnPanelVC(alert);
+                    mfToast(@"❌ 单条 Base64 需要含 service/account（请粘贴导出 JSON 数组格式）");
                 });
-                return; // 等待用户输入
+                return;
             }
             
             OSStatus status = SecItemAdd((__bridge CFDictionaryRef)addQuery, NULL);
@@ -308,19 +256,8 @@ static void mfRestoreKeychainInBackground(NSString *base64) {
         mfKLog(@"Restore done: success=%lu, duplicate=%lu, fail=%lu", (unsigned long)successCount, (unsigned long)duplicateCount, (unsigned long)failCount);
         
         dispatch_async(dispatch_get_main_queue(), ^{
-            NSString *msg;
-            if (isSingleItem) {
-                msg = [details componentsJoinedByString:@"\n"];
-            } else {
-                msg = [NSString stringWithFormat:@"成功: %lu\n已更新(重复): %lu\n失败: %lu\n\n%@", 
-                       (unsigned long)successCount, (unsigned long)duplicateCount, (unsigned long)failCount,
-                       [details componentsJoinedByString:@"\n"]];
-            }
-            UIAlertController *result = [UIAlertController alertControllerWithTitle:@"恢复完成"
-                                                                              message:msg
-                                                                       preferredStyle:UIAlertControllerStyleAlert];
-            [result addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
-            mfPresentOnPanelVC(result);
+            mfToast([NSString stringWithFormat:@"✅ 恢复完成: 成功 %lu · 更新 %lu · 失败 %lu",
+                     (unsigned long)successCount, (unsigned long)duplicateCount, (unsigned long)failCount]);
         });
     });
     mfKLog(@"mfRestoreKeychainInBackground END (async)");
@@ -365,13 +302,7 @@ void mfProcessSingleRestoreItem(NSDictionary *item) {
         resultMsg = [NSString stringWithFormat:@"❌ 添加失败 %@ / %@ (err=%d)", account, service, (int)status];
     }
     
-    dispatch_async(dispatch_get_main_queue(), ^{
-        UIAlertController *result = [UIAlertController alertControllerWithTitle:@"恢复完成"
-                                                                          message:resultMsg
-                                                                   preferredStyle:UIAlertControllerStyleAlert];
-        [result addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
-        mfPresentOnPanelVC(result);
-    });
+    dispatch_async(dispatch_get_main_queue(), ^{ mfToast(resultMsg); });
 }
 
 // ====== iCloud ID 查询 (通过当前前台 App 的 Entitlements 自动获取 Container Identifier) ======
@@ -642,23 +573,12 @@ void mfCopyICloudRecordIDFromCell(UIViewController *vc, UIView *cell) {
     NSString *recordID = objc_getAssociatedObject(cell, "recordID");
     NSString *containerID = objc_getAssociatedObject(cell, "containerID");
     if (!recordID) {
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"提示"
-                                                                       message:@"Record ID 尚未查询完成"
-                                                                preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
-        mfPresentOnPanelVC(alert);
+        mfToast(@"⏳ Record ID 尚未查询完成");
         return;
     }
     [[UIPasteboard generalPasteboard] setString:recordID];
     mfKLog(@"Copied iCloud Record ID: %@ (container: %@)", recordID, containerID);
-    
-    UIAlertController *toast = [UIAlertController alertControllerWithTitle:nil
-                                                                   message:@"✅ 已复制 Record ID"
-                                                            preferredStyle:UIAlertControllerStyleAlert];
-    mfPresentOnPanelVC(toast);
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1.0 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-        [toast dismissViewControllerAnimated:YES completion:nil];
-    });
+    mfToast(@"✅ 已复制 Record ID");
 }
 void mfFetchCloudKitRecordIDAuto(void) {
     mfKLog(@"mfFetchCloudKitRecordIDAuto called");
@@ -747,7 +667,7 @@ static NSString *mfItemSummary(NSDictionary *item) {
     copyA.backgroundColor = [UIColor systemBlueColor];
     UIContextualAction *editA = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleNormal
         title:@"编辑" handler:^(UIContextualAction *a, UIView *v, void (^done)(BOOL)) {
-            mfShowKeychainDetail(item);
+            mfShowKeychainDetailMode(item, YES);  // 直接进编辑模式
             done(YES);
         }];
     editA.backgroundColor = [UIColor systemOrangeColor];
@@ -842,11 +762,7 @@ void mfDumpCurrentAppKeychain(void) {
     mfKLog(@"mfDumpCurrentAppKeychain called");
     NSString *bundleId = mfCurrentBundleId();
     if (bundleId.length == 0) {
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"提示"
-                                                                       message:@"无法确定当前前台 App"
-                                                                preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
-        mfPresentOnPanelVC(alert);
+        mfToast(@"⚠️ 无法确定当前前台 App");
         return;
     }
     mfKLog(@"dumping keychain for app: %@", bundleId);
@@ -960,6 +876,10 @@ void mfCopyDumpJsonFromButton(UIButton *btn) {
 
 // ====== 详情页（面板式，替代弹窗） ======
 
+static void mfShowKeychainDetailMode(NSDictionary *item, BOOL autoEdit);
+static void mfKeychainEnterEdit(UIButton *btn);
+static void mfKeychainSaveEdit(UIButton *btn);
+
 static void mfDoSaveKeychainData(NSDictionary *item, NSData *newData, void (^done)(BOOL)) {
     NSMutableDictionary *query = [NSMutableDictionary dictionary];
     query[(__bridge id)kSecClass] = (__bridge id)kSecClassGenericPassword;
@@ -974,8 +894,10 @@ static void mfDoSaveKeychainData(NSDictionary *item, NSData *newData, void (^don
 }
 
 // 详情面板：信息 + Base64/Hex/UTF8 查看 + 复制/编辑/删除
-void mfShowKeychainDetail(NSDictionary *item) {
-    mfKLog(@"mfShowKeychainDetail called for account=%@", item[(__bridge id)kSecAttrAccount] ?: @"(nil)");
+void mfShowKeychainDetail(NSDictionary *item) { mfShowKeychainDetailMode(item, NO); }
+
+static void mfShowKeychainDetailMode(NSDictionary *item, BOOL autoEdit) {
+    mfKLog(@"mfShowKeychainDetailMode called (autoEdit=%d) for account=%@", autoEdit, item[(__bridge id)kSecAttrAccount] ?: @"(nil)");
     UIView *page = mfMakePage(@"Keychain 详情", YES);
     NSString *service = item[(__bridge id)kSecAttrService] ?: @"(无服务)";
     NSString *account = item[(__bridge id)kSecAttrAccount] ?: @"(无账号)";
@@ -1089,6 +1011,7 @@ void mfShowKeychainDetail(NSDictionary *item) {
     
     sv.contentSize = CGSizeMake(g_mfCardW, y + 20);
     mfPushPage(page);
+    if (autoEdit) mfKeychainEnterEdit(editBtn);  // 左滑「编辑」直接进入编辑模式
 }
 
 // 详情页 C 实现：模式切换（Base64/Hex/UTF8）
@@ -1121,57 +1044,61 @@ void mfCopyKeychainDataFromDetailButton(UIButton *btn) {
     mfToast(@"✅ 已复制数据 (Base64)");
 }
 
-// 详情页 C 实现：编辑/保存数据（第一次点=进入编辑，第二次点=保存）
-void mfEditKeychainDataFromDetailButton(UIButton *btn) {
+// 详情页 C 实现：进入编辑模式（设置文本框可写）
+static void mfKeychainEnterEdit(UIButton *btn) {
     NSDictionary *item = objc_getAssociatedObject(btn, "item");
     UITextView *dv = objc_getAssociatedObject(btn, "dataView");
-    if (!item || !dv) return;
-    BOOL editing = [objc_getAssociatedObject(btn, "editing") boolValue];
-    if (!editing) {
-        // 进入编辑：提示用户输入 Base64（保留原数据为初始值）
-        NSString *orig = [[UIPasteboard generalPasteboard] string];
-        NSString *cur = objc_getAssociatedObject(btn, "origB64");
-        if (!cur) {
-            NSData *od = item[(__bridge id)kSecValueData];
-            cur = od ? [od base64EncodedStringWithOptions:0] : @"";
-            objc_setAssociatedObject(btn, "origB64", cur, OBJC_ASSOCIATION_COPY_NONATOMIC);
-        }
-        (void)orig;
-        dv.editable = YES;
-        dv.backgroundColor = [UIColor systemBackgroundColor];
-        [dv becomeFirstResponder];
-        dv.text = cur;
-        [btn setTitle:@"💾 保存修改" forState:UIControlStateNormal];
-        objc_setAssociatedObject(btn, "editing", @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        mfToast(@"粘贴新的 Base64 数据后点保存");
-    } else {
-        // 保存：base64 decode → SecItemUpdate
-        NSString *text = dv.text;
-        text = [text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-        NSData *newData = [[NSData alloc] initWithBase64EncodedString:text options:0];
-        if (!newData) {
-            mfToast(@"⚠️ Base64 解码失败");
-            return;
-        }
-        BOOL ok = NO;
-        NSMutableDictionary *query = [NSMutableDictionary dictionary];
-        query[(__bridge id)kSecClass] = (__bridge id)kSecClassGenericPassword;
-        NSString *account = item[(__bridge id)kSecAttrAccount];
-        NSString *service = item[(__bridge id)kSecAttrService];
-        if (account) query[(__bridge id)kSecAttrAccount] = account;
-        if (service) query[(__bridge id)kSecAttrService] = service;
-        NSDictionary *attrs = @{(__bridge id)kSecValueData: newData};
-        OSStatus st = SecItemUpdate((__bridge CFDictionaryRef)query, (__bridge CFDictionaryRef)attrs);
-        ok = (st == errSecSuccess);
-        mfKLog(@"edit save: SecItemUpdate=%d", (int)st);
-        dv.editable = NO;
-        dv.backgroundColor = [UIColor secondarySystemBackgroundColor];
-        [dv resignFirstResponder];
-        dv.text = [newData base64EncodedStringWithOptions:0];
-        [btn setTitle:@"✏️ 编辑数据" forState:UIControlStateNormal];
-        objc_setAssociatedObject(btn, "editing", @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        mfToast(ok ? @"✅ 已保存" : @"❌ 保存失败");
+    if (!item || !dv) { mfKLog(@"edit: missing assoc (item=%p dv=%p)", item, dv); return; }
+    mfKLog(@"enter edit mode: service=%@", item[(__bridge id)kSecAttrService]);
+    NSString *cur = objc_getAssociatedObject(btn, "origB64");
+    if (!cur) {
+        NSData *od = item[(__bridge id)kSecValueData];
+        cur = od ? [od base64EncodedStringWithOptions:0] : @"";
+        objc_setAssociatedObject(btn, "origB64", cur, OBJC_ASSOCIATION_COPY_NONATOMIC);
     }
+    dv.editable = YES;
+    dv.backgroundColor = [UIColor systemBackgroundColor];
+    dv.text = cur;
+    [dv becomeFirstResponder];
+    [btn setTitle:@"💾 保存修改" forState:UIControlStateNormal];
+    objc_setAssociatedObject(btn, "editing", @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    mfToast(@"粘贴新的 Base64 数据后点保存");
+}
+
+// 详情页 C 实现：保存编辑（base64 decode → SecItemUpdate）
+static void mfKeychainSaveEdit(UIButton *btn) {
+    NSDictionary *item = objc_getAssociatedObject(btn, "item");
+    UITextView *dv = objc_getAssociatedObject(btn, "dataView");
+    if (!item || !dv) { mfKLog(@"save: missing assoc"); return; }
+    NSString *text = dv.text;
+    text = [text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    NSData *newData = [[NSData alloc] initWithBase64EncodedString:text options:0];
+    if (!newData) { mfKLog(@"save: base64 decode failed"); mfToast(@"⚠️ Base64 解码失败"); return; }
+    BOOL ok = NO;
+    NSMutableDictionary *query = [NSMutableDictionary dictionary];
+    query[(__bridge id)kSecClass] = (__bridge id)kSecClassGenericPassword;
+    NSString *account = item[(__bridge id)kSecAttrAccount];
+    NSString *service = item[(__bridge id)kSecAttrService];
+    if (account) query[(__bridge id)kSecAttrAccount] = account;
+    if (service) query[(__bridge id)kSecAttrService] = service;
+    NSDictionary *attrs = @{(__bridge id)kSecValueData: newData};
+    OSStatus st = SecItemUpdate((__bridge CFDictionaryRef)query, (__bridge CFDictionaryRef)attrs);
+    ok = (st == errSecSuccess);
+    mfKLog(@"save: SecItemUpdate(service=%@) status=%d", service, (int)st);
+    dv.editable = NO;
+    dv.backgroundColor = [UIColor secondarySystemBackgroundColor];
+    [dv resignFirstResponder];
+    dv.text = [newData base64EncodedStringWithOptions:0];
+    [btn setTitle:@"✏️ 编辑数据" forState:UIControlStateNormal];
+    objc_setAssociatedObject(btn, "editing", @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    mfToast(ok ? @"✅ 已保存" : @"❌ 保存失败");
+}
+
+// 详情页 C 实现：编辑/保存数据（第一次点=进入编辑，第二次点=保存）
+void mfEditKeychainDataFromDetailButton(UIButton *btn) {
+    BOOL editing = [objc_getAssociatedObject(btn, "editing") boolValue];
+    if (!editing) mfKeychainEnterEdit(btn);
+    else mfKeychainSaveEdit(btn);
 }
 
 // 删除 Keychain 项 (从列表页按钮调用) - 外部可见
@@ -1226,30 +1153,60 @@ static void mfRefreshKeychainListIfVisible(void) {
     }
 }
 
-// 显示恢复输入
+// 从粘贴板恢复（面板页：多行粘贴区 + 恢复按钮 + 状态行，无弹窗）
 static void mfShowRestorePrompt(void) {
-    mfKLog(@"mfShowRestorePrompt called");
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"恢复 Keychain"
-                                                                   message:@"粘贴 Base64 编码的 Keychain JSON 数据"
-                                                            preferredStyle:UIAlertControllerStyleAlert];
+    mfKLog(@"mfShowRestorePrompt called (panel version)");
+    UIView *page = mfMakePage(@"从剪贴板恢复", YES);
     
-    [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
-        tf.placeholder = @"Base64 JSON";
-        tf.font = [UIFont systemFontOfSize:13];
-    }];
+    UILabel *hint = [[UILabel alloc] initWithFrame:CGRectMake(12, 8, g_mfCardW - 24, 32)];
+    hint.text = @"粘贴「导出到剪贴板」生成的内容（Base64 JSON 数组）\n完成后浮层提示结果";
+    hint.font = [UIFont systemFontOfSize:11];
+    hint.textColor = [UIColor secondaryLabelColor];
+    hint.numberOfLines = 2;
+    [page addSubview:hint];
     
-    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"恢复" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        UITextField *tf = alert.textFields.firstObject;
-        if (tf && tf.text.length > 0) {
-            mfKLog(@"user submitted restore, text length=%lu", (unsigned long)tf.text.length);
-            mfRestoreKeychainInBackground(tf.text);
-        } else {
-            mfKLog(@"empty restore input");
-        }
-    }]];
+    UITextView *tv = [[UITextView alloc] initWithFrame:CGRectMake(12, 44, g_mfCardW - 24, g_mfCardH - 44 - 130)];
+    tv.backgroundColor = [UIColor secondarySystemBackgroundColor];
+    tv.layer.cornerRadius = 8;
+    tv.font = [UIFont monospacedSystemFontOfSize:11 weight:UIFontWeightRegular];
+    tv.textColor = [UIColor labelColor];
+    tv.autoresizingMask = UIViewAutoresizingFlexibleHeight;
+    [page addSubview:tv];
     
-    mfPresentOnPanelVC(alert);
+    UILabel *stateLb = [[UILabel alloc] initWithFrame:CGRectMake(12, g_mfCardH - 60, g_mfCardW - 24, 20)];
+    stateLb.text = @"";
+    stateLb.font = [UIFont systemFontOfSize:11];
+    stateLb.textColor = [UIColor secondaryLabelColor];
+    [page addSubview:stateLb];
+    
+    UIButton *restoreBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    restoreBtn.frame = CGRectMake(12, g_mfCardH - 92, g_mfCardW - 24, 36);
+    [restoreBtn setTitle:@"🚀 恢复" forState:UIControlStateNormal];
+    restoreBtn.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
+    restoreBtn.backgroundColor = [UIColor systemGreenColor];
+    [restoreBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    restoreBtn.layer.cornerRadius = 8;
+    objc_setAssociatedObject(restoreBtn, "textView", tv, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(restoreBtn, "resultLabel", stateLb, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [restoreBtn addTarget:g_mfCtrl action:@selector(mfDoRestoreFromPage:) forControlEvents:UIControlEventTouchUpInside];
+    [page addSubview:restoreBtn];
+    
+    mfPushPage(page);
+}
+
+// 恢复按钮处理（页面版）
+void mfDoRestoreFromPageButton(UIButton *btn) {
+    UITextView *tv = objc_getAssociatedObject(btn, "textView");
+    UILabel *rl = objc_getAssociatedObject(btn, "resultLabel");
+    NSString *text = tv.text ? [tv.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] : @"";
+    if (text.length == 0) {
+        mfToast(@"❌ 输入为空");
+        if (rl) rl.text = @"❌ 输入为空";
+        return;
+    }
+    mfKLog(@"restore from page: input length=%lu", (unsigned long)text.length);
+    if (rl) { rl.text = @"⏳ 后台恢复中…（完成见浮层提示）"; rl.textColor = [UIColor systemOrangeColor]; }
+    mfRestoreKeychainInBackground(text);
 }
 
 // ====== 面板入口 ======
