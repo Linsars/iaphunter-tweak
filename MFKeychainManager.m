@@ -64,6 +64,10 @@ static void mfPresentOnPanelVC(UIAlertController *alert) {
 // 删除单个 Keychain 项 (静态内部函数)
 static BOOL mfDeleteKeychainItemInternal(NSDictionary *item);
 static void mfRefreshKeychainListIfVisible(void);
+// 详情页前置声明（列表控制器的左滑「编辑」要用）
+static void mfShowKeychainDetailMode(NSDictionary *item, BOOL autoEdit);
+static void mfKeychainEnterEdit(UIButton *btn);
+static void mfKeychainSaveEdit(UIButton *btn);
 
 static BOOL mfDeleteKeychainItemInternal(NSDictionary *item) {
     mfKLog(@"mfDeleteKeychainItemInternal called for account=%@", item[(__bridge id)kSecAttrAccount] ?: @"(nil)");
@@ -875,10 +879,6 @@ void mfCopyDumpJsonFromButton(UIButton *btn) {
 }
 
 // ====== 详情页（面板式，替代弹窗） ======
-
-static void mfShowKeychainDetailMode(NSDictionary *item, BOOL autoEdit);
-static void mfKeychainEnterEdit(UIButton *btn);
-static void mfKeychainSaveEdit(UIButton *btn);
 
 static void mfDoSaveKeychainData(NSDictionary *item, NSData *newData, void (^done)(BOOL)) {
     NSMutableDictionary *query = [NSMutableDictionary dictionary];
