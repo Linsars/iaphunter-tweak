@@ -74,51 +74,41 @@ static IMP mfWrapRet(char ret, int nargs, IMP orig, int mode, id val) {
 }
 
 // v2.6.75 观察模式：mode=3 → 调原方法 + 完整打日志（找出判定读取的 key/参数），不改行为
-static IMP mfObjCWrapObserve(Method m, NSString *cls, NSString *sel) {
+// v2.6.76 修正：只记录 value 前缀匹配的 key（value 域=前缀），日志节流；本函数不 hook NSUserDefaults(见 apply 防护)
+static IMP mfObjCWrapObserve(Method m, NSString *cls, NSString *sel, NSString *prefix) {
     IMP orig = method_getImplementation(m);
     NSMethodSignature *sig = [NSMethodSignature signatureWithObjCTypes:method_getTypeEncoding(m)];
     NSUInteger nargs = sig.numberOfArguments;
     char ret = sig.methodReturnType[0];
     if (orig) {
-#define MFOBS_LOG(KEY...) do { OH_LOG(@"OBS[%@ %@] %@", cls, sel, [NSString stringWithFormat:KEY]); } while(0)
+#define MFOBS_LOG2(KEY...) do { OH_LOG(@"OBS[%@ %@] %@", cls, sel, [NSString stringWithFormat:KEY]); } while(0)
         if (ret == '@' && nargs == 3) {
             id (*or3)(id,SEL,id) = (void *)orig;
             return imp_implementationWithBlock(^id(id s, SEL c, id a0){
-                MFOBS_LOG(@"a0=%@", a0);
+                if (a0 && (!prefix.length || [a0 hasPrefix:prefix])) {
+                    MFOBS_LOG2(@"a0=%@", a0);
+                    return or3(s, c, a0);
+                }
                 return or3(s, c, a0);
             });
         } else if (ret == '@' && nargs == 2) {
             id (*or2)(id,SEL) = (void *)orig;
             return imp_implementationWithBlock(^id(id s, SEL c){
-                MFOBS_LOG(@"(no-arg)");
+                MFOBS_LOG2(@"(no-arg)");
                 return or2(s, c);
             });
         } else if ((ret == 'c' || ret == 'B') && nargs == 3) {
             BOOL (*orB)(id,SEL,id) = (void *)orig;
             return imp_implementationWithBlock(^BOOL(id s, SEL c, id a0){
                 BOOL v = orB(s, c, a0);
-                MFOBS_LOG(@"a0=%@ -> %d", a0, v);
+                if (a0 && (!prefix.length || [a0 hasPrefix:prefix])) MFOBS_LOG2(@"a0=%@ -> %d", a0, v);
                 return v;
             });
-        } else if ((ret == 'c' || ret == 'B') && nargs == 2) {
-            BOOL (*orB2)(id,SEL) = (void *)orig;
-            return imp_implementationWithBlock(^BOOL(id s, SEL c){
-                BOOL v = orB2(s, c);
-                MFOBS_LOG(@"(no-arg) -> %d", v);
-                return v;
-            });
-        } else if (ret == 'q' && nargs == 2) {
-            long long (*orQ2)(id,SEL) = (void *)orig;
-            return imp_implementationWithBlock(^long long(id s, SEL c){
-                long long v = orQ2(s, c);
-                MFOBS_LOG(@"(no-arg) -> %lld", v);
-                return v;
-            });
-        } else if (ret == 'q' && nargs == 3) {
+        } else if ((ret == 'q' && nargs == 3)) {
             long long (*orQ3)(id,SEL,id) = (void *)orig;
             return imp_implementationWithBlock(^long long(id s, SEL c, id a0){
                 long long v = orQ3(s, c, a0);
-                MFOBS_LOG(@"a0=%@ -> %lld", a0, v);
+                if (a0 && (!prefix.length || [a0 hasPrefix:prefix])) MFOBS_LOG2(@"a0=%@ -> %lld", a0, v);
                 return v;
             });
         }
@@ -159,11 +149,19 @@ void mfObjCHookApply(void) {
         const char *enc = method_getTypeEncoding(m);
         char ret; int args = mfSafeArgs(enc, &ret);
         if (args < 0) { OH_LOG(@"skip: unsafe signature %@#%@", rule[@"class"], rule[@"selector"]); continue; }
+        // v2.6.76 防护：NSUserDefaults 读方法在 UIKit/UIFoundation +initialize 期被高频调用，
+        // hook 它们会触发初始化链死锁 → 启动看门狗 SIGKILL(实测 140407.ips)。观察改为用 Defaults 浏览器(纯读取)。
+        NSString *clsN = rule[@"class"], *selN = rule[@"selector"];
+        if ([clsN isEqualToString:@"NSUserDefaults"] &&
+            ([selN hasPrefix:@"objectForKey"] || [selN hasPrefix:@"boolForKey"] || [selN hasPrefix:@"stringForKey"] || [selN hasPrefix:@"integerForKey"] || [selN hasPrefix:@"valueForKey"])) {
+            OH_LOG(@"skip(guard): NSUserDefaults 读方法禁止 hook -> 用 Defaults 浏览器看 key %@#%@", clsN, selN);
+            continue;
+        }
         IMP orig = method_getImplementation(m);
         IMP wrap = mfWrapRet(ret, args, orig, [rule[@"mode"] intValue], rule[@"value"]);
         // v2.6.75 观察模式(mode=3)：透传原实现 + 完整打日志，观察判定读取的 key/参数
         if (!wrap && [rule[@"mode"] intValue] == 3) {
-            wrap = mfObjCWrapObserve(m, rule[@"class"], rule[@"selector"]);
+            wrap = mfObjCWrapObserve(m, rule[@"class"], rule[@"selector"], rule[@"value"]);
         }
         if (!wrap) { OH_LOG(@"skip: wrap fail %@#%@", rule[@"class"], rule[@"selector"]); continue; }
         if (class_getMethodImplementation(cls, sel) != orig) class_addMethod(cls, sel, wrap, enc);
@@ -272,6 +270,15 @@ void mfShowObjCHookPage(void) {
     [locBtn setTitle:@"🎯 定位方法(找类名)" forState:UIControlStateNormal];
     [locBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfObjCLocatorTapped") forControlEvents:UIControlEventTouchUpInside];
     [sv addSubview:locBtn]; y += 46;
+
+    // v2.6.76: Defaults 浏览器——纯读取当前 app defaults 全 key（观察判定字段的安全替代，零 hook）
+    UIButton *dbrBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    dbrBtn.frame = CGRectMake(16, y, cw-32, 38);
+    dbrBtn.backgroundColor = [UIColor systemIndigoColor]; dbrBtn.layer.cornerRadius = 9;
+    dbrBtn.tintColor = UIColor.whiteColor;
+    [dbrBtn setTitle:@"🔍 Defaults 浏览器(纯读取)" forState:UIControlStateNormal];
+    [dbrBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfDefaultsBrowserTapped") forControlEvents:UIControlEventTouchUpInside];
+    [sv addSubview:dbrBtn]; y += 46;
 
     for (NSDictionary *r in g_objcHooks) {
         UIView *row = [[UIView alloc] initWithFrame:CGRectMake(12, y, cw-24, 64)];
@@ -773,4 +780,90 @@ void mfRunSelectorLocatorFromButton(UIButton *btn) {
         free(buf);
         OH_LOG(@"loc-diag: total classes=%d", nc);
     }
+}
+
+// ====== v2.6.76 Defaults 浏览器：纯读取当前 app 的 NSUserDefaults 全 key（零 hook，无崩溃风险） ======
+
+@interface MFDefaultsBrowser : NSObject <UITableViewDataSource, UITableViewDelegate>
+@property (copy) NSArray *entries; // [{k,v}]
+@property (nonatomic, weak) UITableView *table;
+@property (nonatomic, weak) UILabel *stateLabel;
+@end
+@implementation MFDefaultsBrowser
+- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s { return (NSInteger)self.entries.count; }
+- (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
+    static NSString *rid = @"dbr";
+    UITableViewCell *c = [tv dequeueReusableCellWithIdentifier:rid];
+    if (!c) c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:rid];
+    NSDictionary *e = self.entries[ip.row];
+    c.textLabel.text = e[@"k"];
+    c.textLabel.font = [UIFont monospacedSystemFontOfSize:12 weight:UIFontWeightMedium];
+    c.textLabel.adjustsFontSizeToFitWidth = YES;
+    c.detailTextLabel.text = e[@"v"];
+    c.detailTextLabel.font = [UIFont systemFontOfSize:10];
+    c.detailTextLabel.numberOfLines = 2;
+    c.backgroundColor = UIColor.clearColor;
+    return c;
+}
+- (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
+    [tv deselectRowAtIndexPath:ip animated:YES];
+    NSDictionary *e = self.entries[ip.row];
+    NSString *copyText = [NSString stringWithFormat:@"%@ = %@", e[@"k"], e[@"v"]];
+    UIPasteboard *pb = [UIPasteboard generalPasteboard];
+    pb.string = copyText;
+    mfToast([NSString stringWithFormat:@"✅ %@ = %@", e[@"k"], e[@"v"]]);
+}
+@end
+
+void mfShowDefaultsBrowserPage(void) {
+    UIView *page = mfMakePage(@"Defaults 浏览器", YES);
+    UILabel *hint = [[UILabel alloc] initWithFrame:CGRectMake(16, 46, g_mfCardW - 32, 30)];
+    hint.text = @"当前 App 的 NSUserDefaults 全 key（判定读的 key 必在其中）。点行复制 key=value。";
+    hint.font = [UIFont systemFontOfSize:11];
+    hint.textColor = [UIColor secondaryLabelColor];
+    hint.numberOfLines = 2;
+    [page addSubview:hint];
+    
+    UILabel *state = [[UILabel alloc] initWithFrame:CGRectMake(16, 78, g_mfCardW - 32, 18)];
+    state.text = @"读取中…";
+    state.font = [UIFont systemFontOfSize:11];
+    state.textColor = [UIColor secondaryLabelColor];
+    [page addSubview:state];
+    
+    UITableView *tb = [[UITableView alloc] initWithFrame:CGRectMake(0, 100, g_mfCardW, g_mfCardH - 100) style:UITableViewStylePlain];
+    tb.backgroundColor = UIColor.clearColor;
+    [page addSubview:tb];
+    
+    MFDefaultsBrowser *br = [[MFDefaultsBrowser alloc] init];
+    br.table = tb; br.stateLabel = state;
+    tb.dataSource = br; tb.delegate = br;
+    objc_setAssociatedObject(page, "dbr", br, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    mfPushPage(page);
+    
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSDictionary *dict = [[NSUserDefaults standardUserDefaults] dictionaryRepresentation];
+        NSMutableArray *arr = [NSMutableArray array];
+        for (NSString *k in dict) {
+            id v = dict[k];
+            NSString *vs;
+            if ([v isKindOfClass:[NSString class]]) vs = v;
+            else if ([v isKindOfClass:[NSNumber class]]) vs = [(NSNumber *)v stringValue];
+            else if ([v isKindOfClass:[NSData class]]) vs = [NSString stringWithFormat:@"<data %lu>", (unsigned long)[(NSData *)v length]];
+            else if ([v isKindOfClass:[NSArray class]] || [v isKindOfClass:[NSDictionary class]]) vs = [NSString stringWithFormat:@"<%@ %lu>", NSStringFromClass([v class]), (unsigned long)[v count]];
+            else if ([v isKindOfClass:[NSDate class]]) vs = [NSString stringWithFormat:@"<date %@>", v];
+            else vs = [v description] ?: @"(nil)";
+            if (vs.length > 160) vs = [vs substringToIndex:160];
+            [arr addObject:@{@"k": k, @"v": vs}];
+        }
+        NSArray *sorted = [arr sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+            return [a[@"k"] compare:b[@"k"] options:NSCaseInsensitiveSearch];
+        }];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            br.entries = sorted;
+            [tb reloadData];
+            state.text = [NSString stringWithFormat:@"共 %lu 个 key（点行复制）", (unsigned long)sorted.count];
+            OH_LOG(@"defaults browser: %lu keys", (unsigned long)sorted.count);
+            if (sorted.count == 0) state.text = @"无数据（该 app 未写 defaults）";
+        });
+    });
 }

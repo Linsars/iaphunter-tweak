@@ -177,6 +177,7 @@ void mfSK1AutoStart(void);   // 冷启动自动应用   // v2.6.47 页面内表�
 void mfObjCHookToggle(UISwitch *sw);
 void mfShowSelectorLocatorPage(void);      // v2.6.71 方法定位器页
 void mfRunSelectorLocatorFromButton(UIButton *btn);
+void mfShowDefaultsBrowserPage(void);      // v2.6.76 Defaults 浏览器
 NSArray *mfFindClassesForSelector(NSString *selName);
 void mfObjCHookDelTapped(UIButton *btn);
 void mfObjCHookPersist(NSString *cls, NSString *sel, int mode, id val);
