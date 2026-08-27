@@ -957,6 +957,7 @@ static void mfShowKeychainDetailMode(NSDictionary *item, BOOL autoEdit) {
     // 数据视图模式切换：Base64 / Hex / UTF8 三按钮（走 g_mfCtrl 转发）
     NSArray *modes = @[@"Base64", @"Hex", @"UTF8"];
     CGFloat segW = (g_mfCardW - 24 - 12) / 3;
+    NSMutableArray *modeBtns = [NSMutableArray array];
     for (NSUInteger mi = 0; mi < modes.count; mi++) {
         UIButton *mb = [UIButton buttonWithType:UIButtonTypeSystem];
         mb.frame = CGRectMake(12 + mi * (segW + 6), y, segW, 30);
@@ -969,7 +970,9 @@ static void mfShowKeychainDetailMode(NSDictionary *item, BOOL autoEdit) {
         objc_setAssociatedObject(mb, "dataView", dataView, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         [mb addTarget:g_mfCtrl action:@selector(mfKeychainDataDisplay:) forControlEvents:UIControlEventTouchUpInside];
         [sv addSubview:mb];
+        [modeBtns addObject:mb];
     }
+    objc_setAssociatedObject(dataView, "modeBtns", modeBtns, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     y += 38;
     
     y += g_mfCardH - y - 110 + 4;
@@ -1044,7 +1047,7 @@ void mfCopyKeychainDataFromDetailButton(UIButton *btn) {
     mfToast(@"✅ 已复制数据 (Base64)");
 }
 
-// 详情页 C 实现：进入编辑模式（设置文本框可写）
+// 详情页 C 实现：进入编辑模式（设置文本框可写 + 面板窗口 makeKey 让键盘弹出）
 static void mfKeychainEnterEdit(UIButton *btn) {
     NSDictionary *item = objc_getAssociatedObject(btn, "item");
     UITextView *dv = objc_getAssociatedObject(btn, "dataView");
@@ -1059,6 +1062,15 @@ static void mfKeychainEnterEdit(UIButton *btn) {
     dv.editable = YES;
     dv.backgroundColor = [UIColor systemBackgroundColor];
     dv.text = cur;
+    // 关键：面板在独立 UIWindow(Alert+1000) 且从未 makeKey —— 不 makeKey 则 becomeFirstResponder 无效(无键盘)
+    UIWindow *win = nil;
+    UIView *v = dv;
+    while (v && ![v isKindOfClass:[UIWindow class]]) v = v.superview;
+    if ([v isKindOfClass:[UIWindow class]]) win = (UIWindow *)v;
+    if (win && !win.isKeyWindow) {
+        [win makeKeyWindow];  // 不走 makeKeyAndVisible(避免 hidden 翻转/层级重排)
+        mfKLog(@"edit: made panel window key");
+    }
     [dv becomeFirstResponder];
     [btn setTitle:@"💾 保存修改" forState:UIControlStateNormal];
     objc_setAssociatedObject(btn, "editing", @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -1088,7 +1100,16 @@ static void mfKeychainSaveEdit(UIButton *btn) {
     dv.editable = NO;
     dv.backgroundColor = [UIColor secondarySystemBackgroundColor];
     [dv resignFirstResponder];
-    dv.text = [newData base64EncodedStringWithOptions:0];
+    NSString *newB64 = [newData base64EncodedStringWithOptions:0];
+    dv.text = newB64;
+    // 同步刷新三个模式按钮持有的 data（否则显示旧数据）
+    NSArray *modeBtns = objc_getAssociatedObject(dv, "modeBtns");
+    for (UIButton *mb in modeBtns) objc_setAssociatedObject(mb, "data", newData, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    // 同步详情页 item 缓存（删除/二次编辑用新值）
+    NSMutableDictionary *upItem = [item mutableCopy];
+    upItem[(__bridge id)kSecValueData] = newData;
+    objc_setAssociatedObject(btn, "item", upItem, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(btn, "origB64", newB64, OBJC_ASSOCIATION_COPY_NONATOMIC);
     [btn setTitle:@"✏️ 编辑数据" forState:UIControlStateNormal];
     objc_setAssociatedObject(btn, "editing", @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     mfToast(ok ? @"✅ 已保存" : @"❌ 保存失败");
