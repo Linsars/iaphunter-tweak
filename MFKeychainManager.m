@@ -380,6 +380,21 @@ static NSArray *mfGetFrontmostAppContainerIdentifiers(NSString **outBundleID, NS
 static void mfQueryRecordIDForContainer(NSString *containerIdentifier,
                                          void (^completion)(NSString *recordName, NSError *error)) {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        // v2.6.68 预检：无 iCloud entitlement 的进程调 CKContainer 会直接 SIGTRAP(CloudKit 内部断言)，@try 接不住
+        // 必须在发出任何 CK 调用前用 SecTask 检查
+        SecTaskRef st = SecTaskCreateFromSelf(NULL);
+        if (st) {
+            id svc = CFBridgingRelease(SecTaskCopyValueForEntitlement(st, (__bridge CFStringRef)@"com.apple.developer.icloud-services", NULL));
+            CFRelease(st);
+            if (!svc) {
+                mfKLog(@"fetchRecordID aborted: no com.apple.developer.icloud-services entitlement");
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    completion(nil, [NSError errorWithDomain:@"MFCloudKit" code:-3 userInfo:@{NSLocalizedDescriptionKey: @"此 App 无 iCloud entitlement，跳过 CK 调用"}]);
+                });
+                return;
+            }
+        }
+        
         CKContainer *container = nil;
         NSString *fetchError = nil;
         
@@ -405,14 +420,25 @@ static void mfQueryRecordIDForContainer(NSString *containerIdentifier,
             return;
         }
         
+        // 有权限才发查询（fetchUserRecordID 回调式，正常登录态下不会再 trap）
         @try {
-            [container fetchUserRecordIDWithCompletionHandler:^(CKRecordID *recordID, NSError *error) {
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    completion(recordID.recordName, error);
-                });
+            [container accountStatusWithCompletionHandler:^(CKAccountStatus status, NSError *err) {
+                if (status == CKAccountStatusAvailable) {
+                    [container fetchUserRecordIDWithCompletionHandler:^(CKRecordID *recordID, NSError *error) {
+                        dispatch_async(dispatch_get_main_queue(), ^{
+                            completion(recordID.recordName, error);
+                        });
+                    }];
+                } else {
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        NSString *why = err.localizedDescription ?: (status == CKAccountStatusNoAccount ? @"未登录 iCloud" : @"账户不可用");
+                        mfKLog(@"account status=%ld err=%@", (long)status, why);
+                        completion(nil, [NSError errorWithDomain:@"MFCloudKit" code:-4 userInfo:@{NSLocalizedDescriptionKey: why}]);
+                    });
+                }
             }];
         } @catch (NSException *e) {
-            mfKLog(@"fetchUserRecordID exception: %@", e);
+            mfKLog(@"accountStatus/fetchUserRecordID exception: %@", e);
             dispatch_async(dispatch_get_main_queue(), ^{
                 completion(nil, [NSError errorWithDomain:@"MFCloudKit" code:-2 userInfo:@{NSLocalizedDescriptionKey: e.reason ?: @"查询异常"}]);
             });
@@ -939,31 +965,33 @@ static void mfShowKeychainDetailMode(NSDictionary *item, BOOL autoEdit) {
     [sv addSubview:infoCard];
     y += 100;
     
-    UITextView *dataView = [[UITextView alloc] initWithFrame:CGRectMake(12, y, g_mfCardW - 24, g_mfCardH - y - 110)];
+    // v2.6.68 布局修正：先模式按钮、再 dataView，杜绝重叠
+    NSArray *modes = @[@"Base64", @"Hex", @"UTF8"];
+    CGFloat segW = (g_mfCardW - 24 - 12) / 3;
+    CGFloat btnY = y;                  // 模式按钮行 y≈112
+    CGFloat dvY = btnY + 38;           // dataView 起点 ≈150
+    CGFloat bottomZone = 132;          // 复制/编辑/删除预留(36+44+44)
+    
+    UITextView *dataView = [[UITextView alloc] initWithFrame:CGRectMake(12, dvY, g_mfCardW - 24, g_mfCardH - dvY - bottomZone)];
     dataView.backgroundColor = [UIColor secondarySystemBackgroundColor];
     dataView.layer.cornerRadius = 8;
     dataView.font = [UIFont monospacedSystemFontOfSize:10 weight:UIFontWeightRegular];
     dataView.editable = NO;
     dataView.dataDetectorTypes = UIDataDetectorTypeNone;
     dataView.textColor = [UIColor labelColor];
-    dataView.autoresizingMask = UIViewAutoresizingFlexibleHeight;
     [sv addSubview:dataView];
     
     NSData *displayData = data ?: [NSData data];
-    // 默认显示 Base64
     NSString *b64 = [displayData base64EncodedStringWithOptions:0];
     dataView.text = b64.length > 4096 ? [[b64 substringToIndex:4096] stringByAppendingFormat:@"\n… (共 %lu 字符, 完整用复制)", (unsigned long)b64.length] : b64;
     
-    // 数据视图模式切换：Base64 / Hex / UTF8 三按钮（走 g_mfCtrl 转发）
-    NSArray *modes = @[@"Base64", @"Hex", @"UTF8"];
-    CGFloat segW = (g_mfCardW - 24 - 12) / 3;
     NSMutableArray *modeBtns = [NSMutableArray array];
     for (NSUInteger mi = 0; mi < modes.count; mi++) {
         UIButton *mb = [UIButton buttonWithType:UIButtonTypeSystem];
-        mb.frame = CGRectMake(12 + mi * (segW + 6), y, segW, 30);
+        mb.frame = CGRectMake(12 + mi * (segW + 6), btnY, segW, 30);
         [mb setTitle:modes[mi] forState:UIControlStateNormal];
         mb.titleLabel.font = [UIFont systemFontOfSize:12];
-        mb.backgroundColor = [UIColor secondarySystemBackgroundColor];
+        mb.backgroundColor = [UIColor tertiarySystemBackgroundColor];
         mb.layer.cornerRadius = 6;
         objc_setAssociatedObject(mb, "mode", @(mi), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         objc_setAssociatedObject(mb, "data", displayData, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -973,9 +1001,8 @@ static void mfShowKeychainDetailMode(NSDictionary *item, BOOL autoEdit) {
         [modeBtns addObject:mb];
     }
     objc_setAssociatedObject(dataView, "modeBtns", modeBtns, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    y += 38;
     
-    y += g_mfCardH - y - 110 + 4;
+    y = dvY + (g_mfCardH - dvY - bottomZone) + 8;
     
     // 底部按钮行（复制/编辑/删除 → g_mfCtrl 转发，与列表 swipe 动作一致）
     UIButton *copyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -1179,14 +1206,14 @@ static void mfShowRestorePrompt(void) {
     mfKLog(@"mfShowRestorePrompt called (panel version)");
     UIView *page = mfMakePage(@"从剪贴板恢复", YES);
     
-    UILabel *hint = [[UILabel alloc] initWithFrame:CGRectMake(12, 8, g_mfCardW - 24, 32)];
+    UILabel *hint = [[UILabel alloc] initWithFrame:CGRectMake(12, 48, g_mfCardW - 24, 32)];  // v2.6.68: 避开返回按钮行(42px)
     hint.text = @"粘贴「导出到剪贴板」生成的内容（Base64 JSON 数组）\n完成后浮层提示结果";
     hint.font = [UIFont systemFontOfSize:11];
     hint.textColor = [UIColor secondaryLabelColor];
     hint.numberOfLines = 2;
     [page addSubview:hint];
     
-    UITextView *tv = [[UITextView alloc] initWithFrame:CGRectMake(12, 44, g_mfCardW - 24, g_mfCardH - 44 - 130)];
+    UITextView *tv = [[UITextView alloc] initWithFrame:CGRectMake(12, 84, g_mfCardW - 24, g_mfCardH - 84 - 130)];
     tv.backgroundColor = [UIColor secondarySystemBackgroundColor];
     tv.layer.cornerRadius = 8;
     tv.font = [UIFont monospacedSystemFontOfSize:11 weight:UIFontWeightRegular];
