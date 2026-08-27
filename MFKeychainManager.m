@@ -376,26 +376,31 @@ static NSArray *mfGetFrontmostAppContainerIdentifiers(NSString **outBundleID, NS
 }
 
 // 核心查询函数：查单个容器的 Record ID 并回调
-// 关键：App 无 iCloud entitlement 时 CKContainer API 会抛异常，必须 @try 包裹
+// v2.6.79 修复：恢复 CloudKit 直连。逆向成品 iCloudID.dylib(用户提供)确认正确做法是
+// 直接 fetchUserRecordIDWithCompletionHandler（异步），绝不预检 accountStatus——
+// 之前的 SIGTRAP(0x1b489189c) 正是 accountStatusWithCompletionHandler 触发 CK 框架内部断言导致。
+// 成品(ref impl) selrefs 里只有 fetchUserRecordID，无 accountStatus，证明该预检是非必需且有害的。
 static void mfQueryRecordIDForContainer(NSString *containerIdentifier,
                                          void (^completion)(NSString *recordName, NSError *error)) {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        // v2.6.69: CloudKit 调用在本环境(越狱+注入)实测必 SIGTRAP 且 @try/entitlement 预检均拦不住
-        // (Picsew 正版本身有 icloud-services entitlement, trap 发生在 CK 框架内部与账号环境检查,
-        //  reference: 053020/060826 两份 .ips 同一地址 0x1b489189c)。已三次失败标记 dead end，
-        // 停用直接调用；后续如需恢复须走 cloudd XPC 方案。
-        mfKLog(@"fetchRecordID: CK direct call disabled since v2.6.69 (SIGTRAP in CloudKit framework)");
-        dispatch_async(dispatch_get_main_queue(), ^{
-            completion(nil, [NSError errorWithDomain:@"MFCloudKit" code:-99 userInfo:@{NSLocalizedDescriptionKey: @"此环境(iCloud 权限正常)下 CloudKit 框架内部断言必崩，已停用直连。Record ID 可在关闭插件的纯净环境查看"}]);
-        });
-        return;
-        
-        /* ---- 原实现存档（历史三杀记录勿轻易重启）----
-        ...SecTask entitlement 预检...
-        ...CKContainer containerWithIdentifier:...
-        ...accountStatusWithCompletionHandler 分流...
-        ...fetchUserRecordIDWithCompletionHandler...
-        */
+        @try {
+            CKContainer *container = [CKContainer containerWithIdentifier:containerIdentifier];
+            // v2.6.79: 直接异步查询，completion 抛回主线程。去掉 accountStatus 预检。
+            [container fetchUserRecordIDWithCompletionHandler:^(CKRecordID *recordID, NSError *error) {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    if (!error && recordID) {
+                        completion(recordID.recordName, nil);
+                    } else {
+                        completion(nil, error);
+                    }
+                });
+            }];
+        } @catch (NSException *e) {
+            mfKLog(@"fetchRecordID exception: %@", e);
+            dispatch_async(dispatch_get_main_queue(), ^{
+                completion(nil, [NSError errorWithDomain:@"MFCloudKit" code:-1 userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"查询异常: %@", e.reason ?: e.name]}]);
+            });
+        }
     });
 }
 
@@ -503,8 +508,8 @@ static void mfShowICloudIDListPage(NSString *bundleID, NSString *appName, NSArra
         [sv addSubview:cell];
         y += 80;
         
-        // 无 iCloud 容器的 App：直接显示最终状态，绝不碰 CloudKit
-        // （无 entitlement 的进程调用 CKContainer API 会底层 abort，@try 拦不住）
+        // 无 iCloud 容器的 App：无 entitle 声明 → 没有可查询的 container id，直接显示占位状态即可。
+        // （有 entit 时 mfGetFrontmostAppContainerIdentifiers 返回的是真实 container id 列表）
         if ([containerID isEqualToString:@"(默认容器)"]) {
             statusLabel.text = @"🚫 该 App 未声明 iCloud 容器\n（未启用 iCloud capability，无法查询）";
             statusLabel.textColor = [UIColor systemGrayColor];
