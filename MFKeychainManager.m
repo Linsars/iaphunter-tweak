@@ -904,10 +904,10 @@ static void mfShowKeychainDetailMode(NSDictionary *item, BOOL autoEdit) {
     gLbl.text = [NSString stringWithFormat:@"Group: %@", ag];
     gLbl.font = [UIFont systemFontOfSize:11];
     UILabel *tLbl = [[UILabel alloc] initWithFrame:CGRectMake(10, 60, g_mfCardW - 44, 26)];
-    tLbl.text = [NSString stringWithFormat:@"数据 %lu B%@%@%@%@%@",
+    tLbl.text = [NSString stringWithFormat:@"数据 %lu B · 创建: %@ · 修改: %@",
                  (unsigned long)data.length,
-                 cd ? @"\n创建 " : @"", cd ? [cd descriptionWithLocale:nil] : @"",
-                 md ? @"\n修改 " : @"", md ? [md descriptionWithLocale:nil] : @""];
+                 cd ? [cd descriptionWithLocale:nil] : @"-",
+                 md ? [md descriptionWithLocale:nil] : @"-"];  // v2.6.70: 之前 %@ 数量与实参不匹配(5 vs 6)导致取到栈上垃圾(NSIndexPath)崩
     tLbl.font = [UIFont systemFontOfSize:9];
     tLbl.textColor = [UIColor secondaryLabelColor];
     tLbl.numberOfLines = 2;
