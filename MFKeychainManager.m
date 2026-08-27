@@ -679,12 +679,95 @@ void mfFetchCloudKitRecordIDAuto(void) {
 
 // ====== 面板页面 ======
 
-// 显示 Keychain 列表
+// Keychain 条目摘要（列表 cell 用）
+static NSString *mfItemSummary(NSDictionary *item) {
+    NSString *account = item[(__bridge id)kSecAttrAccount] ?: @"(无账号)";
+    NSString *service = item[(__bridge id)kSecAttrService] ?: @"(无服务)";
+    return [NSString stringWithFormat:@"%@ / %@", service, account];
+}
+
+// Keychain 列表控制器（UITableView + 系统左滑：复制/编辑/删除）—— 对齐捕获列表风格
+@interface MFKeychainList : NSObject <UITableViewDataSource, UITableViewDelegate>
+@property (copy) NSArray *records;
+// 指向宿主 page（swipe 删除后控制 reload；nil=纯 dump 只读模式）
+@property (nonatomic, weak) UITableView *table;
+@end
+@implementation MFKeychainList
+- (UITableView *)mfMakeTableInPage:(UIView *)page {
+    UITableView *tb = [[UITableView alloc] initWithFrame:CGRectMake(0, 42, g_mfCardW, g_mfCardH - 42) style:UITableViewStylePlain];
+    tb.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    tb.dataSource = self;
+    tb.delegate = self;
+    tb.backgroundColor = UIColor.clearColor;
+    tb.separatorColor = [UIColor separatorColor];
+    [page addSubview:tb];
+    self.table = tb;
+    return tb;
+}
+- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s { return (NSInteger)self.records.count; }
+- (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
+    static NSString *id_ = @"mfkeyrow";
+    UITableViewCell *c = [tv dequeueReusableCellWithIdentifier:id_];
+    if (!c) c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:id_];
+    NSDictionary *item = self.records[ip.row];
+    NSString *service = item[(__bridge id)kSecAttrService] ?: @"(无服务)";
+    NSString *account = item[(__bridge id)kSecAttrAccount] ?: @"(无账号)";
+    NSString *ag = item[(__bridge id)kSecAttrAccessGroup] ?: @"";
+    NSData *data = item[(__bridge id)kSecValueData];
+    c.textLabel.text = service;
+    c.textLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+    c.detailTextLabel.text = [NSString stringWithFormat:@"%@ · %lu B%s%@",
+                              account, (unsigned long)data.length,
+                              ag.length ? " · " : "", ag];
+    c.detailTextLabel.font = [UIFont systemFontOfSize:10];
+    c.detailTextLabel.textColor = [UIColor secondaryLabelColor];
+    c.backgroundColor = UIColor.clearColor;
+    if (data.length > 512) c.detailTextLabel.textColor = [UIColor systemOrangeColor]; // 大数据视觉提示
+    return c;
+}
+- (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
+    [tv deselectRowAtIndexPath:ip animated:YES];
+    mfShowKeychainDetail(self.records[ip.row]);
+}
+// 左滑：复制 / 编辑 / 删除
+- (UISwipeActionsConfiguration *)tableView:(UITableView *)tv trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)ip {
+    NSDictionary *item = self.records[ip.row];
+    UIContextualAction *copyA = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleNormal
+        title:@"复制" handler:^(UIContextualAction *a, UIView *v, void (^done)(BOOL)) {
+            NSData *data = item[(__bridge id)kSecValueData];
+            if (data) {
+                [[UIPasteboard generalPasteboard] setString:[data base64EncodedStringWithOptions:0]];
+                mfKLog(@"copied item data (service=%@)", item[(__bridge id)kSecAttrService]);
+            }
+            done(YES);
+        }];
+    copyA.backgroundColor = [UIColor systemBlueColor];
+    UIContextualAction *editA = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleNormal
+        title:@"编辑" handler:^(UIContextualAction *a, UIView *v, void (^done)(BOOL)) {
+            mfShowKeychainDetail(item);
+            done(YES);
+        }];
+    editA.backgroundColor = [UIColor systemOrangeColor];
+    UIContextualAction *delA = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleDestructive
+        title:@"删除" handler:^(UIContextualAction *a, UIView *v, void (^done)(BOOL)) {
+            BOOL ok = mfDeleteKeychainItemInternal(item);
+            mfKLog(@"swipe delete: %@", ok ? @"OK" : @"FAIL");
+            NSMutableArray *mut = [self.records mutableCopy];
+            [mut removeObjectAtIndex:ip.row];
+            self.records = mut;
+            [tv deleteRowsAtIndexPaths:@[ip] withRowAnimation:UITableViewRowAnimationAutomatic];
+            done(YES);
+        }];
+    delA.backgroundColor = [UIColor systemRedColor];
+    return [UISwipeActionsConfiguration configurationWithActions:@[delA, editA, copyA]];
+}
+@end
+
+// 显示 Keychain 列表（表格版，左滑复制/编辑/删除）
 static void mfShowKeychainListPage(void) {
     mfKLog(@"mfShowKeychainListPage called");
     UIView *page = mfMakePage(@"Keychain 列表", YES);
     
-    // 先显示加载中
     UIActivityIndicatorView *spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleGray];
     spinner.center = CGPointMake(g_mfCardW / 2, g_mfCardH / 2);
     spinner.hidesWhenStopped = YES;
@@ -700,17 +783,16 @@ static void mfShowKeychainListPage(void) {
     
     mfPushPage(page);
     
-    // 后台查询
+    MFKeychainList *ctrl = [[MFKeychainList alloc] init];
+    objc_setAssociatedObject(page, "mfkeylist", ctrl, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         NSArray *items = mfGetKeychainItems();
         mfKLog(@"list page query done: %lu items", (unsigned long)items.count);
-        
         dispatch_async(dispatch_get_main_queue(), ^{
-            // 移除加载指示器
             [spinner stopAnimating];
             [spinner removeFromSuperview];
             [loadingLabel removeFromSuperview];
-            
             if (items.count == 0) {
                 UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(20, 50, g_mfCardW - 40, 40)];
                 label.text = @"无 Generic Password 项";
@@ -718,73 +800,375 @@ static void mfShowKeychainListPage(void) {
                 label.textColor = [UIColor secondaryLabelColor];
                 label.font = [UIFont systemFontOfSize:15];
                 [page addSubview:label];
-            } else {
-                // ScrollView 从 nav bar 下方开始 (y=40)，避免遮挡返回键
-                UIScrollView *sv = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 40, g_mfCardW, g_mfCardH - 40)];
-                sv.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-                [page addSubview:sv];
-                
-                CGFloat y = 12;
-                for (NSDictionary *item in items) {
-                    NSString *account = item[(__bridge id)kSecAttrAccount] ?: @"(无账号)";
-                    NSString *service = item[(__bridge id)kSecAttrService] ?: @"(无服务)";
-                    NSString *summary = [NSString stringWithFormat:@"%@ / %@", account, service];
-                    
-                    UIView *cell = [[UIView alloc] initWithFrame:CGRectMake(12, y, g_mfCardW - 24, 44)];
-                    cell.backgroundColor = [UIColor secondarySystemBackgroundColor];
-                    cell.layer.cornerRadius = 8;
-                    
-                    UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
-                    btn.frame = cell.bounds;
-                    btn.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
-                    [btn setTitle:[NSString stringWithFormat:@"  %@", summary] forState:UIControlStateNormal];
-                    [btn setTitleColor:[UIColor labelColor] forState:UIControlStateNormal];
-                    btn.titleLabel.font = [UIFont systemFontOfSize:14];
-                    objc_setAssociatedObject(btn, "item", item, OBJC_ASSOCIATION_RETAIN);
-                    [btn addTarget:g_mfCtrl action:@selector(mfShowKeychainDetail:) forControlEvents:UIControlEventTouchUpInside];
-                    [cell addSubview:btn];
-                    
-                    // 删除按钮 (右侧红色)
-                    UIButton *delBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-                    delBtn.frame = CGRectMake(g_mfCardW - 24 - 60, 4, 60, 36);
-                    delBtn.backgroundColor = [UIColor systemRedColor];
-                    delBtn.layer.cornerRadius = 6;
-                    [delBtn setTitle:@"删除" forState:UIControlStateNormal];
-                    [delBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-                    delBtn.titleLabel.font = [UIFont systemFontOfSize:12];
-                    objc_setAssociatedObject(delBtn, "item", item, OBJC_ASSOCIATION_RETAIN);
-                    [delBtn addTarget:g_mfCtrl action:@selector(mfDeleteKeychainItem:) forControlEvents:UIControlEventTouchUpInside];
-                    [cell addSubview:delBtn];
-                    
-                    [sv addSubview:cell];
-                    y += 48;
-                }
-                sv.contentSize = CGSizeMake(g_mfCardW, y + 20);
+                return;
             }
+            ctrl.records = items;
+            [ctrl mfMakeTableInPage:page];
         });
     });
 }
 
-// 显示详情
+// ====== Keychain Dump（当前 App 取证：装破解版跑一次→dump 看假记录格式） ======
+
+// 判断条目是否属于当前 app（accessGroup 通常为 TEAMID.bundleid，service 常用 bundleid 前缀）
+static BOOL mfItemBelongsToApp(NSDictionary *item, NSString *bundleId) {
+    if (bundleId.length == 0) return NO;
+    NSString *ag = item[(__bridge id)kSecAttrAccessGroup] ?: @"";
+    NSString *sv = item[(__bridge id)kSecAttrService] ?: @"";
+    if ([ag rangeOfString:bundleId].location != NSNotFound) return YES;
+    if ([sv rangeOfString:bundleId].location != NSNotFound) return YES;
+    if ([ag hasSuffix:bundleId]) return YES;
+    return NO;
+}
+
+// 条目 → JSON 可序列化（完整属性）
+static NSDictionary *mfItemToDumpDict(NSDictionary *item) {
+    NSData *data = item[(__bridge id)kSecValueData];
+    return @{
+        @"service": item[(__bridge id)kSecAttrService] ?: @"",
+        @"account": item[(__bridge id)kSecAttrAccount] ?: @"",
+        @"accessGroup": item[(__bridge id)kSecAttrAccessGroup] ?: @"",
+        @"type": item[(__bridge id)kSecAttrType] ?: @"",
+        @"dataBase64": data ? [data base64EncodedStringWithOptions:0] : @"",
+        @"dataLength": @(data.length),
+    };
+}
+
+// Dump 当前 App Keychain（消息提示 + 落盘 + 面板列表）
+void mfDumpCurrentAppKeychain(void) {
+    mfKLog(@"mfDumpCurrentAppKeychain called");
+    NSString *bundleId = mfCurrentBundleId();
+    if (bundleId.length == 0) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"提示"
+                                                                       message:@"无法确定当前前台 App"
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
+        mfPresentOnPanelVC(alert);
+        return;
+    }
+    mfKLog(@"dumping keychain for app: %@", bundleId);
+    
+    UIView *page = mfMakePage([NSString stringWithFormat:@"Dump %@", bundleId], YES);
+    UIActivityIndicatorView *spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleGray];
+    spinner.center = CGPointMake(g_mfCardW / 2, g_mfCardH / 2);
+    spinner.hidesWhenStopped = YES;
+    [page addSubview:spinner];
+    [spinner startAnimating];
+    UILabel *loadingLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, spinner.center.y + 30, g_mfCardW - 40, 20)];
+    loadingLabel.text = @"查询 Keychain 中...";
+    loadingLabel.textAlignment = NSTextAlignmentCenter;
+    loadingLabel.textColor = [UIColor secondaryLabelColor];
+    loadingLabel.font = [UIFont systemFontOfSize:14];
+    [page addSubview:loadingLabel];
+    mfPushPage(page);
+    
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSArray *items = mfGetKeychainItems();
+        NSMutableArray *matched = [NSMutableArray array];
+        for (NSDictionary *it in items)
+            if (mfItemBelongsToApp(it, bundleId)) [matched addObject:it];
+        mfKLog(@"dump: total=%lu matched=%lu", (unsigned long)items.count, (unsigned long)matched.count);
+        
+        // 落盘 JSON（完整 dump，含全部条目 + 匹配标记）
+        NSMutableArray *all = [NSMutableArray array];
+        for (NSDictionary *it in items) {
+            NSMutableDictionary *d = [mfItemToDumpDict(it) mutableCopy];
+            d[@"belongsToApp"] = @(mfItemBelongsToApp(it, bundleId));
+            [all addObject:d];
+        }
+        NSDictionary *dump = @{@"app": bundleId, @"dumpedAt": [NSDate date].description ?: @"", @"total": @(items.count), @"matched": @(matched.count), @"items": all};
+        NSString *path = @"/var/mobile/Documents";
+        [[NSFileManager defaultManager] createDirectoryAtPath:path withIntermediateDirectories:YES attributes:nil error:nil];
+        NSString *file = [NSString stringWithFormat:@"%@/minisfix_keychain_dump_%@.json", path, bundleId];
+        NSData *json = [NSJSONSerialization dataWithJSONObject:dump options:NSJSONWritingPrettyPrinted error:nil];
+        BOOL wrote = json && [json writeToFile:file atomically:YES];
+        mfKLog(@"dump saved: %@ wrote=%d", file, wrote);
+        
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [spinner stopAnimating];
+            [spinner removeFromSuperview];
+            [loadingLabel removeFromSuperview];
+            
+            UILabel *hdr = [[UILabel alloc] initWithFrame:CGRectMake(12, 46, g_mfCardW - 24, 34)];
+            hdr.text = [NSString stringWithFormat:@"总 %lu · 匹配 %lu%s%@",
+                        (unsigned long)items.count, (unsigned long)matched.count,
+                        wrote ? " · ✅ 已存 " : " · ⚠️ 存文件失败 ",
+                        wrote ? file : @""];
+            hdr.font = [UIFont systemFontOfSize:10];
+            hdr.textColor = [UIColor secondaryLabelColor];
+            hdr.numberOfLines = 3;
+            [page addSubview:hdr];
+            
+            UIButton *copyAll = [UIButton buttonWithType:UIButtonTypeSystem];
+            copyAll.frame = CGRectMake(12, 84, (g_mfCardW - 36) / 2, 34);
+            [copyAll setTitle:@"📋 复制全部 JSON" forState:UIControlStateNormal];
+            copyAll.titleLabel.font = [UIFont systemFontOfSize:12];
+            copyAll.backgroundColor = [UIColor secondarySystemBackgroundColor];
+            copyAll.layer.cornerRadius = 8;
+            objc_setAssociatedObject(copyAll, "dumpJson", json ? json : [NSData data], OBJC_ASSOCIATION_RETAIN);
+            [copyAll addTarget:g_mfCtrl action:@selector(mfCopyDumpJson:) forControlEvents:UIControlEventTouchUpInside];
+            [page addSubview:copyAll];
+            
+            UIButton *copyMatched = [UIButton buttonWithType:UIButtonTypeSystem];
+            copyMatched.frame = CGRectMake(24 + (g_mfCardW - 36) / 2, 84, (g_mfCardW - 36) / 2, 34);
+            [copyMatched setTitle:@"📋 复制匹配 JSON" forState:UIControlStateNormal];
+            copyMatched.titleLabel.font = [UIFont systemFontOfSize:12];
+            copyMatched.backgroundColor = [UIColor secondarySystemBackgroundColor];
+            copyMatched.layer.cornerRadius = 8;
+            NSMutableArray *mp = [NSMutableArray array];
+            for (NSDictionary *it in matched) [mp addObject:mfItemToDumpDict(it)];
+            NSData *mjson = [NSJSONSerialization dataWithJSONObject:@{@"app": bundleId, @"items": mp} options:NSJSONWritingPrettyPrinted error:nil];
+            objc_setAssociatedObject(copyMatched, "dumpJson", mjson ?: [NSData data], OBJC_ASSOCIATION_RETAIN);
+            [copyMatched addTarget:g_mfCtrl action:@selector(mfCopyDumpJson:) forControlEvents:UIControlEventTouchUpInside];
+            [page addSubview:copyMatched];
+            
+            if (matched.count == 0) {
+                UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(20, 130, g_mfCardW - 40, 40)];
+                label.text = @"无匹配条目（可切「全部」查看所有）";
+                label.textAlignment = NSTextAlignmentCenter;
+                label.textColor = [UIColor secondaryLabelColor];
+                label.font = [UIFont systemFontOfSize:13];
+                [page addSubview:label];
+            }
+            
+            // 复用列表控制器（只读+复制模式：swipe 删除也保留，可顺手清理）
+            MFKeychainList *ctrl = [[MFKeychainList alloc] init];
+            ctrl.records = matched.count ? matched : items;
+            ctrl.table = nil;
+            UITableView *tb = [[UITableView alloc] initWithFrame:CGRectMake(0, 126, g_mfCardW, g_mfCardH - 126) style:UITableViewStylePlain];
+            tb.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+            tb.dataSource = ctrl;
+            tb.delegate = ctrl;
+            tb.backgroundColor = UIColor.clearColor;
+            objc_setAssociatedObject(page, "mfkeylist", ctrl, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            [page addSubview:tb];
+        });
+    });
+}
+
+// 复制 dump JSON（由按钮调用）
+void mfCopyDumpJsonFromButton(UIButton *btn) {
+    NSData *json = objc_getAssociatedObject(btn, "dumpJson");
+    if (json.length) {
+        [[UIPasteboard generalPasteboard] setString:[[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding]];
+        mfKLog(@"copied dump JSON (%lu bytes)", (unsigned long)json.length);
+    }
+}
+
+// ====== 详情页（面板式，替代弹窗） ======
+
+static void mfDoSaveKeychainData(NSDictionary *item, NSData *newData, void (^done)(BOOL)) {
+    NSMutableDictionary *query = [NSMutableDictionary dictionary];
+    query[(__bridge id)kSecClass] = (__bridge id)kSecClassGenericPassword;
+    NSString *account = item[(__bridge id)kSecAttrAccount];
+    NSString *service = item[(__bridge id)kSecAttrService];
+    if (account) query[(__bridge id)kSecAttrAccount] = account;
+    if (service) query[(__bridge id)kSecAttrService] = service;
+    NSDictionary *attrs = @{(__bridge id)kSecValueData: newData};
+    OSStatus st = SecItemUpdate((__bridge CFDictionaryRef)query, (__bridge CFDictionaryRef)attrs);
+    mfKLog(@"SecItemUpdate(%@) status=%d", service, (int)st);
+    done(st == errSecSuccess);
+}
+
+// 详情面板：信息 + Base64/Hex/UTF8 查看 + 复制/编辑/删除
 void mfShowKeychainDetail(NSDictionary *item) {
     mfKLog(@"mfShowKeychainDetail called for account=%@", item[(__bridge id)kSecAttrAccount] ?: @"(nil)");
-    NSString *account = item[(__bridge id)kSecAttrAccount] ?: @"(无账号)";
+    UIView *page = mfMakePage(@"Keychain 详情", YES);
     NSString *service = item[(__bridge id)kSecAttrService] ?: @"(无服务)";
+    NSString *account = item[(__bridge id)kSecAttrAccount] ?: @"(无账号)";
+    NSString *ag = item[(__bridge id)kSecAttrAccessGroup] ?: @"(无)";
+    NSDate *cd = item[(__bridge id)kSecAttrCreationDate];
+    NSDate *md = item[(__bridge id)kSecAttrModificationDate];
     NSData *data = item[(__bridge id)kSecValueData];
-    NSString *dataStr = data ? [data base64EncodedStringWithOptions:0] : @"(无数据)";
-    NSString *detail = [NSString stringWithFormat:@"账号: %@\n服务: %@\n数据(Base64): %@", account, service, dataStr];
     
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Keychain 详情"
-                                                                     message:detail
-                                                              preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"复制数据" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        if (data) {
-            [[UIPasteboard generalPasteboard] setString:[data base64EncodedStringWithOptions:0]];
-            mfKLog(@"copied detail data to pasteboard");
+    UIScrollView *sv = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 42, g_mfCardW, g_mfCardH - 42)];
+    sv.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    [page addSubview:sv];
+    
+    CGFloat y = 12;
+    // 信息卡
+    UIView *infoCard = [[UIView alloc] initWithFrame:CGRectMake(12, y, g_mfCardW - 24, 92)];
+    infoCard.backgroundColor = [UIColor secondarySystemBackgroundColor];
+    infoCard.layer.cornerRadius = 8;
+    UILabel *sLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 6, g_mfCardW - 44, 16)];
+    sLabel.text = [NSString stringWithFormat:@"服务: %@", service];
+    sLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightMedium];
+    UILabel *aLbl = [[UILabel alloc] initWithFrame:CGRectMake(10, 24, g_mfCardW - 44, 16)];
+    aLbl.text = [NSString stringWithFormat:@"账号: %@", account];
+    aLbl.font = [UIFont systemFontOfSize:11];
+    UILabel *gLbl = [[UILabel alloc] initWithFrame:CGRectMake(10, 42, g_mfCardW - 44, 16)];
+    gLbl.text = [NSString stringWithFormat:@"Group: %@", ag];
+    gLbl.font = [UIFont systemFontOfSize:11];
+    UILabel *tLbl = [[UILabel alloc] initWithFrame:CGRectMake(10, 60, g_mfCardW - 44, 26)];
+    tLbl.text = [NSString stringWithFormat:@"数据 %lu B%@%@%@%@%@",
+                 (unsigned long)data.length,
+                 cd ? @"\n创建 " : @"", cd ? [cd descriptionWithLocale:nil] : @"",
+                 md ? @"\n修改 " : @"", md ? [md descriptionWithLocale:nil] : @""];
+    tLbl.font = [UIFont systemFontOfSize:9];
+    tLbl.textColor = [UIColor secondaryLabelColor];
+    tLbl.numberOfLines = 2;
+    [infoCard addSubview:sLabel];
+    [infoCard addSubview:aLbl];
+    [infoCard addSubview:gLbl];
+    [infoCard addSubview:tLbl];
+    [sv addSubview:infoCard];
+    y += 100;
+    
+    UITextView *dataView = [[UITextView alloc] initWithFrame:CGRectMake(12, y, g_mfCardW - 24, g_mfCardH - y - 110)];
+    dataView.backgroundColor = [UIColor secondarySystemBackgroundColor];
+    dataView.layer.cornerRadius = 8;
+    dataView.font = [UIFont monospacedSystemFontOfSize:10 weight:UIFontWeightRegular];
+    dataView.editable = NO;
+    dataView.dataDetectorTypes = UIDataDetectorTypeNone;
+    dataView.textColor = [UIColor labelColor];
+    dataView.autoresizingMask = UIViewAutoresizingFlexibleHeight;
+    [sv addSubview:dataView];
+    
+    NSData *displayData = data ?: [NSData data];
+    // 默认显示 Base64
+    NSString *b64 = [displayData base64EncodedStringWithOptions:0];
+    dataView.text = b64.length > 4096 ? [[b64 substringToIndex:4096] stringByAppendingFormat:@"\n… (共 %lu 字符, 完整用复制)", (unsigned long)b64.length] : b64;
+    
+    // 数据视图模式切换：Base64 / Hex / UTF8 三按钮（走 g_mfCtrl 转发）
+    NSArray *modes = @[@"Base64", @"Hex", @"UTF8"];
+    CGFloat segW = (g_mfCardW - 24 - 12) / 3;
+    for (NSUInteger mi = 0; mi < modes.count; mi++) {
+        UIButton *mb = [UIButton buttonWithType:UIButtonTypeSystem];
+        mb.frame = CGRectMake(12 + mi * (segW + 6), y, segW, 30);
+        [mb setTitle:modes[mi] forState:UIControlStateNormal];
+        mb.titleLabel.font = [UIFont systemFontOfSize:12];
+        mb.backgroundColor = [UIColor secondarySystemBackgroundColor];
+        mb.layer.cornerRadius = 6;
+        objc_setAssociatedObject(mb, "mode", @(mi), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(mb, "data", displayData, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(mb, "dataView", dataView, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        [mb addTarget:g_mfCtrl action:@selector(mfKeychainDataDisplay:) forControlEvents:UIControlEventTouchUpInside];
+        [sv addSubview:mb];
+    }
+    y += 38;
+    
+    y += g_mfCardH - y - 110 + 4;
+    
+    // 底部按钮行（复制/编辑/删除 → g_mfCtrl 转发，与列表 swipe 动作一致）
+    UIButton *copyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    copyBtn.frame = CGRectMake(12, y, (g_mfCardW - 36 - 24) / 2, 36);
+    [copyBtn setTitle:@"📋 复制数据" forState:UIControlStateNormal];
+    copyBtn.titleLabel.font = [UIFont systemFontOfSize:13];
+    copyBtn.backgroundColor = [UIColor secondarySystemBackgroundColor];
+    copyBtn.layer.cornerRadius = 8;
+    objc_setAssociatedObject(copyBtn, "data", displayData, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [copyBtn addTarget:g_mfCtrl action:@selector(mfCopyKeychainData:) forControlEvents:UIControlEventTouchUpInside];
+    [sv addSubview:copyBtn];
+    
+    UIButton *editBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    editBtn.frame = CGRectMake(28 + (g_mfCardW - 36 - 24) / 2, y, (g_mfCardW - 36 - 24) / 2, 36);
+    [editBtn setTitle:@"✏️ 编辑数据" forState:UIControlStateNormal];
+    editBtn.titleLabel.font = [UIFont systemFontOfSize:13];
+    editBtn.backgroundColor = [UIColor secondarySystemBackgroundColor];
+    editBtn.layer.cornerRadius = 8;
+    objc_setAssociatedObject(editBtn, "item", item, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(editBtn, "dataView", dataView, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [editBtn addTarget:g_mfCtrl action:@selector(mfEditKeychainData:) forControlEvents:UIControlEventTouchUpInside];
+    [sv addSubview:editBtn];
+    y += 44;
+    
+    UIButton *delBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    delBtn.frame = CGRectMake(12, y, g_mfCardW - 24, 36);
+    [delBtn setTitle:@"🗑 删除条目" forState:UIControlStateNormal];
+    [delBtn setTitleColor:[UIColor systemRedColor] forState:UIControlStateNormal];
+    delBtn.titleLabel.font = [UIFont systemFontOfSize:13];
+    delBtn.backgroundColor = [UIColor secondarySystemBackgroundColor];
+    delBtn.layer.cornerRadius = 8;
+    objc_setAssociatedObject(delBtn, "item", item, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [delBtn addTarget:g_mfCtrl action:@selector(mfDeleteKeychainItem:) forControlEvents:UIControlEventTouchUpInside];
+    [sv addSubview:delBtn];
+    y += 44;
+    
+    sv.contentSize = CGSizeMake(g_mfCardW, y + 20);
+    mfPushPage(page);
+}
+
+// 详情页 C 实现：模式切换（Base64/Hex/UTF8）
+void mfKeychainDataDisplayFromButton(UIButton *btn) {
+    NSInteger mode = [objc_getAssociatedObject(btn, "mode") integerValue];
+    NSData *d = objc_getAssociatedObject(btn, "data");
+    UITextView *dv = objc_getAssociatedObject(btn, "dataView");
+    if (!dv || !d) return;
+    if (mode == 0) {
+        NSString *b = [d base64EncodedStringWithOptions:0];
+        dv.text = b.length > 4096 ? [[b substringToIndex:4096] stringByAppendingFormat:@"\n… (共 %lu 字符, 完整用复制)", (unsigned long)b.length] : b;
+    } else if (mode == 1) {
+        const unsigned char *p = d.bytes;
+        NSMutableString *h = [NSMutableString string];
+        NSUInteger n = MIN(d.length, 2048);
+        for (NSUInteger i = 0; i < n; i++) [h appendFormat:@"%02X ", p[i]];
+        dv.text = d.length > 2048 ? [h stringByAppendingFormat:@"\n… (共 %lu 字节, 完整用复制)", (unsigned long)d.length] : h;
+    } else {
+        NSString *u = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
+        dv.text = u ?: @"(非 UTF8 可解析数据)";
+    }
+}
+
+// 详情页 C 实现：复制数据（base64 全量）
+void mfCopyKeychainDataFromDetailButton(UIButton *btn) {
+    NSData *d = objc_getAssociatedObject(btn, "data");
+    if (!d) return;
+    [[UIPasteboard generalPasteboard] setString:[d base64EncodedStringWithOptions:0]];
+    mfKLog(@"detail: copied %lu bytes", (unsigned long)d.length);
+    mfToast(@"✅ 已复制数据 (Base64)");
+}
+
+// 详情页 C 实现：编辑/保存数据（第一次点=进入编辑，第二次点=保存）
+void mfEditKeychainDataFromDetailButton(UIButton *btn) {
+    NSDictionary *item = objc_getAssociatedObject(btn, "item");
+    UITextView *dv = objc_getAssociatedObject(btn, "dataView");
+    if (!item || !dv) return;
+    BOOL editing = [objc_getAssociatedObject(btn, "editing") boolValue];
+    if (!editing) {
+        // 进入编辑：提示用户输入 Base64（保留原数据为初始值）
+        NSString *orig = [[UIPasteboard generalPasteboard] string];
+        NSString *cur = objc_getAssociatedObject(btn, "origB64");
+        if (!cur) {
+            NSData *od = item[(__bridge id)kSecValueData];
+            cur = od ? [od base64EncodedStringWithOptions:0] : @"";
+            objc_setAssociatedObject(btn, "origB64", cur, OBJC_ASSOCIATION_COPY_NONATOMIC);
         }
-    }]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"关闭" style:UIAlertActionStyleCancel handler:nil]];
-    mfPresentOnPanelVC(alert);
+        (void)orig;
+        dv.editable = YES;
+        dv.backgroundColor = [UIColor systemBackgroundColor];
+        [dv becomeFirstResponder];
+        dv.text = cur;
+        [btn setTitle:@"💾 保存修改" forState:UIControlStateNormal];
+        objc_setAssociatedObject(btn, "editing", @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        mfToast(@"粘贴新的 Base64 数据后点保存");
+    } else {
+        // 保存：base64 decode → SecItemUpdate
+        NSString *text = dv.text;
+        text = [text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        NSData *newData = [[NSData alloc] initWithBase64EncodedString:text options:0];
+        if (!newData) {
+            mfToast(@"⚠️ Base64 解码失败");
+            return;
+        }
+        BOOL ok = NO;
+        NSMutableDictionary *query = [NSMutableDictionary dictionary];
+        query[(__bridge id)kSecClass] = (__bridge id)kSecClassGenericPassword;
+        NSString *account = item[(__bridge id)kSecAttrAccount];
+        NSString *service = item[(__bridge id)kSecAttrService];
+        if (account) query[(__bridge id)kSecAttrAccount] = account;
+        if (service) query[(__bridge id)kSecAttrService] = service;
+        NSDictionary *attrs = @{(__bridge id)kSecValueData: newData};
+        OSStatus st = SecItemUpdate((__bridge CFDictionaryRef)query, (__bridge CFDictionaryRef)attrs);
+        ok = (st == errSecSuccess);
+        mfKLog(@"edit save: SecItemUpdate=%d", (int)st);
+        dv.editable = NO;
+        dv.backgroundColor = [UIColor secondarySystemBackgroundColor];
+        [dv resignFirstResponder];
+        dv.text = [newData base64EncodedStringWithOptions:0];
+        [btn setTitle:@"✏️ 编辑数据" forState:UIControlStateNormal];
+        objc_setAssociatedObject(btn, "editing", @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        mfToast(ok ? @"✅ 已保存" : @"❌ 保存失败");
+    }
 }
 
 // 删除 Keychain 项 (从列表页按钮调用) - 外部可见
@@ -808,20 +1192,35 @@ void mfDeleteKeychainItem(UIButton *btn) {
         BOOL ok = mfDeleteKeychainItemInternal(item);
         mfKLog(@"delete result: %@", ok ? @"YES" : @"NO");
         dispatch_async(dispatch_get_main_queue(), ^{
-            UIAlertController *result = [UIAlertController alertControllerWithTitle:ok ? @"已删除" : @"删除失败"
-                                                                               message:nil
-                                                                        preferredStyle:UIAlertControllerStyleAlert];
-            [result addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-                if (ok) {
-                    mfKLog(@"refreshing list page");
-                    mfPopPage();
-                    mfShowKeychainListPage();
-                }
-            }]];
-            mfPresentOnPanelVC(result);
+            if (ok) {
+                mfKLog(@"refreshing keychain pages");
+                mfPopPage();                       // 离开详情/列表
+                mfRefreshKeychainListIfVisible();  // 刷新可见列表（若有）
+                mfToast(@"✅ 已删除");
+            } else {
+                mfToast(@"❌ 删除失败");
+            }
         });
     }]];
     mfPresentOnPanelVC(alert);
+}
+
+// 刷新当前可见的 Keychain 列表（删除后同步）
+static void mfRefreshKeychainListIfVisible(void) {
+    for (UIView *v in g_mfPanelRootVC.view.subviews) {
+        MFKeychainList *ctrl = objc_getAssociatedObject(v, "mfkeylist");
+        if (ctrl && ctrl.table) {
+            dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+                NSArray *items = mfGetKeychainItems();
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    ctrl.records = items;
+                    [ctrl.table reloadData];
+                    mfKLog(@"keychain list refreshed: %lu items", (unsigned long)items.count);
+                });
+            });
+            return;
+        }
+    }
 }
 
 // 显示恢复输入
@@ -861,9 +1260,10 @@ void mfShowKeychainManagerPage(void) {
     CGFloat gy = 48;
     
     gy = mfGridButton(page, 16, gy, gw, @"查看列表", @"📋", @selector(mfShowKeychainListPage), NO, nil);
-    gy = mfGridButton(page, 16 + gw + 12, gy - 92, gw, @"获取 iCloud ID", @"☁️", @selector(mfFetchCloudKitRecordIDAuto), NO, nil);
-    gy = mfGridButton(page, 16, gy, gw, @"导出到剪贴板", @"📤", @selector(mfShowCopyAction), NO, nil);
-    gy = mfGridButton(page, 16 + gw + 12, gy - 92, gw, @"从剪贴板恢复", @"📥", @selector(mfShowRestorePrompt), NO, nil);
+    gy = mfGridButton(page, 16 + gw + 12, gy - 92, gw, @"Dump 当前 App", @"🔎", @selector(mfDumpCurrentApp), NO, nil);
+    gy = mfGridButton(page, 16, gy, gw, @"获取 iCloud ID", @"☁️", @selector(mfFetchCloudKitRecordIDAuto), NO, nil);
+    gy = mfGridButton(page, 16 + gw + 12, gy - 92, gw, @"导出到剪贴板", @"📤", @selector(mfShowCopyAction), NO, nil);
+    gy = mfGridButton(page, 16, gy, gw, @"从剪贴板恢复", @"📥", @selector(mfShowRestorePrompt), NO, nil);
     
     mfPushPage(page);
 }

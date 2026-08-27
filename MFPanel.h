@@ -66,7 +66,12 @@ void mfCopyKeychainAction(void);            // 导出到剪贴板
 void mfShowClassDumpPage(void);             // ClassDump 页
 void mfClassDumpStartAction(UIProgressView *pv, UILabel *lb, UIButton *btn, UIView *actionRow);
 void mfShowRestorePromptAction(void);       // 从剪贴板恢复
-void mfShowKeychainDetail(NSDictionary *item); // 详情 (由 MFPanelCtrl 转发)
+void mfShowKeychainDetail(NSDictionary *item); // 详情面板 (由 MFPanelCtrl 转发)
+void mfDumpCurrentAppKeychain(void);           // Dump 当前 App Keychain（取证）
+void mfCopyDumpJsonFromButton(UIButton *btn);  // 复制 Dump JSON（按钮）
+void mfKeychainDataDisplayFromButton(UIButton *btn);    // 详情：Base64/Hex/UTF8 切换
+void mfCopyKeychainDataFromDetailButton(UIButton *btn); // 详情：复制数据
+void mfEditKeychainDataFromDetailButton(UIButton *btn); // 详情：编辑/保存数据
 
 // ====== JS 规则引擎（MFJSRules.m） ======
 BOOL mfJSLoadScript(NSString *script);

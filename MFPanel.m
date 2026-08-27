@@ -1536,6 +1536,21 @@ void mfShowProductPage(void) {
     mfDeleteKeychainItem(btn);
 }
 
+// Keychain Dump（主页按钮）
+- (void)mfDumpCurrentApp { mfDumpCurrentAppKeychain(); }
+
+// Keychain 详情页：模式切换
+- (void)mfKeychainDataDisplay:(UIButton *)btn { mfKeychainDataDisplayFromButton(btn); }
+
+// Keychain 详情页：复制数据
+- (void)mfCopyKeychainData:(UIButton *)btn { mfCopyKeychainDataFromDetailButton(btn); }
+
+// Keychain 详情页：编辑/保存
+- (void)mfEditKeychainData:(UIButton *)btn { mfEditKeychainDataFromDetailButton(btn); }
+
+// Keychain Dump 页：复制 JSON
+- (void)mfCopyDumpJson:(UIButton *)btn { mfCopyDumpJsonFromButton(btn); }
+
 // iCloud Record ID 复制 (从列表页点击 cell)
 - (void)mfCopyICloudRecordID:(UITapGestureRecognizer *)tap {
     UIView *cell = tap.view;
@@ -2136,7 +2151,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define IAPTOOLS_VERSION @"2.6.63"
+#define IAPTOOLS_VERSION @"2.6.64"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
