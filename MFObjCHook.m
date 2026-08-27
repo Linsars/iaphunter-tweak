@@ -582,17 +582,12 @@ NSArray *mfFindClassesForSelector(NSString *selName) {
         const char *clsName = class_getName(cls);
         if (!clsName || strncmp(clsName, "NS", 2) == 0) continue;
         if (strncmp(clsName, "UI", 2) == 0) continue;
-        if (!strstr(clsName, "Scroll") && !strstr(clsName, "sugarmo") && !strstr(clsName, "Picsew") && !strstr(clsName, "Swift")) {
-            // 只要可能的主 app 类 —— 宽松: 全部保留, 系统框架方法名也几乎不会撞混淆名
-        }
-        BOOL isInst = NO;
-        @try {
-            isInst = [cls instancesRespondToSelector:target];
-        } @catch (NSException *e) { continue; }
-        BOOL isClass = NO;
-        @try {
-            isClass = class_respondsToSelector(objc_getMetaClass(clsName), target);
-        } @catch (NSException *e) { }
+        if (strncmp(clsName, "_", 1) == 0) continue;  // 占位/私有
+        // v2.6.72: 关键——绝不用 instancesRespondToSelector:/respondsToSelector:(会对脆类触发消息转发 → SIGTRAP,
+        //          实测 131944.ips ___forwarding___ crash)。只查 objc runtime 方法表(class_getInstanceMethod),
+        //          不产生任何消息发送, 对随意类安全。
+        BOOL isInst = class_getInstanceMethod(cls, target) != NULL;
+        BOOL isClass = class_getClassMethod(cls, target) != NULL;
         if (isInst || isClass) {
             [hits addObject:@{@"class": @(clsName), @"kind": isClass ? @"类方法" : @"实例方法"}];
         }
