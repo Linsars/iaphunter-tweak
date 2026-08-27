@@ -365,6 +365,7 @@ static BOOL g_sk1on = NO;
 static void (*orig_sk1_finish)(id, SEL, id);
 static void hook_sk1_finish(id self, SEL _cmd, id tx);
 static void mfSK1PushFakes(void);
+static void mfSK1DispatchFakes(NSArray *fakes);
 
 // v2.6.61: SwiftyStoreKit 把 SKPaymentTransaction 当下标用(崩溃实锤) —— 动态补 objectForKeyedSubscript: 兜底
 static BOOL g_sk1SubscriptInstalled = NO;
@@ -438,23 +439,38 @@ static id (*orig_sk1_date)(id, SEL);
 static id hook_sk1_date(id self, SEL _cmd) { return [NSDate date]; }
 // v2.6.58: hook updatedTransactions:(storekitd 推送回调)——SwiftyStoreKit 用回调参数不用队列读取
 static void (*orig_sk1_updated)(id, SEL, id);
+// v2.6.63: fake 绝不过原版(updatedTransactions: 内部 initWithServerTransaction: 会崩裸对象)
+//   原版只透传真实交易; fake 直接对 observers 调 paymentQueue:updatedTransactions: 回调
+static void mfSK1DispatchFakes(NSArray *fakes) {
+    if (fakes.count == 0) return;
+    id q = [objc_getClass("SKPaymentQueue") performSelector:NSSelectorFromString(@"defaultQueue")];
+    if (!q) return;
+    id observers = ((id(*)(id,SEL))objc_msgSend)(q, NSSelectorFromString(@"transactionObservers"));
+    int cnt = 0;
+    for (id obs in [observers isKindOfClass:[NSArray class]] ? observers : @[]) {
+        SEL cb = NSSelectorFromString(@"paymentQueue:updatedTransactions:");
+        if ([obs respondsToSelector:cb]) {
+            ((void(*)(id,SEL,id,id))objc_msgSend)(obs, cb, q, fakes);
+            cnt++;
+        }
+    }
+    OH_LOG(@"SK1 dispatch: %lu fakes → %d observers", (unsigned long)fakes.count, cnt);
+}
+
 static void hook_sk1_updated(id self, SEL _cmd, id txs) {
+    // 真实交易 → 原版透传(正规对象, 内部处理安全)
+    if (orig_sk1_updated) orig_sk1_updated(self, _cmd, txs);
+    // fake → 直接分发 observers(绕开原版内部)
     if (g_sk1on) {
-        NSArray *real = [txs isKindOfClass:[NSArray class]] ? txs : nil;
         NSArray *pids = [[NSUserDefaults standardUserDefaults] objectForKey:@"SavedIAPIDs"] ?: @[];
-        NSMutableArray *all = [NSMutableArray array];
-        if (real.count) [all addObjectsFromArray:real];
+        NSMutableArray *fakes = [NSMutableArray array];
         for (NSString *pid in pids) {
             if (pid.length == 0 || pid.length > 200) continue;
             id tx = mfSK1FakeTx(pid);
-            if (tx) [all addObject:tx];
+            if (tx) [fakes addObject:tx];
         }
-        if (all.count > (real ? real.count : 0)) {
-            OH_LOG(@"SK1 updatedTransactions: +%lu fake", (unsigned long)(all.count - (real ? real.count : 0)));
-            txs = all;
-        }
+        if (fakes.count) [NSThread isMainThread] ? mfSK1DispatchFakes(fakes) : dispatch_async(dispatch_get_main_queue(), ^{ mfSK1DispatchFakes(fakes); });
     }
-    if (orig_sk1_updated) orig_sk1_updated(self, _cmd, txs);
 }
 
 static NSString *(*orig_sk1_tid)(id, SEL);
@@ -530,11 +546,8 @@ static void mfSK1PushFakes(void) {
         if (tx) [fakes addObject:tx];
     }
     if (fakes.count == 0) return;
-    id q = [objc_getClass("SKPaymentQueue") performSelector:NSSelectorFromString(@"defaultQueue")];
-    if (q) {
-        ((void(*)(id,SEL,id))objc_msgSend)(q, @selector(updatedTransactions:), fakes);
-        OH_LOG(@"SK1 push: %lu fake transactions to observers", (unsigned long)fakes.count);
-    }
+    // v2.6.63: 绝不调 updatedTransactions:(内部 server-tx 解析崩裸对象) → observer 直发
+    mfSK1DispatchFakes(fakes);
 }
 
 // finishTransaction 吞 fake(防 fake 发给 storekitd 出问题)
