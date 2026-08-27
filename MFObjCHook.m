@@ -21,6 +21,7 @@ void mfTraceSetPrefill(NSString *cls) {
 static NSMutableArray *g_objcHooks = nil;      // 规则(dict)
 static NSMutableArray *g_hookRestore = nil;    // 已应用 {cls,sel,origIMP,enc}
 static BOOL g_hookOn = NO;
+static NSInteger g_editIdx = -1;               // v2.6.79: 点 cell 编辑时载入的规则索引(-1=新规则)
 static UITextField *g_clsF = nil, *g_selF = nil, *g_valF = nil;   // v2.6.47 表单字段
 static UISegmentedControl *g_modeSeg = nil;
 static BOOL g_applySilent = NO;   // v2.6.57 ctor 静默标志
@@ -307,6 +308,13 @@ void mfShowObjCHookPage(void) {
         [del setTitle:@"✕" forState:UIControlStateNormal]; del.titleLabel.font = [UIFont systemFontOfSize:12];
         [del addTarget:g_mfCtrl action:NSSelectorFromString(@"mfObjCHookDelTapped:") forControlEvents:UIControlEventTouchUpInside];
         [row addSubview:del];
+        // v2.6.79: 点按 cell = 编辑(载入表单)；左滑 = 删除(同 keychain 列表交互)
+        row.tag = [g_objcHooks indexOfObject:r];
+        UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:g_mfCtrl action:NSSelectorFromString(@"mfObjCHookEditTapped:")];
+        [row addGestureRecognizer:tap];
+        UISwipeGestureRecognizer *swipe = [[UISwipeGestureRecognizer alloc] initWithTarget:g_mfCtrl action:NSSelectorFromString(@"mfObjCHookSwipeDel:")];
+        swipe.direction = UISwipeGestureRecognizerDirectionLeft;
+        [row addGestureRecognizer:swipe];
         [sv addSubview:row]; y += 72;
     }
     sv.contentSize = CGSizeMake(cw, y + 20);
@@ -401,10 +409,48 @@ void mfObjCHookFormAddTapped(void) {
 void mfObjCHookPersist(NSString *cls, NSString *sel, int mode, id val) {
     OH_LOG(@"persist: cls=%@ sel=%@ mode=%d val=%@", cls, sel, mode, val);
     if (cls.length == 0 || sel.length == 0) { mfToast(@"类名和方法必填"); return; }
-    [g_objcHooks addObject:@{@"class": cls, @"selector": sel, @"mode": @(mode), @"value": (val ?: @""), @"enabled": @YES}];
+    NSDictionary *newRule = @{@"class": cls, @"selector": sel, @"mode": @(mode), @"value": (val ?: @""), @"enabled": @YES};
+    // v2.6.79: 点 cell 编辑后 → 更新原规则；否则追加新规则
+    if (g_editIdx >= 0 && g_editIdx < (NSInteger)g_objcHooks.count) {
+        g_objcHooks[g_editIdx] = newRule;
+        g_editIdx = -1;
+        OH_LOG(@"persist: updated rule at index (edit mode)");
+    } else {
+        [g_objcHooks addObject:newRule];
+    }
     mfObjCHookSave();
     mfObjCHookApply();
-    // v2.6.45: 弹旧页重建刷新列表(配合防重入)
+    // rebuild 列表
+    if ([[(UIView *)g_mfPages.lastObject accessibilityIdentifier] isEqualToString:@"mf_objcrules"]) {
+        UIView *top = g_mfPages.lastObject;
+        [top removeFromSuperview];
+        [g_mfPages removeLastObject];
+    }
+    mfShowObjCHookPage();
+}
+
+// v2.6.79: 点 cell 载入编辑表单
+void mfObjCHookEditTappedFromView(UIView *row) {
+    NSInteger idx = row.tag;
+    if (idx < 0 || idx >= (NSInteger)g_objcHooks.count) return;
+    NSDictionary *r = g_objcHooks[idx];
+    g_editIdx = idx;
+    if (g_clsF) g_clsF.text = r[@"class"] ?: @"";
+    if (g_selF) g_selF.text = r[@"selector"] ?: @"";
+    if (g_modeSeg) g_modeSeg.selectedSegmentIndex = MIN([r[@"mode"] intValue], 4);
+    if (g_valF) g_valF.text = r[@"value"] ?: @"";
+    mfToast(@"✏️ 已载入到表单，改完点➕添加会更新该规则");
+    OH_LOG(@"edit tapped: idx=%ld class=%@", (long)idx, r[@"class"]);
+}
+
+// v2.6.79: 左滑删除规则
+void mfObjCHookSwipeDelFromView(UIView *row) {
+    NSInteger idx = row.tag;
+    if (idx < 0 || idx >= (NSInteger)g_objcHooks.count) return;
+    [g_objcHooks removeObjectAtIndex:idx];
+    mfObjCHookSave();
+    mfObjCHookApply();
+    mfToast(@"🗑 已删除规则");
     if ([[(UIView *)g_mfPages.lastObject accessibilityIdentifier] isEqualToString:@"mf_objcrules"]) {
         UIView *top = g_mfPages.lastObject;
         [top removeFromSuperview];
