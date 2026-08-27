@@ -373,7 +373,21 @@ static void mfSK1InstallSubscript(void) {
     Class T = objc_getClass("SKPaymentTransaction");
     if (!T) return;
     if (class_getInstanceMethod(T, @selector(objectForKeyedSubscript:))) { g_sk1SubscriptInstalled = YES; return; }
-    IMP imp = imp_implementationWithBlock(^id(id s, SEL c, id key){ return nil; });
+    // v2.6.62: 智能下标——记录 key + 按 key 返回合理值(SwiftyStoreKit/Picsew 需要什么自报家门)
+    IMP imp = imp_implementationWithBlock(^id(id s, SEL c, id key){
+        NSString *k = [key isKindOfClass:[NSString class]] ? key : nil;
+        OH_LOG(@"SK1 subscript[%@]", k ?: [key description]);
+        if ([k isEqualToString:@"productIdentifier"]) {
+            id pay = objc_getAssociatedObject(s, "mfsk1_pay");
+            if (pay) return objc_getAssociatedObject(pay, "mfsk1_pid");
+        }
+        if ([k isEqualToString:@"transactionState"]) return @1;
+        if ([k isEqualToString:@"transactionIdentifier"] || [k isEqualToString:@"matchingIdentifier"]) return @"mfsk1.fake.txn";
+        if ([k isEqualToString:@"transactionDate"]) return [NSDate date];
+        if ([k isEqualToString:@"payment"]) return objc_getAssociatedObject(s, "mfsk1_pay");
+        if ([k isEqualToString:@"quantity"]) return @1;
+        return nil;
+    });
     BOOL ok = class_addMethod(T, @selector(objectForKeyedSubscript:), imp, "@@:@");
     OH_LOG(@"SK1 subscript guard installed: %d", ok);
     g_sk1SubscriptInstalled = YES;
