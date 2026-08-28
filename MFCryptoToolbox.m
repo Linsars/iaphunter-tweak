@@ -249,6 +249,7 @@ void mfShowCryptoToolboxPage(void) {
     input.autocorrectionType = UITextAutocorrectionTypeNo;
     input.text = @"在此粘贴要处理的内容…";
     input.textColor = [UIColor placeholderTextColor];
+    mfAttachKbBar(input);   // v2.7.1: 键盘收起工具条
     [page addSubview:input];
 
     UISegmentedControl *fmtSeg = [[UISegmentedControl alloc] initWithItems:@[@"文本", @"Hex", @"Base64"]];
@@ -272,6 +273,7 @@ void mfShowCryptoToolboxPage(void) {
     keyF.font = [UIFont systemFontOfSize:12];
     keyF.borderStyle = UITextBorderStyleRoundedRect;
     keyF.autocorrectionType = UITextAutocorrectionTypeNo;
+    mfAttachKbBar(keyF);   // v2.7.1: 键盘收起工具条
     [page addSubview:keyF];
 
     UITextField *ivF = [[UITextField alloc] initWithFrame:CGRectMake(12, 218, w - 24, 34)];
@@ -279,6 +281,7 @@ void mfShowCryptoToolboxPage(void) {
     ivF.font = [UIFont systemFontOfSize:12];
     ivF.borderStyle = UITextBorderStyleRoundedRect;
     ivF.autocorrectionType = UITextAutocorrectionTypeNo;
+    mfAttachKbBar(ivF);   // v2.7.1: 键盘收起工具条
     [page addSubview:ivF];
 
     UIButton *runBtn = [UIButton buttonWithType:UIButtonTypeSystem];

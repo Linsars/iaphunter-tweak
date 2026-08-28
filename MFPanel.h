@@ -40,6 +40,7 @@ void mfPushPage(UIView *page);
 void mfPopPage(void);
 void mfClosePanel(void);
 CGFloat mfGridButton(UIView *card, CGFloat x, CGFloat y, CGFloat w, NSString *title, NSString *emoji, SEL action, BOOL switchMode, NSString *pfx);
+void mfAttachKbBar(id field);                               // v2.7.1 键盘收起工具条（UITextField/UITextView 通吃）
 
 // ====== 功能页面入口（各模块 .m 定义） ======
 // 数据分析（MFNetworkCapture.m）

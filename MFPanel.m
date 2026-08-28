@@ -218,6 +218,17 @@ void mfClosePanel(void) {
 }
 
 // ====== 网格按钮工具 ======
+// v2.7.1: 通用键盘收起工具条——所有手动输入框统一挂载（target=输入框自身 resignFirstResponder，零转发）
+void mfAttachKbBar(id field) {
+    if (![field respondsToSelector:@selector(setInputAccessoryView:)]) return;
+    UIToolbar *bar = [[UIToolbar alloc] initWithFrame:CGRectMake(0, 0, g_mfCardW, 44)];
+    UIBarButtonItem *flex = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:nil action:nil];
+    UIBarButtonItem *done = [[UIBarButtonItem alloc] initWithTitle:@"⌨️ 收起" style:UIBarButtonItemStyleDone target:field action:@selector(resignFirstResponder)];
+    bar.items = @[flex, done];
+    if ([field isKindOfClass:[UITextField class]]) ((UITextField *)field).inputAccessoryView = bar;
+    else ((UITextView *)field).inputAccessoryView = bar;
+}
+
 CGFloat mfGridButton(UIView *card, CGFloat x, CGFloat y, CGFloat w, NSString *title, NSString *emoji, SEL action, BOOL switchMode, NSString *pfx) {
     UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
     b.frame = CGRectMake(x, y, w, 84);
@@ -2153,7 +2164,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define IAPTOOLS_VERSION @"2.7.0"
+#define IAPTOOLS_VERSION @"2.7.1"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {

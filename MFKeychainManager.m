@@ -1554,6 +1554,7 @@ static void mfShowRestorePrompt(void) {
     tv.font = [UIFont monospacedSystemFontOfSize:11 weight:UIFontWeightRegular];
     tv.textColor = [UIColor labelColor];
     tv.autoresizingMask = UIViewAutoresizingFlexibleHeight;
+    mfAttachKbBar(tv);   // v2.7.1: 键盘收起工具条
     [page addSubview:tv];
     
     UILabel *stateLb = [[UILabel alloc] initWithFrame:CGRectMake(12, g_mfCardH - 60, g_mfCardW - 24, 20)];

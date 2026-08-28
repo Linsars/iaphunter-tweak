@@ -253,10 +253,10 @@ void mfShowObjCHookPage(void) {
     g_selF.placeholder = @"方法 (appStoreReceiptURL)";
     [sv addSubview:g_selF]; y += 40;
     g_modeSeg = [[UISegmentedControl alloc] initWithItems:@[@"透传", @"返回 nil", @"str 值", @"观察", @"✔YES"]];
-    g_modeSeg.frame = CGRectMake(16, y, (cw-40)/2, 30);
+    g_modeSeg.frame = CGRectMake(16, y, cw - 32, 30);   // v2.7.1: 全宽一行，5 项不再截断
     g_modeSeg.selectedSegmentIndex = 1;
-    [sv addSubview:g_modeSeg];
-    g_valF = [[UITextField alloc] initWithFrame:CGRectMake(24+(cw-40)/2, y, (cw-40)/2, 34)];
+    [sv addSubview:g_modeSeg]; y += 38;
+    g_valF = [[UITextField alloc] initWithFrame:CGRectMake(16, y, cw - 32, 34)];
     g_valF.placeholder = @"str 值(str 模式用)";
     [sv addSubview:g_valF]; y += 42;
     for (UITextField *f in @[g_clsF, g_selF, g_valF]) {
@@ -264,6 +264,7 @@ void mfShowObjCHookPage(void) {
         f.borderStyle = UITextBorderStyleRoundedRect;
         f.autocapitalizationType = UITextAutocapitalizationTypeNone;
         f.autocorrectionType = UITextAutocorrectionTypeNo;
+        mfAttachKbBar(f);   // v2.7.1: 键盘收起工具条
     }
     if (g_objcPrefill) { g_clsF.text = g_objcPrefill; g_objcPrefill = nil; }
     UIButton *addBtn = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -765,6 +766,7 @@ void mfShowSelectorLocatorPage(void) {
     tf.autocapitalizationType = UITextAutocapitalizationTypeNone;
     tf.autocorrectionType = UITextAutocorrectionTypeNo;
     tf.text = g_locatorSel.length ? g_locatorSel : @"canLicenseunzfj:";
+    mfAttachKbBar(tf);   // v2.7.1: 键盘收起工具条
     [page addSubview:tf];
 
     UIButton *scanBtn = [UIButton buttonWithType:UIButtonTypeSystem];

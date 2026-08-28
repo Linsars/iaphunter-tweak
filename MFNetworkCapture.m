@@ -645,7 +645,7 @@ void mfShowDataAnalysisPage(void) {
     gy = mfGridButton(page, 16, gy, gw, @"ObjC 规则", @"🔧", @selector(mfShowMethodTracePage), NO, nil);
     gy = mfGridButton(page, 16 + gw + 12, gy - 92, gw, @"ClassDump", @"📦", @selector(mfShowClassDumpPage), NO, nil);
     gy = mfGridButton(page, 16, gy, gw, @"Keychain 管理", @"🔑", @selector(mfShowKeychainManagerPage), NO, nil);
-    gy = mfGridButton(page, 16, gy, gw, @"MachO 深检", @"🔬", @selector(mfShowMachODeepPage), NO, nil);
+    gy = mfGridButton(page, 16 + gw + 12, gy - 92, gw, @"MachO 深检", @"🔬", @selector(mfShowMachODeepPage), NO, nil);   // v2.7.1: 回归右列，网格对称
     // v2.6.21: 实时日志/电池详情 提升到主页
     mfPushPage(page);
 }
@@ -697,6 +697,7 @@ static void mfShowRuleEditPageImpl(NSString *pattern, NSString *action, NSIntege
     nameField.borderStyle = UITextBorderStyleRoundedRect;
     nameField.clearButtonMode = UITextFieldViewModeWhileEditing;
     nameField.autocapitalizationType = UITextAutocapitalizationTypeNone;
+    mfAttachKbBar(nameField);   // v2.7.1: 键盘收起工具条
     [sv addSubview:nameField];
     y += 72;
 
@@ -723,6 +724,7 @@ static void mfShowRuleEditPageImpl(NSString *pattern, NSString *action, NSIntege
     patField.autocapitalizationType = UITextAutocapitalizationTypeNone;
     patField.autocorrectionType = UITextAutocorrectionTypeNo;
     patField.keyboardType = UIKeyboardTypeURL;
+    mfAttachKbBar(patField);   // v2.7.1: 键盘收起工具条
     [sv addSubview:patField];
     y += 48;
 
@@ -775,6 +777,7 @@ static void mfShowRuleEditPageImpl(NSString *pattern, NSString *action, NSIntege
     reqHView.backgroundColor = [UIColor systemBackgroundColor];
     reqHView.autocapitalizationType = UITextAutocapitalizationTypeNone;
     reqHView.autocorrectionType = UITextAutocorrectionTypeNo;
+    mfAttachKbBar(reqHView);   // v2.7.1: 键盘收起工具条
     [quadSv addSubview:reqHView];
     qy += 98;
 
@@ -795,6 +798,7 @@ static void mfShowRuleEditPageImpl(NSString *pattern, NSString *action, NSIntege
     respHView.backgroundColor = [UIColor systemBackgroundColor];
     respHView.autocapitalizationType = UITextAutocapitalizationTypeNone;
     respHView.autocorrectionType = UITextAutocorrectionTypeNo;
+    mfAttachKbBar(respHView);   // v2.7.1: 键盘收起工具条
     [quadSv addSubview:respHView];
     qy += 98;
 
@@ -815,6 +819,7 @@ static void mfShowRuleEditPageImpl(NSString *pattern, NSString *action, NSIntege
     reqBView.backgroundColor = [UIColor systemBackgroundColor];
     reqBView.autocapitalizationType = UITextAutocapitalizationTypeNone;
     reqBView.autocorrectionType = UITextAutocorrectionTypeNo;
+    mfAttachKbBar(reqBView);   // v2.7.1: 键盘收起工具条
     [quadSv addSubview:reqBView];
     qy += 98;
 
@@ -835,6 +840,7 @@ static void mfShowRuleEditPageImpl(NSString *pattern, NSString *action, NSIntege
     respBView.backgroundColor = [UIColor systemBackgroundColor];
     respBView.autocapitalizationType = UITextAutocapitalizationTypeNone;
     respBView.autocorrectionType = UITextAutocorrectionTypeNo;
+    mfAttachKbBar(respBView);   // v2.7.1: 键盘收起工具条
     [quadSv addSubview:respBView];
     qy += 98;
 
