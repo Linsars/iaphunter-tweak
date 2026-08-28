@@ -8,6 +8,7 @@
 #import <dlfcn.h>
 #import <sys/mman.h>
 #import <mach-o/dyld.h>
+#import <errno.h>
 #import <objc/message.h>
 #import "fishhook.h"
 #import "MFPanel.h"
@@ -462,6 +463,35 @@ static BOOL ckPatchGOTViaScan(void) {
     return NO;
 }
 
+// v2.6.89: SecTask hook 证明不走该路径（fishhook 装上后校验仍拒）→ 直接 patch CK 里的 trap 指令。
+// 三次崩溃同一坐标 CK+0x9e89c（brk）→ mprotect 改 NOP。校验失败后走 brk 后续路径（实测见分晓）。
+// 通用性：目标 = CK 框架共享代码，无 app 特化；含 CloudKit 的 app 不触发 brk，补丁对它们零影响。
+static void ckPatchOutTrap(void) {
+    uint32_t cnt = _dyld_image_count();
+    for (uint32_t i = 0; i < cnt; i++) {
+        const char *name = _dyld_get_image_name(i);
+        if (!name || !strstr(name, "CloudKit.framework/CloudKit")) continue;
+        intptr_t slide = _dyld_get_image_vmaddr_slide(i);
+        volatile uint32_t *trapIns = (volatile uint32_t *)(slide + 0x9e89c);
+        uint32_t orig = *trapIns;
+        if ((orig & 0xFFE0001F) == 0xD4200000) {  // brk #imm 校验
+            long pz = getpagesize();
+            uintptr_t page = (uintptr_t)trapIns & ~(uintptr_t)(pz - 1);
+            if (mprotect((void *)page, pz * 2, PROT_READ | PROT_WRITE) == 0) {
+                *trapIns = 0xD503201F;  // ARM64 NOP
+                mprotect((void *)page, pz * 2, PROT_READ);
+                mfLog(@"[ckwarm] trap@+0x9e89c brk(0x%08x) → NOP", orig);
+            } else {
+                mfLog(@"[ckwarm] trap mprotect failed errno=%d", errno);
+            }
+        } else {
+            mfLog(@"[ckwarm] trap@+0x9e89c reads 0x%08x (not brk) — skip patch (offset drift?)", orig);
+        }
+        return;
+    }
+    mfLog(@"[ckwarm] CK image not found for trap patch");
+}
+
 // 三层 hook 引擎：MSHookFunction → fishhook(官方,支持 chained fixups) → GOT 指针扫描
 static BOOL ckInstallServicesPatch(void) {
     if (ckOrigSecTaskCopyValueForEntitlement) return YES;  // 已装
@@ -535,9 +565,11 @@ void mfCloudKitWarmupStart(void) {
             mfLog(@"[ckwarm] hook install failed — CK stays guarded (query page will show retry)");
             return;
         }
-        // dlopen 让 CK framework 就绪，defaultContainer 触发 once（此时校验已读到补全的 services）
+        // dlopen 让 CK framework 就绪
         void *h = dlopen("/System/Library/Frameworks/CloudKit.framework/CloudKit", RTLD_LAZY);
         mfLog(@"[ckwarm] dlopen CloudKit = %p", h);
+        // v2.6.89: NOP 掉 once 校验的 trap（SecTask 层 hook 已证明不影响校验路径）
+        ckPatchOutTrap();
         Class ck = NSClassFromString(@"CKContainer");
         if (ck) {
             ((id(*)(id,SEL))objc_msgSend)((id)ck, NSSelectorFromString(@"defaultContainer"));
