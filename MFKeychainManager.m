@@ -463,33 +463,46 @@ static BOOL ckPatchGOTViaScan(void) {
     return NO;
 }
 
-// v2.6.89: SecTask hook 证明不走该路径（fishhook 装上后校验仍拒）→ 直接 patch CK 里的 trap 指令。
-// 三次崩溃同一坐标 CK+0x9e89c（brk）→ mprotect 改 NOP。校验失败后走 brk 后续路径（实测见分晓）。
-// 通用性：目标 = CK 框架共享代码，无 app 特化；含 CloudKit 的 app 不触发 brk，补丁对它们零影响。
-static void ckPatchOutTrap(void) {
+// v2.6.90: ckPatchOutTrap 已移除——iOS 17 系统框架代码页受 PPL 保护，mprotect 表面成功但写入即 SIGSEGV（v2.6.89 全 app 崩实证）。
+// 代码页不可写，但 CK 的 GOT（__DATA_CONST 数据页）可写（fishhook 已实证）。
+// 新思路：不猜 API 名——枚举 CK 从 Security import 的所有 *Entitle* 符号（dladdr 反查），一次看清校验读的是什么。
+static void ckDiagnoseEntitlementImports(void) {
     uint32_t cnt = _dyld_image_count();
+    uintptr_t secStart = 0, ckStart = 0;
     for (uint32_t i = 0; i < cnt; i++) {
-        const char *name = _dyld_get_image_name(i);
-        if (!name || !strstr(name, "CloudKit.framework/CloudKit")) continue;
-        intptr_t slide = _dyld_get_image_vmaddr_slide(i);
-        volatile uint32_t *trapIns = (volatile uint32_t *)(slide + 0x9e89c);
-        uint32_t orig = *trapIns;
-        if ((orig & 0xFFE0001F) == 0xD4200000) {  // brk #imm 校验
-            long pz = getpagesize();
-            uintptr_t page = (uintptr_t)trapIns & ~(uintptr_t)(pz - 1);
-            if (mprotect((void *)page, pz * 2, PROT_READ | PROT_WRITE) == 0) {
-                *trapIns = 0xD503201F;  // ARM64 NOP
-                mprotect((void *)page, pz * 2, PROT_READ);
-                mfLog(@"[ckwarm] trap@+0x9e89c brk(0x%08x) → NOP", orig);
-            } else {
-                mfLog(@"[ckwarm] trap mprotect failed errno=%d", errno);
-            }
-        } else {
-            mfLog(@"[ckwarm] trap@+0x9e89c reads 0x%08x (not brk) — skip patch (offset drift?)", orig);
-        }
-        return;
+        const char *nm = _dyld_get_image_name(i);
+        if (!nm) continue;
+        const struct mach_header *h = _dyld_get_image_header(i);
+        if (!secStart && strstr(nm, "/Security")) secStart = (uintptr_t)h;
+        else if (!ckStart && strstr(nm, "CloudKit.framework/CloudKit")) ckStart = (uintptr_t)h;
     }
-    mfLog(@"[ckwarm] CK image not found for trap patch");
+    if (!ckStart || !secStart) { mfLog(@"[ckdiag] ck=%p sec=%p not both found", (void*)ckStart, (void*)secStart); return; }
+    // 扫 CK __DATA* 段：槽值落在 Security __TEXT 范围 → dladdr 反查符号名 → 收集 Entitle*
+    NSMutableArray *found = [NSMutableArray new];
+    const struct mach_header *ckh = (const struct mach_header *)ckStart;
+    uintptr_t cur = (uintptr_t)ckh + sizeof(struct mach_header_64);
+    const struct load_command *lc = (const struct load_command *)cur;
+    for (uint32_t i = 0; i < ckh->ncmds; i++, cur += lc->cmdsize, lc = (const struct load_command *)cur) {
+        if (lc->cmd != 0x19) continue;
+        const struct segment_command_64 *seg = (const struct segment_command_64 *)cur;
+        if (strncmp(seg->segname, "__DATA", 6) != 0) continue;
+        // 系统 __TEXT vmaddr=0 → 运行时地址 = ckStart + vmaddr
+        volatile uintptr_t *slots = (volatile uintptr_t *)(ckStart + seg->vmaddr);
+        uintptr_t n = seg->vmsize / 8;
+        for (uintptr_t k = 0; k < n; k++) {
+            uintptr_t v = slots[k];
+            if (v < secStart || v >= secStart + 0x400000) continue;
+            Dl_info info;
+            if (dladdr((void *)v, &info) && info.dli_sname) {
+                NSString *nm2 = [NSString stringWithUTF8String:info.dli_sname];
+                if ([nm2 containsString:@"ntitle"] && ![found containsObject:nm2]) {
+                    [found addObject:nm2];
+                    mfLog(@"[ckdiag] CK import: %@ (+%#llx)", nm2, (unsigned long long)k*8);
+                }
+            }
+        }
+    }
+    mfLog(@"[ckdiag] total entitlement-API imports found: %lu", (unsigned long)found.count);
 }
 
 // 三层 hook 引擎：MSHookFunction → fishhook(官方,支持 chained fixups) → GOT 指针扫描
@@ -558,7 +571,31 @@ void mfCloudKitWarmupStart(void) {
         return;
     }
     g_ckWarmContainerID = [containers[0] copy];
-    mfLog(@"[ckwarm] entitlement cid=%@ — warming CK once on bg queue", g_ckWarmContainerID);
+    // v2.6.90 安全门：hook 装之前用原函数读 services **原值**——
+    //   含 CloudKit = app 自己用 CK（once 已被 app 合法跑过）→ 触发 once 安全
+    //   不含（Picsew 类 CloudDocuments-only）→ 触发必 trap → 本轮只装 hook+诊断，不触发
+    BOOL appUsesCK = NO;
+    @try {
+        SecTaskRef task = SecTaskCreateFromSelf(kCFAllocatorDefault);
+        if (task) {
+            CFTypeRef ref = SecTaskCopyValueForEntitlement(task,
+                (__bridge CFStringRef)@"com.apple.developer.icloud-services", NULL);
+            NSArray *svcs = (__bridge_transfer NSArray *)ref;
+            appUsesCK = [svcs isKindOfClass:[NSArray class]] && [svcs containsObject:@"CloudKit"];
+            if (task) CFRelease(task);
+        }
+    } @catch (NSException *e) { mfLog(@"[ckwarm] services probe exception: %@", e); }
+    mfLog(@"[ckwarm] cid=%@ appUsesCK=%d", g_ckWarmContainerID, appUsesCK);
+    if (!appUsesCK) {
+        // 只装 hook + 跑诊断，绝不触发 once（触发即 trap）。查询页显示预热中（等待精确 hook 版本）
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+            ckInstallServicesPatch();
+            ckDiagnoseEntitlementImports();
+            mfLog(@"[ckwarm] diagnostics done, once NOT triggered (unsafe app)");
+        });
+        return;
+    }
+    mfLog(@"[ckwarm] warming CK once on bg queue cid=%@", g_ckWarmContainerID);
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         // v2.6.87: 三层引擎装 services 补丁 hook（必须在 dlopen/首调 CK 前就位）
         if (!ckInstallServicesPatch()) {
@@ -568,8 +605,8 @@ void mfCloudKitWarmupStart(void) {
         // dlopen 让 CK framework 就绪
         void *h = dlopen("/System/Library/Frameworks/CloudKit.framework/CloudKit", RTLD_LAZY);
         mfLog(@"[ckwarm] dlopen CloudKit = %p", h);
-        // v2.6.89: NOP 掉 once 校验的 trap（SecTask 层 hook 已证明不影响校验路径）
-        ckPatchOutTrap();
+        // v2.6.90: 诊断 CK 实际 import 了哪些 entitlement API（替代被 PPL 禁掉的代码页 patch）
+        ckDiagnoseEntitlementImports();
         Class ck = NSClassFromString(@"CKContainer");
         if (ck) {
             ((id(*)(id,SEL))objc_msgSend)((id)ck, NSSelectorFromString(@"defaultContainer"));
