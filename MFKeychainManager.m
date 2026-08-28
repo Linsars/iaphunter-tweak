@@ -9,6 +9,7 @@
 #import <sys/mman.h>
 #import <mach-o/dyld.h>
 #import <objc/message.h>
+#import "fishhook.h"
 #import "MFPanel.h"
 #import "LSApplicationProxy.h"
 
@@ -461,7 +462,7 @@ static BOOL ckPatchGOTViaScan(void) {
     return NO;
 }
 
-// 三层 hook 引擎：MSHookFunction → DobbyHook → GOT 指针扫描
+// 三层 hook 引擎：MSHookFunction → fishhook(官方,支持 chained fixups) → GOT 指针扫描
 static BOOL ckInstallServicesPatch(void) {
     if (ckOrigSecTaskCopyValueForEntitlement) return YES;  // 已装
     void *target = dlsym(RTLD_DEFAULT, "SecTaskCopyValueForEntitlement");
@@ -479,13 +480,20 @@ static BOOL ckInstallServicesPatch(void) {
             return YES;
         }
     }
-    // 2) Dobby
-    void *db = dlsym(RTLD_DEFAULT, "DobbyHook");
-    if (db) {
-        // Dobby: int DobbyHook(void *address, void *replacement, void **out_original)
-        if (((int(*)(void*,void*,void**))db)(target, (void*)ckMySecTaskCopyValueForEntitlement,
-                                             (void**)&ckOrigSecTaskCopyValueForEntitlement) == 0) {
-            mfLog(@"[ckwarm] engine=DobbyHook installed");
+    // 2) fishhook —— 官方实现，正确解析 iOS 15+ chained fixups / auth_got，按符号名 rebind
+    {
+        struct rebinding rbs[2] = {
+            { "SecTaskCopyValueForEntitlement",
+              (void *)ckMySecTaskCopyValueForEntitlement,
+              (void **)&ckOrigSecTaskCopyValueForEntitlement },
+            { "SecTaskCopyValueForEntitlementWithError",
+              (void *)ckMySecTaskCopyValueForEntitlementWithError,
+              (void **)&ckOrigSecTaskCopyValueForEntitlementWithError },
+        };
+        int n = rebind_symbols(rbs, 2);
+        mfLog(@"[ckwarm] engine=fishhook rebind=%d orig=%p", n, (void*)ckOrigSecTaskCopyValueForEntitlement);
+        if (ckOrigSecTaskCopyValueForEntitlement) {
+            mfLog(@"[ckwarm] engine=fishhook installed");
             return YES;
         }
     }
@@ -495,7 +503,7 @@ static BOOL ckInstallServicesPatch(void) {
         mfLog(@"[ckwarm] engine=GOT-scan installed");
         return YES;
     }
-    mfLog(@"[ckwarm] all engines failed (ms=%p db=%p)", ms, db);
+    mfLog(@"[ckwarm] all engines failed (ms=%p)", ms);
     return NO;
 }
 
