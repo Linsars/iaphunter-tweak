@@ -977,7 +977,7 @@ static void mfShowICloudIDListPage(NSString *bundleID, NSString *appName, NSArra
     cTitle.textColor = [UIColor labelColor];
     [customCard addSubview:cTitle];
     UITextField *cidF = [[UITextField alloc] initWithFrame:CGRectMake(10, 30, g_mfCardW - 44, 32)];
-    cidF.placeholder = @"输入容器 ID，如 iCloud.com.xxx.yyy";
+    cidF.placeholder = @"容器 ID 或 bundleID（自动加 iCloud. 前缀）";
     cidF.font = [UIFont systemFontOfSize:12];
     cidF.borderStyle = UITextBorderStyleRoundedRect;
     cidF.autocorrectionType = UITextAutocorrectionTypeNo;
@@ -1016,7 +1016,14 @@ void mfCKCustomQueryFromButton(UIButton *btn) {
     [cidF resignFirstResponder];
     NSString *cid = (cidF.text ?: @"");
     cid = [cid stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    if (!cid.length) { mfToast(@"先输入容器 ID"); return; }
+    if (!cid.length) { mfToast(@"先输入容器 ID 或 bundleID"); return; }
+    // v2.6.99: bundleID 自动转容器 ID——Apple 默认规范 = iCloud.<bundleID>
+    if (![cid hasPrefix:@"iCloud."]) {
+        NSString *auto = [@"iCloud." stringByAppendingString:cid];
+        mfKLog(@"custom query: %@ → auto容器 %@", cid, auto);
+        cid = auto;
+        cidF.text = auto;   // 回写输入框，用户可见转换结果
+    }
     g_ckExtraContainerID = cid;   // v2.6.98: 让 hook 把这个容器注入白名单
     mfKLog(@"custom query START: %@ (extraContainer injected)", cid);
     res.text = @"⏳ 查询中...";
