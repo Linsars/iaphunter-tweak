@@ -32,11 +32,6 @@ struct mf_nlist_64 { uint32_t n_strx; uint8_t n_type; uint8_t n_sect; uint16_t n
 
 extern char **environ;
 
-static const mfScanFn mfScanFns[] = {
-    mfScanJailbreak, mfScanAntiDebug, mfScanEntitlements, mfScanCodeSignature,
-    mfScanSandbox, mfScanPrivacy, mfScanScreenCapture, mfScanAPIStats,
-};
-
 #pragma mark - ====== MachO 深检 ======
 
 // 主二进制解析：读文件头 + load commands（进程内自读，无需注入）
