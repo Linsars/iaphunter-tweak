@@ -182,6 +182,8 @@ BOOL mfCloudKitWarmReady(void);
 void mfCKForceTrigger(void);                      // v2.6.93 用户自愿强制触发（可能 trap，日志落盘）
 NSString *mfCKReadLog(void);                      // v2.6.93 读落盘 ck 日志
 void mfCKShowLogTapped(void);                     // v2.6.93 日志复制到剪贴板
+void mfCKCustomQueryFromButton(UIButton *btn);    // v2.6.96 自定义容器查询
+void mfCKCopyCustomResultFromLabel(UILabel *lbl);
 void mfShowSelectorLocatorPage(void);      // v2.6.71 方法定位器页
 void mfRunSelectorLocatorFromButton(UIButton *btn);
 void mfShowDefaultsBrowserPage(void);      // v2.6.76 Defaults 浏览器

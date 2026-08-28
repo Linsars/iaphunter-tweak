@@ -949,8 +949,89 @@ static void mfShowICloudIDListPage(NSString *bundleID, NSString *appName, NSArra
             sv.contentSize = CGSizeMake(g_mfCardW, y + 20);
         });
     }
-    
-    sv.contentSize = CGSizeMake(g_mfCardW, y + 20);
+
+    // v2.6.96: 自定义容器查询——平台墙后唯一合理路径：
+    // recordName 是 per-container 的，在有 CloudKit 权限的进程（appUsesCK=YES，once 已过）里
+    // 用 containerWithIdentifier: 指定其他 app 的容器 ID，server 返回该 container 的当前用户 record
+    // = 目标 app 内查询会返回的同一个值（同 Apple ID 同 container）。
+    UIView *customCard = [[UIView alloc] initWithFrame:CGRectMake(12, y + 10, g_mfCardW - 24, 108)];
+    customCard.backgroundColor = [UIColor tertiarySystemBackgroundColor];
+    customCard.layer.cornerRadius = 8;
+    UILabel *cTitle = [[UILabel alloc] initWithFrame:CGRectMake(10, 6, g_mfCardW - 44, 18)];
+    cTitle.text = @"🎯 自定义容器查询（查其他 App 的 iCloud ID）";
+    cTitle.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
+    cTitle.textColor = [UIColor labelColor];
+    [customCard addSubview:cTitle];
+    UITextField *cidF = [[UITextField alloc] initWithFrame:CGRectMake(10, 30, g_mfCardW - 44, 32)];
+    cidF.placeholder = @"输入容器 ID，如 iCloud.com.xxx.yyy";
+    cidF.font = [UIFont systemFontOfSize:12];
+    cidF.borderStyle = UITextBorderStyleRoundedRect;
+    cidF.autocorrectionType = UITextAutocorrectionTypeNo;
+    cidF.autocapitalizationType = UITextAutocapitalizationTypeNone;
+    [customCard addSubview:cidF];
+    UIButton *qBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    qBtn.frame = CGRectMake(10, 68, g_mfCardW - 44, 32);
+    qBtn.backgroundColor = [UIColor systemBlueColor];
+    qBtn.layer.cornerRadius = 8;
+    [qBtn setTitle:@"🔍 查询该容器的 Record ID" forState:UIControlStateNormal];
+    qBtn.tintColor = UIColor.whiteColor;
+    qBtn.titleLabel.font = [UIFont systemFontOfSize:12];
+    [customCard addSubview:qBtn];
+    UILabel *cRes = [[UILabel alloc] initWithFrame:CGRectMake(10, 104, g_mfCardW - 44, 0)];
+    cRes.font = [UIFont systemFontOfSize:11];
+    cRes.numberOfLines = 0;
+    objc_setAssociatedObject(customCard, "cidF", cidF, OBJC_ASSOCIATION_RETAIN);
+    objc_setAssociatedObject(customCard, "cRes", cRes, OBJC_ASSOCIATION_RETAIN);
+    objc_setAssociatedObject(qBtn, "card", customCard, OBJC_ASSOCIATION_RETAIN);
+    qBtn.tag = 771;
+    [qBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfCKCustomQueryTapped:") forControlEvents:UIControlEventTouchUpInside];
+    [sv addSubview:customCard];
+    y += 130;
+
+    sv.contentSize = CGSizeMake(g_mfCardW, y + 40);
+}
+
+// v2.6.96: 自定义容器查询
+static UILabel *g_ckCustomRes = nil;
+void mfCKCustomQueryFromButton(UIButton *btn) {
+    UIView *card = objc_getAssociatedObject(btn, "card");
+    UITextField *cidF = objc_getAssociatedObject(card, "cidF");
+    UILabel *res = objc_getAssociatedObject(card, "cRes");
+    g_ckCustomRes = res;
+    NSString *cid = cidF.text ?: @"";
+    if (!cid.length) { mfToast(@"先输入容器 ID"); return; }
+    res.text = @"⏳ 查询中...";
+    res.frame = CGRectMake(10, 104, card.frame.size.width - 20, 20);
+    mfQueryRecordIDForContainer(cid, ^(NSString *recordName, NSError *error) {
+        UILabel *lbl = g_ckCustomRes;
+        if (!lbl) return;
+        if (error) {
+            lbl.text = [NSString stringWithFormat:@"❌ %@", error.localizedDescription ?: @"查询失败"];
+            lbl.textColor = [UIColor systemRedColor];
+        } else if (recordName) {
+            lbl.text = [NSString stringWithFormat:@"🔑 %@（点击复制）", recordName];
+            lbl.textColor = [UIColor systemGreenColor];
+            lbl.userInteractionEnabled = YES;
+            objc_setAssociatedObject(lbl, "rid", recordName, OBJC_ASSOCIATION_RETAIN);
+            UITapGestureRecognizer *tg = [[UITapGestureRecognizer alloc] initWithTarget:g_mfCtrl action:NSSelectorFromString(@"mfCKCopyCustomResult:")];
+            [lbl addGestureRecognizer:tg];
+        } else {
+            lbl.text = @"⚠️ 未返回 Record ID";
+            lbl.textColor = [UIColor systemOrangeColor];
+        }
+        // 自适应高度
+        CGSize fit = [lbl sizeThatFits:CGSizeMake(lbl.frame.size.width, CGFLOAT_MAX)];
+        lbl.frame = CGRectMake(10, 104, lbl.frame.size.width, fit.height + 4);
+        // card 高度扩展
+        UIView *card2 = lbl.superview;
+        card2.frame = CGRectMake(card2.frame.origin.x, card2.frame.origin.y, card2.frame.size.width, MAX(108, 104 + fit.height + 12));
+    });
+}
+void mfCKCopyCustomResultFromLabel(UILabel *lbl) {
+    NSString *rid = objc_getAssociatedObject(lbl, "rid");
+    if (!rid) return;
+    [[UIPasteboard generalPasteboard] setString:rid];
+    mfToast(@"✅ 已复制 Record ID");
 }
 
 // iCloud Record ID 复制 (从列表页点击 cell) - 导出函数
