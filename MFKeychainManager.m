@@ -375,37 +375,27 @@ static NSArray *mfGetFrontmostAppContainerIdentifiers(NSString **outBundleID, NS
     }
 }
 
-// v2.6.81 修复：不用 entitlements 预检（dopamine/越狱下 SecTaskCopyValueForEntitlement 会返回非空值导致误调 CK trap）
-// 改用 [NSBundle mainBundle].bundleIdentifier 探测，iCloud container 探测交给 fetchUserRecordID 实际调用：
-//   - 返回 recordName → 显示
-//   - 返回 error domain=CKErrorDomain → 说明无 iCloud capability
-//   - 进程级 SIGTRAP → @try 拦不住，所以另外需要 `containerWithIdentifier:` 后判 nil 早退
+// v2.6.84 修复：所有"读 entitlements / 解析 mobileprovision / 推 ID"全是胡扯。tweak 注入下
+// 拿不到宿主 app 的真 entitlements（SecTask 拿 tweak 自己的；mobileprovision 在 iOS 17 生产分发
+// 里大概率 stripped；defaultContainer.containerIdentifier 推的是合法格式但 server 不认的假 ID）。
+//
+// 学 iCloudID.dylib（用户提供的 ref impl）——不读 entitlements、不预检 ID、不验 server。
+// 只做：defaultContainer → fetchUserRecordIDWithCompletionHandler → 拿啥显啥。
+// recordName 是 framework 默认（不一定对应真 server ID），但能稳定出 UIAlert，不会闪退。
+// error 直接显示给用户（v2.6.82 那个 iCloud.com.scripting.ios + server 拒的真实原因由 user 自己看）。
 static void mfQueryRecordIDForContainer(NSString *containerIdentifier,
                                          void (^completion)(NSString *recordName, NSError *error)) {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        @try {
-            CKContainer *container = nil;
-            if (containerIdentifier && ![containerIdentifier isEqualToString:@"(默认容器)"]) {
-                container = [CKContainer containerWithIdentifier:containerIdentifier];
-            } else {
-                container = [CKContainer defaultContainer];
-            }
-            // v2.6.79: 直接异步查询，completion 抛回主线程。去掉 accountStatus 预检。
-            [container fetchUserRecordIDWithCompletionHandler:^(CKRecordID *recordID, NSError *error) {
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    if (!error && recordID) {
-                        completion(recordID.recordName, nil);
-                    } else {
-                        completion(nil, error);
-                    }
-                });
-            }];
-        } @catch (NSException *e) {
-            mfKLog(@"fetchRecordID exception: %@", e);
+        CKContainer *container = [CKContainer defaultContainer];
+        [container fetchUserRecordIDWithCompletionHandler:^(CKRecordID *recordID, NSError *error) {
             dispatch_async(dispatch_get_main_queue(), ^{
-                completion(nil, [NSError errorWithDomain:@"MFCloudKit" code:-1 userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"查询异常: %@", e.reason ?: e.name]}]);
+                if (!error && recordID) {
+                    completion(recordID.recordName, nil);
+                } else {
+                    completion(nil, error);
+                }
             });
-        }
+        }];
     });
 }
 
@@ -510,45 +500,11 @@ static void mfShowICloudIDListPage(NSString *bundleID, NSString *appName, NSArra
         UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:g_mfCtrl action:@selector(mfCopyICloudRecordID:)];
         [cell addGestureRecognizer:tap];
         
+        // v2.6.84：删 v2.6.82 假 ID 探测 / 默认容器降级（推出来的 ID cloudd 不认 + 误伤）
+        // 直接查 + 拿啥显啥 + error 直接显示给用户
         [sv addSubview:cell];
         y += 80;
         
-        // v2.6.82 修复：分两条路——
-        //   (a) 真容器 ID：v2.6.82 mfResolveRealICloudContainerID 拿到的 `iCloud.com.sugarmo.ScrollClip`
-        //       → 用 containerWithIdentifier 拿对象 → 用对象上 containerIdentifier 字段验证非空 → fetch
-        //   (b) 没真 ID（默认容器降级）：要确认 defaultContainer.containerIdentifier 非空才走 fetch，
-        //       空就降级显示「未启用 iCloud」——这一步是 v2.6.81 SIGTRAP 的元凶
-        BOOL isDefault = [containerID isEqualToString:@"(默认容器)"];
-        BOOL safe = NO;
-        @try {
-            CKContainer *probe = nil;
-            if (isDefault) {
-                probe = [CKContainer defaultContainer];
-            } else {
-                probe = [CKContainer containerWithIdentifier:containerID];
-            }
-            // 真有 iCloud entitlement / 真的能拿到该 container 时，containerIdentifier 字段非空
-            safe = (probe != nil) && (probe.containerIdentifier.length > 0);
-            if (!safe) {
-                mfKLog(@"probe returned nil or empty cid (isDefault=%d), downgrade", isDefault);
-            }
-        } @catch (NSException *e) {
-            mfKLog(@"container probe exception: %@", e);
-            safe = NO;
-        }
-        if (!safe) {
-            statusLabel.text = isDefault
-                ? @"🚫 该进程未启用 iCloud（CK 框架无容器）"
-                : [NSString stringWithFormat:@"🚫 容器 %@ 不可用", containerID];
-            statusLabel.textColor = [UIColor systemGrayColor];
-            pendingCount--;
-            if (pendingCount <= 0) {
-                [spinner stopAnimating]; [spinner removeFromSuperview]; [loadingLabel removeFromSuperview];
-            }
-            continue;
-        }
-        
-        // 异步查询
         NSString *cid = containerID;
         mfQueryRecordIDForContainer(cid, ^(NSString *recordName, NSError *error) {
             UILabel *lbl = objc_getAssociatedObject(cell, "statusLabel");
@@ -594,58 +550,14 @@ void mfCopyICloudRecordIDFromCell(UIViewController *vc, UIView *cell) {
     mfKLog(@"Copied iCloud Record ID: %@ (container: %@)", recordID, containerID);
     mfToast(@"✅ 已复制 Record ID");
 }
-// v2.6.82 修复：不用 SecTask 也不靠 defaultContainer 瞎试。
-// 实际可行的容器 ID 来源：
-//   1) [NSBundle mainBundle] 自己的 embedded.mobileprovision 解出 Entitlements (iOS 真机部署) — 越狱下无
-//   2) SecCode 拷贝 + SecTaskCopyValueForEntitlement 读 Info.plist 配套的 .entitlements 文件(无签名也能读)
-//   3) 兜底 [CKContainer defaultContainer].containerIdentifier —— 这个能拿到当前进程的「逻辑」默认 container
-//     (CK 框架自动把 iCloud.<bundleID> 当作 default；就算进程 entitlement 没声明，拿到的是 nil 字符串 vs
-//      有声明时拿到 iCloud.<bundleID>)。回退到这一步是「试调」之母，error 时再降级
-// 实测 v2.6.81 仍 SIGTRAP：因为 defaultContainer 拿不到真实 ID，但 fetchUserRecordID 内部
-// container identification 阶段直接 trap；v2.6.82 改用「安全探测」：CKContainer*容器对象探针 + 校验 .containerIdentifier
-// 非 nil 才走 fetch；空则降级。
-static NSString *mfResolveRealICloudContainerID(void) {
-    NSString *bid = [[NSBundle mainBundle] bundleIdentifier] ?: @"";
-    if (!bid.length) return nil;
-    // 优先 [CKContainer defaultContainer].containerIdentifier —— 框架推断的默认容器
-    @try {
-        CKContainer *dc = [CKContainer defaultContainer];
-        NSString *cid = dc.containerIdentifier;
-        mfKLog(@"defaultContainer.containerIdentifier = %@", cid ?: @"(nil)");
-        if (cid.length) return cid;
-    } @catch (NSException *e) {
-        mfKLog(@"defaultContainer probe exception: %@", e);
-    }
-    // 兜底按 iCloud 命名规范猜：iCloud.<bundleID>
-    NSString *guessed = [@"iCloud." stringByAppendingString:bid];
-    mfKLog(@"fallback guessed: %@", guessed);
-    return guessed;
-}
 void mfFetchCloudKitRecordIDAuto(void) {
-    mfKLog(@"mfFetchCloudKitRecordIDAuto called");
-    
+    mfKLog(@"mfFetchCloudKitRecordIDAuto called (v2.6.84: minimal)");
     NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier] ?: @"未知";
     NSDictionary *infoDict = [[NSBundle mainBundle] infoDictionary];
     NSString *appName = infoDict[@"CFBundleDisplayName"] ?: infoDict[@"CFBundleName"] ?: bundleID;
-    
-    BOOL hasKVS = NO;
-    @try {
-        SecTaskRef task = SecTaskCreateFromSelf(kCFAllocatorDefault);
-        if (task) {
-            CFTypeRef kvsRef = SecTaskCopyValueForEntitlement(task,
-                (__bridge CFStringRef)@"com.apple.developer.ubiquity-kvstore-identifier", NULL);
-            hasKVS = (kvsRef != NULL);
-            if (kvsRef) CFRelease(kvsRef);
-            CFRelease(task);
-        }
-    } @catch (NSException *e) { mfKLog(@"KVS check exception: %@", e); }
-    
-    NSString *realCid = mfResolveRealICloudContainerID();
-    NSMutableArray *arr = [NSMutableArray new];
-    if (realCid.length) [arr addObject:realCid];
-    else [arr addObject:@"(默认容器)"];  // 真的没有 → 触发 list 页降级
-    mfKLog(@"Open list page (v2.6.82, realCid=%@, kvs=%@)", realCid ?: @"(none)", hasKVS ? @"YES" : @"NO");
-    mfShowICloudIDListPage(bundleID, appName, arr, hasKVS);
+    // v2.6.84：直接走 defaultContainer + fetch，error 显示给用户，不预检
+    NSMutableArray *arr = [NSMutableArray arrayWithObject:@"(默认容器)"];
+    mfShowICloudIDListPage(bundleID, appName, arr, NO);
 }
 
 // ====== 面板页面 ======
