@@ -41,6 +41,9 @@ void mfPopPage(void);
 void mfClosePanel(void);
 CGFloat mfGridButton(UIView *card, CGFloat x, CGFloat y, CGFloat w, NSString *title, NSString *emoji, SEL action, BOOL switchMode, NSString *pfx);
 void mfAttachKbBar(id field);                               // v2.7.1 键盘收起工具条（UITextField/UITextView 通吃）
+void mfCopyText(NSString *text, NSString *toastMsg);        // v2.7.2 复制到剪贴板 + 可选 toast
+UIViewController *mfTopVC(void);                            // v2.7.2 最顶层 VC 定位（keyWindow + presented 链）
+UIButton *mfRowButton(UIView *parent, CGFloat x, CGFloat y, CGFloat w, CGFloat h, NSString *title, UIColor *bg, SEL action); // v2.7.2 行按钮
 
 // ====== 功能页面入口（各模块 .m 定义） ======
 // 数据分析（MFNetworkCapture.m）

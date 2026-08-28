@@ -172,18 +172,7 @@ static void mfShowDiagnosticCleanupAlert(UIViewController *parentVC) {
 void mfDiagnosticCleanupFromSettings(void) {
     // 在主线程执行
     dispatch_async(dispatch_get_main_queue(), ^{
-        UIWindow *keyWindow = nil;
-        for (UIWindow *w in [[UIApplication sharedApplication] windows]) {
-            if (w.windowLevel == UIWindowLevelNormal && !w.hidden && w.rootViewController) {
-                keyWindow = w;
-                break;
-            }
-        }
-        if (!keyWindow) return;
-        UIViewController *rootVC = keyWindow.rootViewController;
-        while (rootVC.presentedViewController) {
-            rootVC = rootVC.presentedViewController;
-        }
+        UIViewController *rootVC = mfTopVC();
         if (rootVC) {
             mfShowDiagnosticCleanupAlert(rootVC);
         }

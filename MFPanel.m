@@ -229,6 +229,40 @@ void mfAttachKbBar(id field) {
     else ((UITextView *)field).inputAccessoryView = bar;
 }
 
+// v2.7.2: 通用剪贴板复制（+可选 toast）
+void mfCopyText(NSString *text, NSString *toastMsg) {
+    if (!text.length) return;
+    [UIPasteboard generalPasteboard].string = text;
+    if (toastMsg.length) mfToast(toastMsg);
+}
+
+// v2.7.2: 最顶层 VC 定位——keyWindow 查找 + presented 链遍历，全插件统一
+UIViewController *mfTopVC(void) {
+    UIWindow *win = nil;
+    for (UIWindow *w in [UIApplication sharedApplication].windows)
+        if (!w.hidden && w.rootViewController) { win = w; if (w.isKeyWindow) break; }
+    if (!win) return nil;
+    UIViewController *vc = win.rootViewController;
+    while (vc.presentedViewController && ![vc.presentedViewController isBeingDismissed])
+        vc = vc.presentedViewController;
+    return vc;
+}
+
+// v2.7.2: 通用行按钮——消灭 6-8 行样板
+UIButton *mfRowButton(UIView *parent, CGFloat x, CGFloat y, CGFloat w, CGFloat h,
+                      NSString *title, UIColor *bg, SEL action) {
+    UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
+    b.frame = CGRectMake(x, y, w, h);
+    b.backgroundColor = bg;
+    b.layer.cornerRadius = 10;
+    b.tintColor = UIColor.whiteColor;
+    b.titleLabel.font = [UIFont boldSystemFontOfSize:13];
+    [b setTitle:title forState:UIControlStateNormal];
+    if (action) [b addTarget:g_mfCtrl action:action forControlEvents:UIControlEventTouchUpInside];
+    [parent addSubview:b];
+    return b;
+}
+
 CGFloat mfGridButton(UIView *card, CGFloat x, CGFloat y, CGFloat w, NSString *title, NSString *emoji, SEL action, BOOL switchMode, NSString *pfx) {
     UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
     b.frame = CGRectMake(x, y, w, 84);
@@ -1512,12 +1546,7 @@ void mfShowProductPage(void) {
     };
     overlay.hidden = YES;
     UIViewController *presenter = [self mfCDTopPresenter];
-    if (!presenter || !presenter.view.window) { // 兜底：keyWindow rootVC
-        for (UIWindow *w in [UIApplication sharedApplication].windows)
-            if (w.isKeyWindow) { presenter = w.rootViewController; break; }
-        while (presenter.presentedViewController && presenter.presentedViewController != presenter)
-            presenter = presenter.presentedViewController;
-    }
+    if (!presenter || !presenter.view.window) presenter = mfTopVC();   // v2.7.2: 兜底统一
     if (presenter && presenter.view.window) {
         [presenter presentViewController:av animated:YES completion:nil];
     } else {
@@ -2164,7 +2193,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define IAPTOOLS_VERSION @"2.7.1"
+#define IAPTOOLS_VERSION @"2.7.2"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {

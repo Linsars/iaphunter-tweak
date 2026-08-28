@@ -977,24 +977,10 @@ void mfShowNetworkModifyPage(void) {
         }
     }
     // 🔧 ObjC 规则入口(精确 hook, 与网络规则统一范式) — 取代已废除的方法监控
-    UIButton *objcBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    objcBtn.frame = CGRectMake(12, y + 4, g_mfCardW - 24, 38);
-    objcBtn.backgroundColor = [UIColor systemIndigoColor];
-    objcBtn.layer.cornerRadius = 10;
-    [objcBtn setTitle:@"🔧 管理 ObjC 方法 Hook 规则" forState:UIControlStateNormal];
-    [objcBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    [objcBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfShowMethodTracePage") forControlEvents:UIControlEventTouchUpInside];
-    [sv addSubview:objcBtn];
+    mfRowButton(sv, 12, y + 4, g_mfCardW - 24, 38, @"🔧 管理 ObjC 方法 Hook 规则", [UIColor systemIndigoColorColor], NSSelectorFromString(@"mfShowMethodTracePage"));
     y += 46;
     // 添加规则按钮
-    UIButton *addBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    addBtn.frame = CGRectMake(12, y + 4, g_mfCardW - 24, 38);
-    addBtn.backgroundColor = [UIColor systemBlueColor];
-    addBtn.layer.cornerRadius = 10;
-    [addBtn setTitle:@"+ 添加规则" forState:UIControlStateNormal];
-    [addBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    [addBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfAddRuleTapped") forControlEvents:UIControlEventTouchUpInside];
-    [sv addSubview:addBtn];
+    mfRowButton(sv, 12, y + 4, g_mfCardW - 24, 38, @"+ 添加规则", [UIColor systemBlueColorColor], NSSelectorFromString(@"mfAddRuleTapped"));
     y += 46;
     sv.contentSize = CGSizeMake(g_mfCardW, y + 16);
     [page addSubview:sv];
@@ -1114,23 +1100,9 @@ void mfShowRuleManagerPage(void) {
     [page addSubview:tv];
 
     // 添加规则按钮（固定在底部）
-    UIButton *objcBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    objcBtn.frame = CGRectMake(12, g_mfCardH - 108, g_mfCardW - 24, 40);
-    objcBtn.backgroundColor = [UIColor systemIndigoColor];
-    objcBtn.layer.cornerRadius = 10;
-    [objcBtn setTitle:@"🔧 管理 ObjC 方法 Hook 规则" forState:UIControlStateNormal];
-    [objcBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    [objcBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfShowMethodTracePage") forControlEvents:UIControlEventTouchUpInside];
-    [page addSubview:objcBtn];
+    mfRowButton(page, 12, g_mfCardH - 108, g_mfCardW - 24, 40, @"🔧 管理 ObjC 方法 Hook 规则", [UIColor systemIndigoColorColor], NSSelectorFromString(@"mfShowMethodTracePage"));
 
-    UIButton *addBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    addBtn.frame = CGRectMake(12, g_mfCardH - 60, g_mfCardW - 24, 40);
-    addBtn.backgroundColor = [UIColor systemBlueColor];
-    addBtn.layer.cornerRadius = 10;
-    [addBtn setTitle:@"+ 添加规则" forState:UIControlStateNormal];
-    [addBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    [addBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfAddRuleTapped") forControlEvents:UIControlEventTouchUpInside];
-    [page addSubview:addBtn];
+    mfRowButton(page, 12, g_mfCardH - 60, g_mfCardW - 24, 40, @"+ 添加规则", [UIColor systemBlueColorColor], NSSelectorFromString(@"mfAddRuleTapped"));
 
     mfPushPage(page);
 }
