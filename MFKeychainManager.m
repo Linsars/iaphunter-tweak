@@ -377,14 +377,40 @@ static NSArray *mfGetFrontmostAppContainerIdentifiers(NSString **outBundleID, NS
 }
 
 // ====== v2.6.85 CK 启动预热（本质修法）======
-// 三次 SIGTRAP(CK+0x9e89c) 逐字复盘的结论：崩点全在 CloudKit 进程级 dispatch_once 初始化块内。
-// - app 自己链接 CloudKit（Scripting/Files 等）→ dyld 加载时 once 已跑 → tweak 任何时候调都安全
-// - app 不链接 CloudKit（Picsew, icloud-services=CloudDocuments 走的是 iCloud Drive 不是 CK）→
-//   tweak 点按钮时才首次 dlopen+调 CK → once 运行中途触发 → 时序不对 → trap
-// 修法：app 启动早期（ctor）在有 iCloud entitlement 的进程里预热 CK once。
-// 实测锚点：SecTask 读 entitlements 是准的（插件读出列表与外部 plist 一致）。
+// v2.6.86 补全：砸壳实锤 Picsew 链接了 CloudKit，且预热(启动后154ms)仍崩同一 once →
+// 时机无关。真凶 = CK once 块的 entitlement 强校验：
+//   icloud-services 必须含 "CloudKit" service 才允许用 CKContainer API。
+//   Picsew 只有 ["CloudDocuments"](iCloud Drive) → 校验失败 → os_crash_internal 主动 trap。
+//   Scripting 等 app 能查 = 它们的 services 含 CloudKit，once 已被 app 自己合法跑过。
+// 破法：hook SecTaskCopyValueForEntitlement（用户态导出函数），key=icloud-services 时
+//   在返回数组注入 "CloudKit" → CK once 校验通过 → trap 消失。其余 key 全透传。
 static volatile BOOL g_ckWarmDone = NO;     // once 预热完成
 static NSString *g_ckWarmContainerID = nil; // SecTask 读到的真容器 ID
+
+static CFTypeRef (*ckOrigSecTaskCopyValueForEntitlement)(SecTaskRef, CFStringRef, CFErrorRef *);
+static CFTypeRef ckMySecTaskCopyValueForEntitlement(SecTaskRef task, CFStringRef ent, CFErrorRef *err) {
+    CFTypeRef r = ckOrigSecTaskCopyValueForEntitlement(task, ent, err);
+    if (ent && CFStringCompare(ent, CFSTR("com.apple.developer.icloud-services"), 0) == 0) {
+        NSArray *arr = CFBridgingRelease(r); r = NULL;
+        // 通用规则（数据驱动，无 app 特化）：
+        //   - services 数组存在但缺 "CloudKit" → 补全（任何 CloudDocuments-only app 命中同一规则）
+        //   - 已含 CloudKit → 原样
+        //   - 完全未声明(nil) → 原样透传，绝不给无 iCloud 的 app 伪造声明
+        if ([arr isKindOfClass:[NSArray class]] && arr.count > 0 && ![arr containsObject:@"CloudKit"]) {
+            NSMutableArray *m = [arr mutableCopy];
+            [m addObject:@"CloudKit"];
+            return CFBridgingRetain(m);
+        }
+        return CFBridgingRetain(arr);
+    }
+    return r;
+}
+
+// WithError 变体（CK 内部可能走这个）：复用同一补丁逻辑
+static CFTypeRef (*ckOrigSecTaskCopyValueForEntitlementWithError)(SecTaskRef, CFStringRef, CFErrorRef *);
+static CFTypeRef ckMySecTaskCopyValueForEntitlementWithError(SecTaskRef task, CFStringRef ent, CFErrorRef *err) {
+    return ckMySecTaskCopyValueForEntitlement(task, ent, err);
+}
 
 static NSArray *mfReadICloudContainerEntitlement(void) {
     @try {
@@ -409,10 +435,29 @@ void mfCloudKitWarmupStart(void) {
     g_ckWarmContainerID = [containers[0] copy];
     mfLog(@"[ckwarm] entitlement cid=%@ — warming CK once on bg queue", g_ckWarmContainerID);
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        // dlopen 让 CK framework initializer 尽早跑（对齐 dyld 正常加载时机）
+        // v2.6.86: 先装 services 补丁 hook（必须在 dlopen/首调 CK 前就位），再触发 once
+        if (!ckOrigSecTaskCopyValueForEntitlement) {
+            void *ms = dlsym(RTLD_DEFAULT, "MSHookFunction");
+            void *target = dlsym(RTLD_DEFAULT, "SecTaskCopyValueForEntitlement");
+            void *targetWE = dlsym(RTLD_DEFAULT, "SecTaskCopyValueForEntitlementWithError");
+            if (ms && target) {
+                ((void(*)(void*,void*,void**))ms)(target, (void*)ckMySecTaskCopyValueForEntitlement,
+                                                  (void**)&ckOrigSecTaskCopyValueForEntitlement);
+                mfLog(@"[ckwarm] SecTask hook installed (MSHookFunction)");
+                if (targetWE) {
+                    ((void(*)(void*,void*,void**))ms)(targetWE, (void*)ckMySecTaskCopyValueForEntitlementWithError,
+                                                      (void**)&ckOrigSecTaskCopyValueForEntitlementWithError);
+                    mfLog(@"[ckwarm] SecTask WithError hook installed");
+                }
+            } else {
+                mfLog(@"[ckwarm] no hook engine (ms=%p target=%p) — CK calls stay guarded", ms, target);
+                // 无 hook 引擎：保持 g_ckWarmDone=NO，查询页走"预热中"降级，绝不裸调 CK
+                return;
+            }
+        }
+        // dlopen 让 CK framework 就绪，defaultContainer 触发 once（此时校验已读到注入的 CloudKit service）
         void *h = dlopen("/System/Library/Frameworks/CloudKit.framework/CloudKit", RTLD_LAZY);
         mfLog(@"[ckwarm] dlopen CloudKit = %p", h);
-        // 触发进程级 once：defaultContainer 是 iCloudID.dylib 成品用的同款首调
         Class ck = NSClassFromString(@"CKContainer");
         if (ck) {
             ((id(*)(id,SEL))objc_msgSend)((id)ck, NSSelectorFromString(@"defaultContainer"));
