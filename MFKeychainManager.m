@@ -1008,9 +1008,6 @@ void mfCKCustomQueryFromButton(UIButton *btn) {
     res.textColor = [UIColor secondaryLabelColor];
     // 卡片加高给结果区留位（v2.6.97: 之前结果在卡片外不可见）
     card.frame = CGRectMake(card.frame.origin.x, card.frame.origin.y, card.frame.size.width, 150);
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [[card.superview invalidateIntrinsicContentSize] ?: nil];
-    });
     __block UIView *cardRef = card;
     mfQueryRecordIDForContainer(cid, ^(NSString *recordName, NSError *error) {
         UILabel *lbl = g_ckCustomRes;
