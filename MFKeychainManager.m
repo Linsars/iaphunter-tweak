@@ -392,12 +392,35 @@ static NSArray *mfGetFrontmostAppContainerIdentifiers(NSString **outBundleID, NS
 //   在返回数组注入 "CloudKit" → CK once 校验通过 → trap 消失。其余 key 全透传。
 static volatile BOOL g_ckWarmDone = NO;     // once 预热完成
 static NSString *g_ckWarmContainerID = nil; // SecTask 读到的真容器 ID
+static volatile BOOL g_ckHookInstalled = NO;
+static volatile BOOL g_ckEntQueried = NO;   // my wrapper 是否被 CK 调用过
+
+// v2.6.93: ck 日志落盘——trap 崩溃进程时 hostlog 内存缓冲全丢，落盘才能拿到死前现场
+static void ckLog(NSString *fmt, ...) NS_FORMAT_FUNCTION(1,2);
+static void ckLog(NSString *fmt, ...) {
+    va_list ap; va_start(ap, fmt);
+    NSString *s = [[NSString alloc] initWithFormat:fmt arguments:ap];
+    va_end(ap);
+    mfLog(@"%@", s);
+    static NSString *path = nil;
+    if (!path) path = @"/var/mobile/Documents/minisfix_ck.log";
+    NSDateFormatter *df = [[NSDateFormatter alloc] init];
+    df.dateFormat = @"MM-dd HH:mm:ss.SSS";
+    NSString *line = [NSString stringWithFormat:@"[%@] %@\n", [df stringFromDate:[NSDate date]], s];
+    NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:path];
+    if (!fh) { [line writeToFile:path atomically:YES]; return; }
+    [fh seekToEndOfFile];
+    [fh writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
+    [fh closeFile];
+}
 
 static CFTypeRef (*ckOrigSecTaskCopyValueForEntitlement)(SecTaskRef, CFStringRef, CFErrorRef *);
 static CFTypeRef ckMySecTaskCopyValueForEntitlement(SecTaskRef task, CFStringRef ent, CFErrorRef *err) {
+    g_ckEntQueried = YES;
     CFTypeRef r = ckOrigSecTaskCopyValueForEntitlement(task, ent, err);
     if (ent && CFStringCompare(ent, CFSTR("com.apple.developer.icloud-services"), 0) == 0) {
         NSArray *arr = CFBridgingRelease(r); r = NULL;
+        ckLog(@"singularAPI reads services → %@", arr ?: @"(nil)");
         // 通用规则（数据驱动，无 app 特化）：
         //   - services 数组存在但缺 "CloudKit" → 补全（任何 CloudDocuments-only app 命中同一规则）
         //   - 已含 CloudKit → 原样
@@ -422,13 +445,14 @@ static CFTypeRef ckMySecTaskCopyValueForEntitlementWithError(SecTaskRef task, CF
 //   CFDictionaryRef SecTaskCopyValuesForEntitlements(SecTaskRef, CFArrayRef keys, CFErrorRef*)
 static CFDictionaryRef (*ckOrigSecTaskCopyValuesForEntitlements)(SecTaskRef, CFArrayRef, CFErrorRef *);
 static CFDictionaryRef ckMySecTaskCopyValuesForEntitlements(SecTaskRef task, CFArrayRef keys, CFErrorRef *err) {
+    g_ckEntQueried = YES;
     CFDictionaryRef d = ckOrigSecTaskCopyValuesForEntitlements(task, keys, err);
     if (d && keys) {
         for (CFIndex i = 0; i < CFArrayGetCount(keys); i++) {
             CFStringRef k = (CFStringRef)CFArrayGetValueAtIndex(keys, i);
             if (!k) continue;
             NSString *ks = (__bridge NSString *)k;
-            mfLog(@"[ckwarm] pluralAPI reads key: %@", ks);
+            ckLog(@"pluralAPI reads key: %@", ks);
             if ([ks isEqualToString:@"com.apple.developer.icloud-services"]) {
                 NSArray *services = [(__bridge NSDictionary *)d objectForKey:ks];
                 if ([services isKindOfClass:[NSArray class]] && ![services containsObject:@"CloudKit"]) {
@@ -436,7 +460,7 @@ static CFDictionaryRef ckMySecTaskCopyValuesForEntitlements(SecTaskRef task, CFA
                     NSMutableArray *s = [services mutableCopy];
                     [s addObject:@"CloudKit"];
                     [m setObject:s forKey:ks];
-                    mfLog(@"[ckwarm] services COMPLETED via plural API: %@ → %@", services, s);
+                    ckLog(@"services COMPLETED via plural API: %@ → %@", services, s);
                     return CFBridgingRetain(m);
                 }
             }
@@ -534,13 +558,13 @@ static void ckDiagnoseEntitlementImports(void) {
                     NSString *nm2 = [NSString stringWithUTF8String:info.dli_sname];
                     if ([nm2 containsString:@"ntitle"] && ![found containsObject:nm2]) {
                         [found addObject:nm2];
-                        mfLog(@"[ckdiag] CK import: %@", nm2);
+                        ckLog(@"[ckdiag] CK import: %@", nm2);
                     }
                 }
             }
         }
     }
-    mfLog(@"[ckdiag] total entitlement-API imports found: %lu", (unsigned long)found.count);
+    ckLog(@"[ckdiag] total entitlement-API imports found: %lu", (unsigned long)found.count);
 }
 
 // 三层 hook 引擎：MSHookFunction → fishhook(官方,支持 chained fixups) → GOT 指针扫描
@@ -582,6 +606,7 @@ static BOOL ckInstallServicesPatch(void) {
               n, (void*)ckOrigSecTaskCopyValueForEntitlement, (void*)ckOrigSecTaskCopyValuesForEntitlements);
         if (ckOrigSecTaskCopyValueForEntitlement || ckOrigSecTaskCopyValuesForEntitlements) {
             mfLog(@"[ckwarm] engine=fishhook installed");
+            g_ckHookInstalled = YES;
             return YES;
         }
     }
@@ -593,6 +618,50 @@ static BOOL ckInstallServicesPatch(void) {
     }
     mfLog(@"[ckwarm] all engines failed (ms=%p)", ms);
     return NO;
+}
+
+// v2.6.93 自测：直接手动调 my 复数版（走 orig→补全），验证补全链路——不触发 CK once，安全
+static void ckSelfTestPluralAPI(void) {
+    @try {
+        SecTaskRef task = SecTaskCreateFromSelf(kCFAllocatorDefault);
+        if (!task) { ckLog(@"selftest: SecTaskCreateFromSelf failed"); return; }
+        CFArrayRef keys = (__bridge_retained CFArrayRef)(@[(@"com.apple.developer.icloud-services")]);
+        CFErrorRef err = NULL;
+        CFDictionaryRef d = ckMySecTaskCopyValuesForEntitlements(task, keys, &err);
+        NSArray *services = d ? [(__bridge NSDictionary *)d objectForKey:@"com.apple.developer.icloud-services"] : nil;
+        ckLog(@"selftest: returned services = %@", services ?: @"(nil)");
+        if (d) CFRelease(d);
+        CFRelease((CFArrayRef)keys);
+        CFRelease(task);
+    } @catch (NSException *e) {
+        ckLog(@"selftest exception: %@", e);
+    }
+}
+
+// v2.6.93: 用户自愿的强制触发（可能 trap 闪退，但 ckLog 已落盘，死后现场可查）
+void mfCKForceTrigger(void) {
+    ckLog(@"=== FORCE TRIGGER requested by user ===");
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        ckLog(@"force: dlopen + defaultContainer firing");
+        void *h = dlopen("/System/Library/Frameworks/CloudKit.framework/CloudKit", RTLD_LAZY);
+        ckLog(@"force: dlopen = %p", h);
+        Class ck = NSClassFromString(@"CKContainer");
+        if (ck) ((id(*)(id,SEL))objc_msgSend)((id)ck, NSSelectorFromString(@"defaultContainer"));
+        g_ckWarmDone = YES;
+        ckLog(@"force: SURVIVED once trigger — hook path works!");
+    });
+}
+
+// v2.6.93: 读落盘日志（面板展示用）
+NSString *mfCKReadLog(void) {
+    NSString *p = @"/var/mobile/Documents/minisfix_ck.log";
+    return [NSString stringWithContentsOfFile:p encoding:NSUTF8StringEncoding error:NULL] ?: @"(无日志)";
+}
+
+// v2.6.93: 日志按钮 → 复制到剪贴板
+void mfCKShowLogTapped(void) {
+    [[UIPasteboard generalPasteboard] setString:mfCKReadLog()];
+    mfToast(@"📄 CK 日志已复制到剪贴板");
 }
 
 static NSArray *mfReadICloudContainerEntitlement(void) {
@@ -611,28 +680,43 @@ static NSArray *mfReadICloudContainerEntitlement(void) {
 void mfCloudKitWarmupStart(void) {
     NSArray *containers = mfReadICloudContainerEntitlement();
     if (!containers) {
-        mfLog(@"[ckwarm] no icloud entitlement in this app — skip warmup");
-        g_ckWarmDone = YES;  // 无 entitlement 也标记完成，查询页直接显示降级
+        ckLog(@"no icloud entitlement in this app — skip");
+        g_ckWarmDone = YES;
         return;
     }
     g_ckWarmContainerID = [containers[0] copy];
-    // v2.6.92: 解除 appUsesCK 安全门——ckdiag 实锤校验走复数版 API，hook 已覆盖该路径。
-    // hook 安装成功 → 触发 once（校验读到补全的 services → 通过）；hook 失败 → 不触发（保持预热中）
+    // v2.6.93: 恢复 appUsesCK 安全门（v2.6.92 解除后 Picsew 仍 trap → 复数版补全未被校验采用）
+    BOOL appUsesCK = NO;
+    @try {
+        SecTaskRef task = SecTaskCreateFromSelf(kCFAllocatorDefault);
+        if (task) {
+            CFTypeRef ref = SecTaskCopyValueForEntitlement(task,
+                (__bridge CFStringRef)@"com.apple.developer.icloud-services", NULL);
+            NSArray *svcs = (__bridge_transfer NSArray *)ref;
+            appUsesCK = [svcs isKindOfClass:[NSArray class]] && [svcs containsObject:@"CloudKit"];
+            CFRelease(task);
+        }
+    } @catch (NSException *e) { ckLog(@"services probe exception: %@", e); }
+    ckLog(@"=== warmup start cid=%@ appUsesCK=%d ===", g_ckWarmContainerID, appUsesCK);
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         if (!ckInstallServicesPatch()) {
-            mfLog(@"[ckwarm] hook install failed — CK stays guarded (query page will show retry)");
+            ckLog(@"hook install failed — stays guarded");
             return;
         }
-        // dlopen 让 CK framework 就绪
         void *h = dlopen("/System/Library/Frameworks/CloudKit.framework/CloudKit", RTLD_LAZY);
-        mfLog(@"[ckwarm] dlopen CloudKit = %p", h);
+        ckLog(@"dlopen = %p", h);
         ckDiagnoseEntitlementImports();
-        Class ck = NSClassFromString(@"CKContainer");
-        if (ck) {
-            ((id(*)(id,SEL))objc_msgSend)((id)ck, NSSelectorFromString(@"defaultContainer"));
+        if (!appUsesCK) {
+            // 不触发 once（trap 风险）。自测补全链路 + 落盘，等用户自愿点「强制触发」拿死前现场
+            ckSelfTestPluralAPI();
+            ckLog(@"guarded mode: once NOT fired. Use ⚠️ force-trigger for the deadly experiment (log survives crash).");
+            return;
         }
+        ckLog(@"firing once (appUsesCK=YES, safe)");
+        Class ck = NSClassFromString(@"CKContainer");
+        if (ck) ((id(*)(id,SEL))objc_msgSend)((id)ck, NSSelectorFromString(@"defaultContainer"));
         g_ckWarmDone = YES;
-        mfLog(@"[ckwarm] done (survived) cid=%@", g_ckWarmContainerID);
+        ckLog(@"done (survived) cid=%@", g_ckWarmContainerID);
     });
 }
 
@@ -722,6 +806,26 @@ static void mfShowICloudIDListPage(NSString *bundleID, NSString *appName, NSArra
     sectionTitle.textColor = [UIColor secondaryLabelColor];
     [sv addSubview:sectionTitle];
     y += 28;
+
+    // v2.6.93: 诊断按钮行（落盘日志 + 自愿强制触发）
+    UIButton *logBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    logBtn.frame = CGRectMake(12, y, (g_mfCardW - 36) / 2, 34);
+    logBtn.backgroundColor = [UIColor tertiarySystemBackgroundColor];
+    logBtn.layer.cornerRadius = 8;
+    [logBtn setTitle:@"📄 CK 日志" forState:UIControlStateNormal];
+    logBtn.titleLabel.font = [UIFont systemFontOfSize:12];
+    [logBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfCKShowLogTapped") forControlEvents:UIControlEventTouchUpInside];
+    [sv addSubview:logBtn];
+    UIButton *forceBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    forceBtn.frame = CGRectMake(12 + (g_mfCardW - 36) / 2 + 12, y, (g_mfCardW - 36) / 2, 34);
+    forceBtn.backgroundColor = [UIColor systemOrangeColor];
+    forceBtn.layer.cornerRadius = 8;
+    [forceBtn setTitle:@"⚠️ 强制触发(可能崩)" forState:UIControlStateNormal];
+    forceBtn.tintColor = UIColor.whiteColor;
+    forceBtn.titleLabel.font = [UIFont systemFontOfSize:12];
+    [forceBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfCKForceTriggerTapped") forControlEvents:UIControlEventTouchUpInside];
+    [sv addSubview:forceBtn];
+    y += 42;
     
     // KVS 状态行（如果声明了 ubiquity-kvstore）
     if (hasKVS) {

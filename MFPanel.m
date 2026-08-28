@@ -1376,6 +1376,8 @@ void mfShowProductPage(void) {
 - (void)mfObjCHookDelTapped:(UIButton *)b { mfObjCHookDelTapped(b); }
 - (void)mfObjCHookEditTapped:(UIView *)row { mfObjCHookEditTappedFromView(row); }
 - (void)mfObjCHookSwipeDel:(UIView *)row { mfObjCHookSwipeDelFromView(row); }
+- (void)mfCKForceTriggerTapped { mfCKForceTrigger(); }
+- (void)mfCKShowLogTapped { mfCKShowLogTapped(); }
 - (void)mfNetRun:(UIButton *)btn {
     btn.enabled = NO;
     NSString *kind = objc_getAssociatedObject(btn, "kind");
@@ -2163,7 +2165,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define IAPTOOLS_VERSION @"2.6.92"
+#define IAPTOOLS_VERSION @"2.6.93"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
