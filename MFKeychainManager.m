@@ -417,6 +417,10 @@ static void ckLog(NSString *fmt, ...) {
 static CFTypeRef (*ckOrigSecTaskCopyValueForEntitlement)(SecTaskRef, CFStringRef, CFErrorRef *);
 static CFTypeRef ckMySecTaskCopyValueForEntitlement(SecTaskRef task, CFStringRef ent, CFErrorRef *err) {
     g_ckEntQueried = YES;
+    if (!ckOrigSecTaskCopyValueForEntitlement) {  // v2.6.94 防护: 定向补丁未命中时 dlsym 兜底(dlsym 不走 GOT,总是原实现)
+        ckOrigSecTaskCopyValueForEntitlement = (void *)dlsym(RTLD_DEFAULT, "SecTaskCopyValueForEntitlement");
+        if (!ckOrigSecTaskCopyValueForEntitlement) return NULL;
+    }
     CFTypeRef r = ckOrigSecTaskCopyValueForEntitlement(task, ent, err);
     if (ent && CFStringCompare(ent, CFSTR("com.apple.developer.icloud-services"), 0) == 0) {
         NSArray *arr = CFBridgingRelease(r); r = NULL;
@@ -438,6 +442,10 @@ static CFTypeRef ckMySecTaskCopyValueForEntitlement(SecTaskRef task, CFStringRef
 // WithError 变体（CK 内部可能走这个）：复用同一补丁逻辑
 static CFTypeRef (*ckOrigSecTaskCopyValueForEntitlementWithError)(SecTaskRef, CFStringRef, CFErrorRef *);
 static CFTypeRef ckMySecTaskCopyValueForEntitlementWithError(SecTaskRef task, CFStringRef ent, CFErrorRef *err) {
+    if (!ckOrigSecTaskCopyValueForEntitlementWithError) {
+        ckOrigSecTaskCopyValueForEntitlementWithError = (void *)dlsym(RTLD_DEFAULT, "SecTaskCopyValueForEntitlementWithError");
+        if (!ckOrigSecTaskCopyValueForEntitlementWithError) return NULL;
+    }
     return ckMySecTaskCopyValueForEntitlement(task, ent, err);
 }
 
@@ -446,6 +454,10 @@ static CFTypeRef ckMySecTaskCopyValueForEntitlementWithError(SecTaskRef task, CF
 static CFDictionaryRef (*ckOrigSecTaskCopyValuesForEntitlements)(SecTaskRef, CFArrayRef, CFErrorRef *);
 static CFDictionaryRef ckMySecTaskCopyValuesForEntitlements(SecTaskRef task, CFArrayRef keys, CFErrorRef *err) {
     g_ckEntQueried = YES;
+    if (!ckOrigSecTaskCopyValuesForEntitlements) {  // v2.6.94 防护(selftest 崩因)
+        ckOrigSecTaskCopyValuesForEntitlements = (void *)dlsym(RTLD_DEFAULT, "SecTaskCopyValuesForEntitlements");
+        if (!ckOrigSecTaskCopyValuesForEntitlements) return NULL;
+    }
     CFDictionaryRef d = ckOrigSecTaskCopyValuesForEntitlements(task, keys, err);
     if (d && keys) {
         for (CFIndex i = 0; i < CFArrayGetCount(keys); i++) {
@@ -520,7 +532,9 @@ static BOOL ckPatchGOTViaScan(void) {
 // 代码页不可写，但 CK 的 GOT（__DATA_CONST 数据页）可写（fishhook 已实证）。
 // v2.6.91 修复地址公式：shared cache 里 __TEXT.vmaddr ≠ 0，必须用 slide + vmaddr（v2.6.90 用 ckStart+vmaddr 读飞 → 全崩实证）
 // 同时把盲扫整个 __DATA 段改为只扫 __got/__auth_got 等 bind 槽 section（精确、快）
-static void ckDiagnoseEntitlementImports(void) {
+// v2.6.94: 扫描即补丁——ckdiag 已实证能精确定位复数版槽（fishhook 对该槽失效，orig=NULL → v2.6.93 selftest 调 NULL 崩）。
+// 扫 __got/__auth_got，dladdr 反查符号名，目标符号直接 mprotect 改槽。数据页可写（单数版 fishhook rebind 成功实证）。
+static BOOL ckHookEntitlementImports(void) {
     uint32_t cnt = _dyld_image_count();
     uintptr_t secStart = 0;
     intptr_t ckSlide = 0;
@@ -534,8 +548,9 @@ static void ckDiagnoseEntitlementImports(void) {
             ckSlide = _dyld_get_image_vmaddr_slide(i);
         }
     }
-    if (!ckh || !secStart) { mfLog(@"[ckdiag] not both found (ck=%p sec=%p)", (void*)ckh, (void*)secStart); return; }
-    NSMutableArray *found = [NSMutableArray new];
+    if (!ckh || !secStart) { ckLog(@"[ckpatch] not both found"); return NO; }
+    BOOL patched = NO;
+    long pz = getpagesize();
     uintptr_t cur = (uintptr_t)ckh + sizeof(struct mach_header_64);
     const struct load_command *lc = (const struct load_command *)cur;
     for (uint32_t i = 0; i < ckh->ncmds; i++, cur += lc->cmdsize, lc = (const struct load_command *)cur) {
@@ -544,27 +559,45 @@ static void ckDiagnoseEntitlementImports(void) {
         const struct section_64 *sects = (const struct section_64 *)(cur + sizeof(struct segment_command_64));
         for (uint32_t s = 0; s < seg->nsects; s++) {
             const struct section_64 *sec = &sects[s];
-            // 只扫 bind 槽 section
             if (strcmp(sec->sectname, "__got") && strcmp(sec->sectname, "__auth_got") &&
                 strcmp(sec->sectname, "__nl_symbol_ptr") && strcmp(sec->sectname, "__la_symbol_ptr")) continue;
             volatile uintptr_t *slots = (volatile uintptr_t *)(ckSlide + sec->addr);
             uintptr_t n = sec->size / 8;
-            if (n > 100000) continue;  // 防御
+            if (n > 100000) continue;
             for (uintptr_t k = 0; k < n; k++) {
                 uintptr_t v = slots[k];
                 if (v < secStart || v >= secStart + 0x400000) continue;
                 Dl_info info;
-                if (dladdr((void *)v, &info) && info.dli_sname) {
-                    NSString *nm2 = [NSString stringWithUTF8String:info.dli_sname];
-                    if ([nm2 containsString:@"ntitle"] && ![found containsObject:nm2]) {
-                        [found addObject:nm2];
-                        ckLog(@"[ckdiag] CK import: %@", nm2);
-                    }
+                if (!dladdr((void *)v, &info) || !info.dli_sname) continue;
+                void **origSlot = NULL;
+                void *myfn = NULL;
+                if (!strcmp(info.dli_sname, "SecTaskCopyValuesForEntitlements") && !ckOrigSecTaskCopyValuesForEntitlements) {
+                    origSlot = (void **)&ckOrigSecTaskCopyValuesForEntitlements;
+                    myfn = (void *)ckMySecTaskCopyValuesForEntitlements;
+                } else if (!strcmp(info.dli_sname, "SecTaskCopyValueForEntitlement") && !ckOrigSecTaskCopyValueForEntitlement) {
+                    origSlot = (void **)&ckOrigSecTaskCopyValueForEntitlement;
+                    myfn = (void *)ckMySecTaskCopyValueForEntitlement;
+                } else if (!strcmp(info.dli_sname, "SecTaskCopyValueForEntitlementWithError") && !ckOrigSecTaskCopyValueForEntitlementWithError) {
+                    origSlot = (void **)&ckOrigSecTaskCopyValueForEntitlementWithError;
+                    myfn = (void *)ckMySecTaskCopyValueForEntitlementWithError;
                 }
+                if (!origSlot) continue;
+                uintptr_t page = ((uintptr_t)&slots[k]) & ~(uintptr_t)(pz - 1);
+                if (mprotect((void *)page, pz * 2, PROT_READ | PROT_WRITE) != 0) {
+                    ckLog(@"[ckpatch] mprotect fail for %s errno=%d", info.dli_sname, errno);
+                    continue;
+                }
+                *origSlot = (void *)slots[k];
+                slots[k] = (uintptr_t)myfn;
+                mprotect((void *)page, pz * 2, PROT_READ);
+                ckLog(@"[ckpatch] PATCHED %s (orig=%p)", info.dli_sname, (void *)v);
+                patched = YES;
             }
         }
     }
-    ckLog(@"[ckdiag] total entitlement-API imports found: %lu", (unsigned long)found.count);
+    ckLog(@"[ckpatch] done, patched=%d (singular=%p plural=%p)", patched,
+          (void *)ckOrigSecTaskCopyValueForEntitlement, (void *)ckOrigSecTaskCopyValuesForEntitlements);
+    return patched;
 }
 
 // 三层 hook 引擎：MSHookFunction → fishhook(官方,支持 chained fixups) → GOT 指针扫描
@@ -699,13 +732,14 @@ void mfCloudKitWarmupStart(void) {
     } @catch (NSException *e) { ckLog(@"services probe exception: %@", e); }
     ckLog(@"=== warmup start cid=%@ appUsesCK=%d ===", g_ckWarmContainerID, appUsesCK);
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        if (!ckInstallServicesPatch()) {
-            ckLog(@"hook install failed — stays guarded");
-            return;
-        }
         void *h = dlopen("/System/Library/Frameworks/CloudKit.framework/CloudKit", RTLD_LAZY);
         ckLog(@"dlopen = %p", h);
-        ckDiagnoseEntitlementImports();
+        // v2.6.94: 定向补丁为主（fishhook 对复数版槽失效实证）——扫描即补丁
+        if (!ckHookEntitlementImports()) {
+            ckLog(@"direct patch failed — stays guarded");
+            return;
+        }
+        g_ckHookInstalled = YES;
         if (!appUsesCK) {
             // 不触发 once（trap 风险）。自测补全链路 + 落盘，等用户自愿点「强制触发」拿死前现场
             ckSelfTestPluralAPI();
