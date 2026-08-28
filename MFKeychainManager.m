@@ -402,8 +402,12 @@ static void ckLog(NSString *fmt, ...) {
     NSString *s = [[NSString alloc] initWithFormat:fmt arguments:ap];
     va_end(ap);
     mfLog(@"%@", s);
+    // v2.6.95: app 沙盒写不了 /var/mobile/Documents（全静默失败实证）→ 写 app 自己 Documents（重开同 app 可读，崩溃后仍在）
     static NSString *path = nil;
-    if (!path) path = @"/var/mobile/Documents/minisfix_ck.log";
+    if (!path) {
+        NSString *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+        path = [docs stringByAppendingPathComponent:@"minisfix_ck.log"];
+    }
     NSDateFormatter *df = [[NSDateFormatter alloc] init];
     df.dateFormat = @"MM-dd HH:mm:ss.SSS";
     NSString *line = [NSString stringWithFormat:@"[%@] %@\n", [df stringFromDate:[NSDate date]], s];
@@ -687,7 +691,8 @@ void mfCKForceTrigger(void) {
 
 // v2.6.93: 读落盘日志（面板展示用）
 NSString *mfCKReadLog(void) {
-    NSString *p = @"/var/mobile/Documents/minisfix_ck.log";
+    NSString *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+    NSString *p = [docs stringByAppendingPathComponent:@"minisfix_ck.log"];
     return [NSString stringWithContentsOfFile:p encoding:NSUTF8StringEncoding error:NULL] ?: @"(无日志)";
 }
 
