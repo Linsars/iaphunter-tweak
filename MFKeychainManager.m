@@ -6,6 +6,8 @@
 #import <Security/Security.h>
 #import <CloudKit/CloudKit.h>
 #import <dlfcn.h>
+#import <sys/mman.h>
+#import <mach-o/dyld.h>
 #import <objc/message.h>
 #import "MFPanel.h"
 #import "LSApplicationProxy.h"
@@ -412,6 +414,91 @@ static CFTypeRef ckMySecTaskCopyValueForEntitlementWithError(SecTaskRef task, CF
     return ckMySecTaskCopyValueForEntitlement(task, ent, err);
 }
 
+// v2.6.87 第三层兜底：GOT 指针扫描补丁（不依赖 MSHook/Dobby，任何注入器环境必成）
+// 原理：dyld 启动后 GOT 槽里是已解析的绝对地址 → 扫 CloudKit 镜像 __DATA* 段，
+//   找到指向 SecTaskCopyValueForEntitlement 的槽 → mprotect 改写为 my 函数。
+static BOOL ckPatchGOTInImage(const struct mach_header *mh, intptr_t slide, void *myFn, void *targetFn) {
+    if (!mh || mh->magic != 0xfeedfacf) return NO;
+    uintptr_t cur = (uintptr_t)mh + sizeof(struct mach_header_64);
+    const struct load_command *lc = (const struct load_command *)cur;
+    for (uint32_t i = 0; i < mh->ncmds; i++, cur += lc->cmdsize, lc = (const struct load_command *)cur) {
+        if (lc->cmd != 0x19 /*LC_SEGMENT_64*/) continue;
+        const struct segment_command_64 *seg = (const struct segment_command_64 *)cur;
+        if (strncmp(seg->segname, "__DATA", 6) != 0) continue;  // __DATA/__DATA_CONST/__AUTH_CONST 全命中
+        uintptr_t *slots = (uintptr_t *)(slide + seg->vmaddr);
+        uintptr_t n = seg->vmsize / 8;
+        for (uintptr_t k = 0; k < n; k++) {
+            uintptr_t v = slots[k];
+            // 全值匹配 或 低 47 位匹配（arm64e auth 指针兼容）
+            if (v == (uintptr_t)targetFn ||
+                (v & 0x7FFFFFFFFFFFULL) == ((uintptr_t)targetFn & 0x7FFFFFFFFFFFULL)) {
+                uintptr_t pageStart = (uintptr_t)&slots[k] & ~0xFFFULL;
+                long pz = getpagesize();
+                pageStart = (uintptr_t)&slots[k] & ~(uintptr_t)(pz - 1);
+                if (mprotect((void *)pageStart, pz * 2, PROT_READ | PROT_WRITE) != 0) continue;
+                slots[k] = (uintptr_t)myFn;
+                mprotect((void *)pageStart, pz * 2, PROT_READ);
+                return YES;
+            }
+        }
+    }
+    return NO;
+}
+
+static BOOL ckPatchGOTViaScan(void) {
+    void *target = dlsym(RTLD_DEFAULT, "SecTaskCopyValueForEntitlement");
+    if (!target) return NO;
+    uint32_t cnt = _dyld_image_count();
+    for (uint32_t i = 0; i < cnt; i++) {
+        const char *name = _dyld_get_image_name(i);
+        if (!name || !strstr(name, "CloudKit.framework/CloudKit")) continue;
+        BOOL ok = ckPatchGOTInImage(_dyld_get_image_header(i), _dyld_get_image_vmaddr_slide(i),
+                                    (void *)ckMySecTaskCopyValueForEntitlement, target);
+        mfLog(@"[ckwarm] GOT scan in %s → %s", name, ok ? "PATCHED" : "no slot found");
+        return ok;
+    }
+    mfLog(@"[ckwarm] CloudKit image not loaded yet for GOT scan");
+    return NO;
+}
+
+// 三层 hook 引擎：MSHookFunction → DobbyHook → GOT 指针扫描
+static BOOL ckInstallServicesPatch(void) {
+    if (ckOrigSecTaskCopyValueForEntitlement) return YES;  // 已装
+    void *target = dlsym(RTLD_DEFAULT, "SecTaskCopyValueForEntitlement");
+    if (!target) { mfLog(@"[ckwarm] SecTaskCopyValueForEntitlement not found"); return NO; }
+    // 1) MSHookFunction (Substrate/ElleKit)
+    void *ms = dlsym(RTLD_DEFAULT, "MSHookFunction");
+    if (ms) {
+        ((void(*)(void*,void*,void**))ms)(target, (void*)ckMySecTaskCopyValueForEntitlement,
+                                          (void**)&ckOrigSecTaskCopyValueForEntitlement);
+        if (ckOrigSecTaskCopyValueForEntitlement) {
+            void *targetWE = dlsym(RTLD_DEFAULT, "SecTaskCopyValueForEntitlementWithError");
+            if (targetWE) ((void(*)(void*,void*,void**))ms)(targetWE, (void*)ckMySecTaskCopyValueForEntitlementWithError,
+                                                            (void**)&ckOrigSecTaskCopyValueForEntitlementWithError);
+            mfLog(@"[ckwarm] engine=MSHookFunction installed");
+            return YES;
+        }
+    }
+    // 2) Dobby
+    void *db = dlsym(RTLD_DEFAULT, "DobbyHook");
+    if (db) {
+        // Dobby: int DobbyHook(void *address, void *replacement, void **out_original)
+        if (((int(*)(void*,void*,void**))db)(target, (void*)ckMySecTaskCopyValueForEntitlement,
+                                             (void**)&ckOrigSecTaskCopyValueForEntitlement) == 0) {
+            mfLog(@"[ckwarm] engine=DobbyHook installed");
+            return YES;
+        }
+    }
+    // 3) GOT 指针扫描（无引擎依赖）
+    if (ckPatchGOTViaScan()) {
+        ckOrigSecTaskCopyValueForEntitlement = (void *)target;  // 记录原址供透传（扫描模式下 orig=真函数）
+        mfLog(@"[ckwarm] engine=GOT-scan installed");
+        return YES;
+    }
+    mfLog(@"[ckwarm] all engines failed (ms=%p db=%p)", ms, db);
+    return NO;
+}
+
 static NSArray *mfReadICloudContainerEntitlement(void) {
     @try {
         SecTaskRef task = SecTaskCreateFromSelf(kCFAllocatorDefault);
@@ -435,27 +522,12 @@ void mfCloudKitWarmupStart(void) {
     g_ckWarmContainerID = [containers[0] copy];
     mfLog(@"[ckwarm] entitlement cid=%@ — warming CK once on bg queue", g_ckWarmContainerID);
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        // v2.6.86: 先装 services 补丁 hook（必须在 dlopen/首调 CK 前就位），再触发 once
-        if (!ckOrigSecTaskCopyValueForEntitlement) {
-            void *ms = dlsym(RTLD_DEFAULT, "MSHookFunction");
-            void *target = dlsym(RTLD_DEFAULT, "SecTaskCopyValueForEntitlement");
-            void *targetWE = dlsym(RTLD_DEFAULT, "SecTaskCopyValueForEntitlementWithError");
-            if (ms && target) {
-                ((void(*)(void*,void*,void**))ms)(target, (void*)ckMySecTaskCopyValueForEntitlement,
-                                                  (void**)&ckOrigSecTaskCopyValueForEntitlement);
-                mfLog(@"[ckwarm] SecTask hook installed (MSHookFunction)");
-                if (targetWE) {
-                    ((void(*)(void*,void*,void**))ms)(targetWE, (void*)ckMySecTaskCopyValueForEntitlementWithError,
-                                                      (void**)&ckOrigSecTaskCopyValueForEntitlementWithError);
-                    mfLog(@"[ckwarm] SecTask WithError hook installed");
-                }
-            } else {
-                mfLog(@"[ckwarm] no hook engine (ms=%p target=%p) — CK calls stay guarded", ms, target);
-                // 无 hook 引擎：保持 g_ckWarmDone=NO，查询页走"预热中"降级，绝不裸调 CK
-                return;
-            }
+        // v2.6.87: 三层引擎装 services 补丁 hook（必须在 dlopen/首调 CK 前就位）
+        if (!ckInstallServicesPatch()) {
+            mfLog(@"[ckwarm] hook install failed — CK stays guarded (query page will show retry)");
+            return;
         }
-        // dlopen 让 CK framework 就绪，defaultContainer 触发 once（此时校验已读到注入的 CloudKit service）
+        // dlopen 让 CK framework 就绪，defaultContainer 触发 once（此时校验已读到补全的 services）
         void *h = dlopen("/System/Library/Frameworks/CloudKit.framework/CloudKit", RTLD_LAZY);
         mfLog(@"[ckwarm] dlopen CloudKit = %p", h);
         Class ck = NSClassFromString(@"CKContainer");
