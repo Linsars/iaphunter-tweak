@@ -394,6 +394,7 @@ static volatile BOOL g_ckWarmDone = NO;     // once 预热完成
 static NSString *g_ckWarmContainerID = nil; // SecTask 读到的真容器 ID
 static volatile BOOL g_ckHookInstalled = NO;
 static volatile BOOL g_ckEntQueried = NO;   // my wrapper 是否被 CK 调用过
+static NSString *g_ckExtraContainerID = nil; // v2.6.98: 自定义查询目标容器（注入 container-identifiers 白名单）
 
 // v2.6.93: ck 日志落盘——trap 崩溃进程时 hostlog 内存缓冲全丢，落盘才能拿到死前现场
 static void ckLog(NSString *fmt, ...) NS_FORMAT_FUNCTION(1,2);
@@ -477,6 +478,19 @@ static CFDictionaryRef ckMySecTaskCopyValuesForEntitlements(SecTaskRef task, CFA
                     [s addObject:@"CloudKit"];
                     [m setObject:s forKey:ks];
                     ckLog(@"services COMPLETED via plural API: %@ → %@", services, s);
+                    return CFBridgingRetain(m);
+                }
+            }
+            // v2.6.98: 跨容器查询——containerWithIdentifier: 白名单检查读这个 key，
+            // 追加自定义查询目标容器（追加而非伪造：原声明保留，通用规则=有容器声明即可加查其他容器）
+            if ([ks isEqualToString:@"com.apple.developer.icloud-container-identifiers"] && g_ckExtraContainerID.length) {
+                NSArray *cids = [(__bridge NSDictionary *)d objectForKey:ks];
+                if ([cids isKindOfClass:[NSArray class]] && ![cids containsObject:g_ckExtraContainerID]) {
+                    NSMutableDictionary *m = [(__bridge NSDictionary *)d mutableCopy];
+                    NSMutableArray *c = [cids mutableCopy];
+                    [c addObject:g_ckExtraContainerID];
+                    [m setObject:c forKey:ks];
+                    ckLog(@"container-identifiers INJECTED: %@ → %@", cids, c);
                     return CFBridgingRetain(m);
                 }
             }
@@ -1003,7 +1017,8 @@ void mfCKCustomQueryFromButton(UIButton *btn) {
     NSString *cid = (cidF.text ?: @"");
     cid = [cid stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
     if (!cid.length) { mfToast(@"先输入容器 ID"); return; }
-    mfKLog(@"custom query START: %@", cid);
+    g_ckExtraContainerID = cid;   // v2.6.98: 让 hook 把这个容器注入白名单
+    mfKLog(@"custom query START: %@ (extraContainer injected)", cid);
     res.text = @"⏳ 查询中...";
     res.textColor = [UIColor secondaryLabelColor];
     // 卡片加高给结果区留位（v2.6.97: 之前结果在卡片外不可见）
