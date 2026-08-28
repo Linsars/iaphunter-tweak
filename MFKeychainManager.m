@@ -6,6 +6,7 @@
 #import <Security/Security.h>
 #import <CloudKit/CloudKit.h>
 #import <dlfcn.h>
+#import <objc/message.h>
 #import "MFPanel.h"
 #import "LSApplicationProxy.h"
 
@@ -375,18 +376,76 @@ static NSArray *mfGetFrontmostAppContainerIdentifiers(NSString **outBundleID, NS
     }
 }
 
-// v2.6.84 修复：所有"读 entitlements / 解析 mobileprovision / 推 ID"全是胡扯。tweak 注入下
-// 拿不到宿主 app 的真 entitlements（SecTask 拿 tweak 自己的；mobileprovision 在 iOS 17 生产分发
-// 里大概率 stripped；defaultContainer.containerIdentifier 推的是合法格式但 server 不认的假 ID）。
-//
-// 学 iCloudID.dylib（用户提供的 ref impl）——不读 entitlements、不预检 ID、不验 server。
-// 只做：defaultContainer → fetchUserRecordIDWithCompletionHandler → 拿啥显啥。
-// recordName 是 framework 默认（不一定对应真 server ID），但能稳定出 UIAlert，不会闪退。
-// error 直接显示给用户（v2.6.82 那个 iCloud.com.scripting.ios + server 拒的真实原因由 user 自己看）。
+// ====== v2.6.85 CK 启动预热（本质修法）======
+// 三次 SIGTRAP(CK+0x9e89c) 逐字复盘的结论：崩点全在 CloudKit 进程级 dispatch_once 初始化块内。
+// - app 自己链接 CloudKit（Scripting/Files 等）→ dyld 加载时 once 已跑 → tweak 任何时候调都安全
+// - app 不链接 CloudKit（Picsew, icloud-services=CloudDocuments 走的是 iCloud Drive 不是 CK）→
+//   tweak 点按钮时才首次 dlopen+调 CK → once 运行中途触发 → 时序不对 → trap
+// 修法：app 启动早期（ctor）在有 iCloud entitlement 的进程里预热 CK once。
+// 实测锚点：SecTask 读 entitlements 是准的（插件读出列表与外部 plist 一致）。
+static volatile BOOL g_ckWarmDone = NO;     // once 预热完成
+static NSString *g_ckWarmContainerID = nil; // SecTask 读到的真容器 ID
+
+static NSArray *mfReadICloudContainerEntitlement(void) {
+    @try {
+        SecTaskRef task = SecTaskCreateFromSelf(kCFAllocatorDefault);
+        if (!task) return nil;
+        CFTypeRef ref = SecTaskCopyValueForEntitlement(task,
+            (__bridge CFStringRef)@"com.apple.developer.icloud-container-identifiers", NULL);
+        CFRelease(task);
+        if (!ref) return nil;
+        NSArray *arr = (__bridge_transfer NSArray *)ref;
+        return ([arr isKindOfClass:[NSArray class]] && arr.count > 0) ? arr : nil;
+    } @catch (NSException *e) { return nil; }
+}
+
+void mfCloudKitWarmupStart(void) {
+    NSArray *containers = mfReadICloudContainerEntitlement();
+    if (!containers) {
+        mfLog(@"[ckwarm] no icloud entitlement in this app — skip warmup");
+        g_ckWarmDone = YES;  // 无 entitlement 也标记完成，查询页直接显示降级
+        return;
+    }
+    g_ckWarmContainerID = [containers[0] copy];
+    mfLog(@"[ckwarm] entitlement cid=%@ — warming CK once on bg queue", g_ckWarmContainerID);
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        // dlopen 让 CK framework initializer 尽早跑（对齐 dyld 正常加载时机）
+        void *h = dlopen("/System/Library/Frameworks/CloudKit.framework/CloudKit", RTLD_LAZY);
+        mfLog(@"[ckwarm] dlopen CloudKit = %p", h);
+        // 触发进程级 once：defaultContainer 是 iCloudID.dylib 成品用的同款首调
+        Class ck = NSClassFromString(@"CKContainer");
+        if (ck) {
+            ((id(*)(id,SEL))objc_msgSend)((id)ck, NSSelectorFromString(@"defaultContainer"));
+        }
+        g_ckWarmDone = YES;
+        mfLog(@"[ckwarm] done (survived) cid=%@", g_ckWarmContainerID);
+    });
+}
+
+BOOL mfCloudKitWarmReady(void) { return g_ckWarmDone; }
+
+// 核心查询函数：查单个容器的 Record ID 并回调
+// v2.6.85：前提 = ctor 已预热 once。未预热完成时拒绝调用（防 trap）。
+// 真 ID 优先（SecTask entitlement），无则 defaultContainer。
 static void mfQueryRecordIDForContainer(NSString *containerIdentifier,
                                          void (^completion)(NSString *recordName, NSError *error)) {
+    if (!g_ckWarmDone) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            completion(nil, [NSError errorWithDomain:@"MFCloudKit" code:-2 userInfo:@{NSLocalizedDescriptionKey: @"⏳ CloudKit 预热中，请重开本页重试"}]);
+        });
+        return;
+    }
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        CKContainer *container = [CKContainer defaultContainer];
+        // once 已在启动时跑过 → 这里调用安全（Scripting app 实测锚点：once 完成后 tweak 调 CK 无 trap）
+        // 无 entitlement 的 app（g_ckWarmContainerID=nil）：once 从未预热 → 碰 CK 必 trap，硬降级
+        if (!g_ckWarmContainerID) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                completion(nil, [NSError errorWithDomain:@"MFCloudKit" code:-3 userInfo:@{NSLocalizedDescriptionKey: @"🚫 该 App 未声明 iCloud 容器 entitlement"}]);
+            });
+            return;
+        }
+        CKContainer *container = [CKContainer containerWithIdentifier:g_ckWarmContainerID];
+        if (!container) container = [CKContainer defaultContainer];
         [container fetchUserRecordIDWithCompletionHandler:^(CKRecordID *recordID, NSError *error) {
             dispatch_async(dispatch_get_main_queue(), ^{
                 if (!error && recordID) {

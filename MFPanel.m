@@ -2163,7 +2163,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define IAPTOOLS_VERSION @"2.6.84"
+#define IAPTOOLS_VERSION @"2.6.85"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {
@@ -2189,6 +2189,9 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
         if (mfPrefBool(@"mfHostLogEnabled", NO)) {
             mfHostLogStart();
         }
+        // v2.6.85: CloudKit once 预热——有 iCloud entitlement 的 app 启动时后台预热 CK
+        // （点按钮时才首调 CK = once 运行中途触发 = SIGTRAP @ CK+0x9e89c，三次复现实锤）
+        mfCloudKitWarmupStart();
         // 实时捕获(v2.2.8):默认 OFF;用户开过则持久化,冷启动即装协议——
         // 解决"启动后才开开关截不到老会话"(v2.0.2 一刀切留下的坑)
         if (mfPrefBool(@"mfCaptureEnabled", NO)) {

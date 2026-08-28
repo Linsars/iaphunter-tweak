@@ -177,6 +177,8 @@ void mfSK1AutoStart(void);   // 冷启动自动应用   // v2.6.47 页面内表�
 void mfObjCHookToggle(UISwitch *sw);
 void mfObjCHookEditTappedFromView(UIView *row);   // v2.6.79 点 cell 编辑
 void mfObjCHookSwipeDelFromView(UIView *row);     // v2.6.79 左滑删除
+void mfCloudKitWarmupStart(void);                 // v2.6.85 CK once 启动预热
+BOOL mfCloudKitWarmReady(void);
 void mfShowSelectorLocatorPage(void);      // v2.6.71 方法定位器页
 void mfRunSelectorLocatorFromButton(UIButton *btn);
 void mfShowDefaultsBrowserPage(void);      // v2.6.76 Defaults 浏览器
