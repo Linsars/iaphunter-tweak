@@ -977,10 +977,10 @@ void mfShowNetworkModifyPage(void) {
         }
     }
     // 🔧 ObjC 规则入口(精确 hook, 与网络规则统一范式) — 取代已废除的方法监控
-    mfRowButton(sv, 12, y + 4, g_mfCardW - 24, 38, @"🔧 管理 ObjC 方法 Hook 规则", [UIColor systemIndigoColorColor], NSSelectorFromString(@"mfShowMethodTracePage"));
+    mfRowButton(sv, 12, y + 4, g_mfCardW - 24, 38, @"🔧 管理 ObjC 方法 Hook 规则", [UIColor systemIndigoColor], NSSelectorFromString(@"mfShowMethodTracePage"));
     y += 46;
     // 添加规则按钮
-    mfRowButton(sv, 12, y + 4, g_mfCardW - 24, 38, @"+ 添加规则", [UIColor systemBlueColorColor], NSSelectorFromString(@"mfAddRuleTapped"));
+    mfRowButton(sv, 12, y + 4, g_mfCardW - 24, 38, @"+ 添加规则", [UIColor systemBlueColor], NSSelectorFromString(@"mfAddRuleTapped"));
     y += 46;
     sv.contentSize = CGSizeMake(g_mfCardW, y + 16);
     [page addSubview:sv];
@@ -1100,9 +1100,9 @@ void mfShowRuleManagerPage(void) {
     [page addSubview:tv];
 
     // 添加规则按钮（固定在底部）
-    mfRowButton(page, 12, g_mfCardH - 108, g_mfCardW - 24, 40, @"🔧 管理 ObjC 方法 Hook 规则", [UIColor systemIndigoColorColor], NSSelectorFromString(@"mfShowMethodTracePage"));
+    mfRowButton(page, 12, g_mfCardH - 108, g_mfCardW - 24, 40, @"🔧 管理 ObjC 方法 Hook 规则", [UIColor systemIndigoColor], NSSelectorFromString(@"mfShowMethodTracePage"));
 
-    mfRowButton(page, 12, g_mfCardH - 60, g_mfCardW - 24, 40, @"+ 添加规则", [UIColor systemBlueColorColor], NSSelectorFromString(@"mfAddRuleTapped"));
+    mfRowButton(page, 12, g_mfCardH - 60, g_mfCardW - 24, 40, @"+ 添加规则", [UIColor systemBlueColor], NSSelectorFromString(@"mfAddRuleTapped"));
 
     mfPushPage(page);
 }
