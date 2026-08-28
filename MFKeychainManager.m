@@ -394,7 +394,6 @@ static volatile BOOL g_ckWarmDone = NO;     // once 预热完成
 static NSString *g_ckWarmContainerID = nil; // SecTask 读到的真容器 ID
 static volatile BOOL g_ckHookInstalled = NO;
 static volatile BOOL g_ckEntQueried = NO;   // my wrapper 是否被 CK 调用过
-static NSString *g_ckExtraContainerID = nil; // v2.6.98: 自定义查询目标容器（注入 container-identifiers 白名单）
 
 // v2.6.93: ck 日志落盘——trap 崩溃进程时 hostlog 内存缓冲全丢，落盘才能拿到死前现场
 static void ckLog(NSString *fmt, ...) NS_FORMAT_FUNCTION(1,2);
@@ -478,19 +477,6 @@ static CFDictionaryRef ckMySecTaskCopyValuesForEntitlements(SecTaskRef task, CFA
                     [s addObject:@"CloudKit"];
                     [m setObject:s forKey:ks];
                     ckLog(@"services COMPLETED via plural API: %@ → %@", services, s);
-                    return CFBridgingRetain(m);
-                }
-            }
-            // v2.6.98: 跨容器查询——containerWithIdentifier: 白名单检查读这个 key，
-            // 追加自定义查询目标容器（追加而非伪造：原声明保留，通用规则=有容器声明即可加查其他容器）
-            if ([ks isEqualToString:@"com.apple.developer.icloud-container-identifiers"] && g_ckExtraContainerID.length) {
-                NSArray *cids = [(__bridge NSDictionary *)d objectForKey:ks];
-                if ([cids isKindOfClass:[NSArray class]] && ![cids containsObject:g_ckExtraContainerID]) {
-                    NSMutableDictionary *m = [(__bridge NSDictionary *)d mutableCopy];
-                    NSMutableArray *c = [cids mutableCopy];
-                    [c addObject:g_ckExtraContainerID];
-                    [m setObject:c forKey:ks];
-                    ckLog(@"container-identifiers INJECTED: %@ → %@", cids, c);
                     return CFBridgingRetain(m);
                 }
             }
@@ -689,33 +675,6 @@ static void ckSelfTestPluralAPI(void) {
     }
 }
 
-// v2.6.93: 用户自愿的强制触发（可能 trap 闪退，但 ckLog 已落盘，死后现场可查）
-void mfCKForceTrigger(void) {
-    ckLog(@"=== FORCE TRIGGER requested by user ===");
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        ckLog(@"force: dlopen + defaultContainer firing");
-        void *h = dlopen("/System/Library/Frameworks/CloudKit.framework/CloudKit", RTLD_LAZY);
-        ckLog(@"force: dlopen = %p", h);
-        Class ck = NSClassFromString(@"CKContainer");
-        if (ck) ((id(*)(id,SEL))objc_msgSend)((id)ck, NSSelectorFromString(@"defaultContainer"));
-        g_ckWarmDone = YES;
-        ckLog(@"force: SURVIVED once trigger — hook path works!");
-    });
-}
-
-// v2.6.93: 读落盘日志（面板展示用）
-NSString *mfCKReadLog(void) {
-    NSString *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
-    NSString *p = [docs stringByAppendingPathComponent:@"minisfix_ck.log"];
-    return [NSString stringWithContentsOfFile:p encoding:NSUTF8StringEncoding error:NULL] ?: @"(无日志)";
-}
-
-// v2.6.93: 日志按钮 → 复制到剪贴板
-void mfCKShowLogTapped(void) {
-    [[UIPasteboard generalPasteboard] setString:mfCKReadLog()];
-    mfToast(@"📄 CK 日志已复制到剪贴板");
-}
-
 static NSArray *mfReadICloudContainerEntitlement(void) {
     @try {
         SecTaskRef task = SecTaskCreateFromSelf(kCFAllocatorDefault);
@@ -760,7 +719,7 @@ void mfCloudKitWarmupStart(void) {
         }
         g_ckHookInstalled = YES;
         if (!appUsesCK) {
-            // 不触发 once（trap 风险）。自测补全链路 + 落盘，等用户自愿点「强制触发」拿死前现场
+            // 不触发 once（trap 风险）。自测补全链路 + 落盘，日志可查
             ckSelfTestPluralAPI();
             ckLog(@"guarded mode: once NOT fired. Use ⚠️ force-trigger for the deadly experiment (log survives crash).");
             return;
@@ -860,26 +819,6 @@ static void mfShowICloudIDListPage(NSString *bundleID, NSString *appName, NSArra
     [sv addSubview:sectionTitle];
     y += 28;
 
-    // v2.6.93: 诊断按钮行（落盘日志 + 自愿强制触发）
-    UIButton *logBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    logBtn.frame = CGRectMake(12, y, (g_mfCardW - 36) / 2, 34);
-    logBtn.backgroundColor = [UIColor tertiarySystemBackgroundColor];
-    logBtn.layer.cornerRadius = 8;
-    [logBtn setTitle:@"📄 CK 日志" forState:UIControlStateNormal];
-    logBtn.titleLabel.font = [UIFont systemFontOfSize:12];
-    [logBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfCKShowLogTapped") forControlEvents:UIControlEventTouchUpInside];
-    [sv addSubview:logBtn];
-    UIButton *forceBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    forceBtn.frame = CGRectMake(12 + (g_mfCardW - 36) / 2 + 12, y, (g_mfCardW - 36) / 2, 34);
-    forceBtn.backgroundColor = [UIColor systemOrangeColor];
-    forceBtn.layer.cornerRadius = 8;
-    [forceBtn setTitle:@"⚠️ 强制触发(可能崩)" forState:UIControlStateNormal];
-    forceBtn.tintColor = UIColor.whiteColor;
-    forceBtn.titleLabel.font = [UIFont systemFontOfSize:12];
-    [forceBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfCKForceTriggerTapped") forControlEvents:UIControlEventTouchUpInside];
-    [sv addSubview:forceBtn];
-    y += 42;
-    
     // KVS 状态行（如果声明了 ubiquity-kvstore）
     if (hasKVS) {
         UIView *kvsCell = [[UIView alloc] initWithFrame:CGRectMake(12, y, g_mfCardW - 24, 56)];
@@ -964,101 +903,7 @@ static void mfShowICloudIDListPage(NSString *bundleID, NSString *appName, NSArra
         });
     }
 
-    // v2.6.96: 自定义容器查询——平台墙后唯一合理路径：
-    // recordName 是 per-container 的，在有 CloudKit 权限的进程（appUsesCK=YES，once 已过）里
-    // 用 containerWithIdentifier: 指定其他 app 的容器 ID，server 返回该 container 的当前用户 record
-    // = 目标 app 内查询会返回的同一个值（同 Apple ID 同 container）。
-    UIView *customCard = [[UIView alloc] initWithFrame:CGRectMake(12, y + 10, g_mfCardW - 24, 150)];
-    customCard.backgroundColor = [UIColor tertiarySystemBackgroundColor];
-    customCard.layer.cornerRadius = 8;
-    UILabel *cTitle = [[UILabel alloc] initWithFrame:CGRectMake(10, 6, g_mfCardW - 44, 18)];
-    cTitle.text = @"🎯 自定义容器查询（查其他 App 的 iCloud ID）";
-    cTitle.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
-    cTitle.textColor = [UIColor labelColor];
-    [customCard addSubview:cTitle];
-    UITextField *cidF = [[UITextField alloc] initWithFrame:CGRectMake(10, 30, g_mfCardW - 44, 32)];
-    cidF.placeholder = @"容器 ID 或 bundleID（自动加 iCloud. 前缀）";
-    cidF.font = [UIFont systemFontOfSize:12];
-    cidF.borderStyle = UITextBorderStyleRoundedRect;
-    cidF.autocorrectionType = UITextAutocorrectionTypeNo;
-    cidF.autocapitalizationType = UITextAutocapitalizationTypeNone;
-    [customCard addSubview:cidF];
-    UIButton *qBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    qBtn.frame = CGRectMake(10, 68, g_mfCardW - 44, 32);
-    qBtn.backgroundColor = [UIColor systemBlueColor];
-    qBtn.layer.cornerRadius = 8;
-    [qBtn setTitle:@"🔍 查询该容器的 Record ID" forState:UIControlStateNormal];
-    qBtn.tintColor = UIColor.whiteColor;
-    qBtn.titleLabel.font = [UIFont systemFontOfSize:12];
-    [customCard addSubview:qBtn];
-    UILabel *cRes = [[UILabel alloc] initWithFrame:CGRectMake(10, 104, g_mfCardW - 44, 40)];
-    cRes.font = [UIFont systemFontOfSize:11];
-    cRes.numberOfLines = 0;
-    objc_setAssociatedObject(customCard, "cidF", cidF, OBJC_ASSOCIATION_RETAIN);
-    objc_setAssociatedObject(customCard, "cRes", cRes, OBJC_ASSOCIATION_RETAIN);
-    objc_setAssociatedObject(qBtn, "card", customCard, OBJC_ASSOCIATION_RETAIN);
-    qBtn.tag = 771;
-    [qBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfCKCustomQueryTapped:") forControlEvents:UIControlEventTouchUpInside];
-    [sv addSubview:customCard];
-    y += 130;
-
     sv.contentSize = CGSizeMake(g_mfCardW, y + 40);
-}
-
-// v2.6.96: 自定义容器查询
-static UILabel *g_ckCustomRes = nil;
-void mfCKCustomQueryFromButton(UIButton *btn) {
-    UIView *card = objc_getAssociatedObject(btn, "card");
-    UITextField *cidF = objc_getAssociatedObject(card, "cidF");
-    UILabel *res = objc_getAssociatedObject(card, "cRes");
-    g_ckCustomRes = res;
-    // v2.6.97: 先收键盘
-    [cidF resignFirstResponder];
-    NSString *cid = (cidF.text ?: @"");
-    cid = [cid stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    if (!cid.length) { mfToast(@"先输入容器 ID 或 bundleID"); return; }
-    // v2.6.99: bundleID 自动转容器 ID——Apple 默认规范 = iCloud.<bundleID>
-    if (![cid hasPrefix:@"iCloud."]) {
-        NSString *autoCid = [@"iCloud." stringByAppendingString:cid];
-        mfKLog(@"custom query: %@ → auto容器 %@", cid, autoCid);
-        cid = autoCid;
-        cidF.text = autoCid;   // 回写输入框，用户可见转换结果
-    }
-    g_ckExtraContainerID = cid;   // v2.6.98: 让 hook 把这个容器注入白名单
-    mfKLog(@"custom query START: %@ (extraContainer injected)", cid);
-    res.text = @"⏳ 查询中...";
-    res.textColor = [UIColor secondaryLabelColor];
-    // 卡片加高给结果区留位（v2.6.97: 之前结果在卡片外不可见）
-    card.frame = CGRectMake(card.frame.origin.x, card.frame.origin.y, card.frame.size.width, 150);
-    __block UIView *cardRef = card;
-    mfQueryRecordIDForContainer(cid, ^(NSString *recordName, NSError *error) {
-        UILabel *lbl = g_ckCustomRes;
-        if (!lbl) return;
-        if (error) {
-            lbl.text = [NSString stringWithFormat:@"❌ %@", error.localizedDescription ?: @"查询失败"];
-            lbl.textColor = [UIColor systemRedColor];
-            mfToast([NSString stringWithFormat:@"❌ %@", error.localizedDescription ?: @"查询失败"]);
-            mfKLog(@"custom query ERROR: %@ — %@", cid, error);
-        } else if (recordName) {
-            lbl.text = [NSString stringWithFormat:@"🔑 %@（已复制到剪贴板）", recordName];
-            lbl.textColor = [UIColor systemGreenColor];
-            [[UIPasteboard generalPasteboard] setString:recordName];   // v2.6.97: 直接复制
-            mfToast([NSString stringWithFormat:@"🔑 已复制: %@", recordName]);
-            mfKLog(@"custom query OK: %@ — %@", cid, recordName);
-        } else {
-            lbl.text = @"⚠️ 未返回 Record ID";
-            lbl.textColor = [UIColor systemOrangeColor];
-        }
-        CGSize fit = [lbl sizeThatFits:CGSizeMake(lbl.frame.size.width, CGFLOAT_MAX)];
-        lbl.frame = CGRectMake(10, 104, lbl.frame.size.width, fit.height + 4);
-        cardRef.frame = CGRectMake(cardRef.frame.origin.x, cardRef.frame.origin.y, cardRef.frame.size.width, MAX(150, 104 + fit.height + 12));
-    });
-}
-void mfCKCopyCustomResultFromLabel(UILabel *lbl) {
-    NSString *rid = objc_getAssociatedObject(lbl, "rid");
-    if (!rid) return;
-    [[UIPasteboard generalPasteboard] setString:rid];
-    mfToast(@"✅ 已复制 Record ID");
 }
 
 // iCloud Record ID 复制 (从列表页点击 cell) - 导出函数

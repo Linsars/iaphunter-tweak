@@ -245,14 +245,6 @@ static void mfRecordCapture(MFNetRecord *rec) {
         }
     }
     
-    // JS onRequestHeaders 钩子（规则脚本改请求 headers）
-    NSDictionary *jsHeaders = mfJSRunRequestHeaders(req.HTTPMethod, req.URL.absoluteString, req.allHTTPHeaderFields);
-    if (jsHeaders) {
-        [req setAllHTTPHeaderFields:jsHeaders];
-        self.record.reqHeaders = jsHeaders;
-        mfLog(@"JS: request headers rewritten (%lu headers)", (unsigned long)jsHeaders.count);
-    }
-
     // 转发请求
     NSURLSessionConfiguration *cfg = [NSURLSessionConfiguration defaultSessionConfiguration];
     self.session = [NSURLSession sessionWithConfiguration:cfg delegate:self delegateQueue:nil];
@@ -276,18 +268,8 @@ static void mfRecordCapture(MFNetRecord *rec) {
         self.record.respHeaders = httpResp.allHeaderFields;
         self.record.mimeType = httpResp.MIMEType;
 
-        // JS onResponseHeaders 钩子（规则脚本改响应 headers）
-        NSDictionary *jsRespHeaders = mfJSRunResponseHeaders(httpResp.statusCode, httpResp.URL.absoluteString, httpResp.allHeaderFields);
         NSHTTPURLResponse *outResp = httpResp;
         NSDictionary *outHeaders = httpResp.allHeaderFields;
-        if (jsRespHeaders) {
-            outHeaders = jsRespHeaders;
-            outResp = [[NSHTTPURLResponse alloc] initWithURL:httpResp.URL
-                                                   statusCode:httpResp.statusCode
-                                                  HTTPVersion:@"HTTP/1.1"
-                                                 headerFields:jsRespHeaders];
-            mfLog(@"JS: response headers rewritten");
-        }
 
         // 响应侧增强规则（direction + reject + 四象限）
         NSData *replBody = nil;
@@ -663,7 +645,6 @@ void mfShowDataAnalysisPage(void) {
     gy = mfGridButton(page, 16, gy, gw, @"ObjC 规则", @"🔧", @selector(mfShowMethodTracePage), NO, nil);
     gy = mfGridButton(page, 16 + gw + 12, gy - 92, gw, @"ClassDump", @"📦", @selector(mfShowClassDumpPage), NO, nil);
     gy = mfGridButton(page, 16, gy, gw, @"Keychain 管理", @"🔑", @selector(mfShowKeychainManagerPage), NO, nil);
-    gy = mfGridButton(page, 16 + gw + 12, gy - 92, gw, @"安全扫描", @"🛡️", @selector(mfShowSecurityScanPage), NO, nil);
     gy = mfGridButton(page, 16, gy, gw, @"MachO 深检", @"🔬", @selector(mfShowMachODeepPage), NO, nil);
     // v2.6.21: 实时日志/电池详情 提升到主页
     mfPushPage(page);

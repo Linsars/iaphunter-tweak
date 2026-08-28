@@ -1355,7 +1355,6 @@ void mfShowProductPage(void) {
 - (void)mfShowRestorePromptAction { mfShowRestorePromptAction(); }
 - (void)mfFetchCloudKitRecordIDAuto { mfFetchCloudKitRecordIDAuto(); }
 // 诊断（MFDiagnostics.m）
-- (void)mfShowSecurityScanPage { mfShowSecurityScanPage(); }
 - (void)mfShowMachODeepPage { mfShowMachODeepPage(); }
 - (void)mfShowNetAnalyzerPage { mfShowNetAnalyzerPage(); }
 - (void)mfShowRuleManagerPage { mfShowRuleManagerPage(); }
@@ -1376,19 +1375,6 @@ void mfShowProductPage(void) {
 - (void)mfObjCHookDelTapped:(UIButton *)b { mfObjCHookDelTapped(b); }
 - (void)mfObjCHookEditTapped:(UIView *)row { mfObjCHookEditTappedFromView(row); }
 - (void)mfObjCHookSwipeDel:(UIView *)row { mfObjCHookSwipeDelFromView(row); }
-- (void)mfCKForceTriggerTapped { mfCKForceTrigger(); }
-- (void)mfCKShowLogTapped { mfCKShowLogTapped(); }
-- (void)mfCKCustomQueryTapped:(UIButton *)btn { mfCKCustomQueryFromButton(btn); }
-- (void)mfCKCopyCustomResult:(UILabel *)lbl { mfCKCopyCustomResultFromLabel(lbl); }
-- (void)mfNetRun:(UIButton *)btn {
-    btn.enabled = NO;
-    NSString *kind = objc_getAssociatedObject(btn, "kind");
-    mfNetAnalyzerRun(kind, btn);
-}
-- (void)mfSecScanRun:(UIButton *)btn {
-    btn.enabled = NO;
-    mfSecurityScanRun(btn.tag, btn);
-}
 - (void)mfMachORun:(UIButton *)btn {
     btn.enabled = NO;
     NSString *kind = objc_getAssociatedObject(btn, "kind");
@@ -2167,7 +2153,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define IAPTOOLS_VERSION @"2.6.99"
+#define IAPTOOLS_VERSION @"2.7.0"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {

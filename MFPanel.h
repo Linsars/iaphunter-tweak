@@ -76,11 +76,6 @@ void mfDoRestoreFromPageButton(UIButton *btn);          // 恢复页：执行恢
 void mfKbSaveAndDismissFromBar(UIBarButtonItem *item);  // 键盘工具条：保存并收起
 void mfKbDismissKeyboardFromBar(UIBarButtonItem *item); // 键盘工具条：收起
 
-// ====== JS 规则引擎（MFJSRules.m） ======
-BOOL mfJSLoadScript(NSString *script);
-NSDictionary *mfJSRunRequestHeaders(NSString *method, NSString *url, NSDictionary *headers);
-NSDictionary *mfJSRunResponseHeaders(int status, NSString *url, NSDictionary *headers);
-
 // ====== 捕获数据模型 ======
 @interface MFNetRecord : NSObject
 @property (copy) NSString *url;
@@ -138,10 +133,8 @@ void mfShowCDHistoryPage(void);                                // 历史 dump �
 void mfShowCDFilePage(NSString *zipPath, NSString *entry);     // 单文件查看 + 文内搜索
 
 // ====== 诊断（MFDiagnostics.m） ======
-void mfShowSecurityScanPage(void);        // 安全扫描八连扫
 void mfShowMachODeepPage(void);           // MachO 深检
 void mfShowTextReportPage(NSString *title, NSString *text, NSString *exportName); // 通用文本报告页
-void mfSecurityScanRun(int idx, UIButton *btn); // idx=-1 全扫
 NSString *mfMachOSections(void);
 NSString *mfMachODylibs(void);
 NSString *mfMachOStrings(void);
@@ -179,11 +172,6 @@ void mfObjCHookEditTappedFromView(UIView *row);   // v2.6.79 点 cell 编辑
 void mfObjCHookSwipeDelFromView(UIView *row);     // v2.6.79 左滑删除
 void mfCloudKitWarmupStart(void);                 // v2.6.85 CK once 启动预热
 BOOL mfCloudKitWarmReady(void);
-void mfCKForceTrigger(void);                      // v2.6.93 用户自愿强制触发（可能 trap，日志落盘）
-NSString *mfCKReadLog(void);                      // v2.6.93 读落盘 ck 日志
-void mfCKShowLogTapped(void);                     // v2.6.93 日志复制到剪贴板
-void mfCKCustomQueryFromButton(UIButton *btn);    // v2.6.96 自定义容器查询
-void mfCKCopyCustomResultFromLabel(UILabel *lbl);
 void mfShowSelectorLocatorPage(void);      // v2.6.71 方法定位器页
 void mfRunSelectorLocatorFromButton(UIButton *btn);
 void mfShowDefaultsBrowserPage(void);      // v2.6.76 Defaults 浏览器
@@ -193,7 +181,6 @@ void mfObjCHookPersist(NSString *cls, NSString *sel, int mode, id val);
 
 // ====== 网络分析（MFNetAnalyzer.m） ======
 void mfShowNetAnalyzerPage(void);           // 网络功能统一入口（含捕获开关）
-void mfNetAnalyzerRun(NSString *kind, UIButton *btn); // 分发到具体扫描
 BOOL mfCaptureEnabledState(void);           // 定义在 MFNetworkCapture.m
 NSArray *mfCapturedRecordsSnapshot(void);   // 捕获缓冲只读快照，同上
 void mfShowRuleManagerPage(void);           // 规则管理（拦截/改包）
