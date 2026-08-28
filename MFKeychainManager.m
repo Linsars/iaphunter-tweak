@@ -954,7 +954,7 @@ static void mfShowICloudIDListPage(NSString *bundleID, NSString *appName, NSArra
     // recordName 是 per-container 的，在有 CloudKit 权限的进程（appUsesCK=YES，once 已过）里
     // 用 containerWithIdentifier: 指定其他 app 的容器 ID，server 返回该 container 的当前用户 record
     // = 目标 app 内查询会返回的同一个值（同 Apple ID 同 container）。
-    UIView *customCard = [[UIView alloc] initWithFrame:CGRectMake(12, y + 10, g_mfCardW - 24, 108)];
+    UIView *customCard = [[UIView alloc] initWithFrame:CGRectMake(12, y + 10, g_mfCardW - 24, 150)];
     customCard.backgroundColor = [UIColor tertiarySystemBackgroundColor];
     customCard.layer.cornerRadius = 8;
     UILabel *cTitle = [[UILabel alloc] initWithFrame:CGRectMake(10, 6, g_mfCardW - 44, 18)];
@@ -977,7 +977,7 @@ static void mfShowICloudIDListPage(NSString *bundleID, NSString *appName, NSArra
     qBtn.tintColor = UIColor.whiteColor;
     qBtn.titleLabel.font = [UIFont systemFontOfSize:12];
     [customCard addSubview:qBtn];
-    UILabel *cRes = [[UILabel alloc] initWithFrame:CGRectMake(10, 104, g_mfCardW - 44, 0)];
+    UILabel *cRes = [[UILabel alloc] initWithFrame:CGRectMake(10, 104, g_mfCardW - 44, 40)];
     cRes.font = [UIFont systemFontOfSize:11];
     cRes.numberOfLines = 0;
     objc_setAssociatedObject(customCard, "cidF", cidF, OBJC_ASSOCIATION_RETAIN);
@@ -998,33 +998,41 @@ void mfCKCustomQueryFromButton(UIButton *btn) {
     UITextField *cidF = objc_getAssociatedObject(card, "cidF");
     UILabel *res = objc_getAssociatedObject(card, "cRes");
     g_ckCustomRes = res;
-    NSString *cid = cidF.text ?: @"";
+    // v2.6.97: 先收键盘
+    [cidF resignFirstResponder];
+    NSString *cid = (cidF.text ?: @"");
+    cid = [cid stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
     if (!cid.length) { mfToast(@"先输入容器 ID"); return; }
+    mfKLog(@"custom query START: %@", cid);
     res.text = @"⏳ 查询中...";
-    res.frame = CGRectMake(10, 104, card.frame.size.width - 20, 20);
+    res.textColor = [UIColor secondaryLabelColor];
+    // 卡片加高给结果区留位（v2.6.97: 之前结果在卡片外不可见）
+    card.frame = CGRectMake(card.frame.origin.x, card.frame.origin.y, card.frame.size.width, 150);
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [[card.superview invalidateIntrinsicContentSize] ?: nil];
+    });
+    __block UIView *cardRef = card;
     mfQueryRecordIDForContainer(cid, ^(NSString *recordName, NSError *error) {
         UILabel *lbl = g_ckCustomRes;
         if (!lbl) return;
         if (error) {
             lbl.text = [NSString stringWithFormat:@"❌ %@", error.localizedDescription ?: @"查询失败"];
             lbl.textColor = [UIColor systemRedColor];
+            mfToast([NSString stringWithFormat:@"❌ %@", error.localizedDescription ?: @"查询失败"]);
+            mfKLog(@"custom query ERROR: %@ — %@", cid, error);
         } else if (recordName) {
-            lbl.text = [NSString stringWithFormat:@"🔑 %@（点击复制）", recordName];
+            lbl.text = [NSString stringWithFormat:@"🔑 %@（已复制到剪贴板）", recordName];
             lbl.textColor = [UIColor systemGreenColor];
-            lbl.userInteractionEnabled = YES;
-            objc_setAssociatedObject(lbl, "rid", recordName, OBJC_ASSOCIATION_RETAIN);
-            UITapGestureRecognizer *tg = [[UITapGestureRecognizer alloc] initWithTarget:g_mfCtrl action:NSSelectorFromString(@"mfCKCopyCustomResult:")];
-            [lbl addGestureRecognizer:tg];
+            [[UIPasteboard generalPasteboard] setString:recordName];   // v2.6.97: 直接复制
+            mfToast([NSString stringWithFormat:@"🔑 已复制: %@", recordName]);
+            mfKLog(@"custom query OK: %@ — %@", cid, recordName);
         } else {
             lbl.text = @"⚠️ 未返回 Record ID";
             lbl.textColor = [UIColor systemOrangeColor];
         }
-        // 自适应高度
         CGSize fit = [lbl sizeThatFits:CGSizeMake(lbl.frame.size.width, CGFLOAT_MAX)];
         lbl.frame = CGRectMake(10, 104, lbl.frame.size.width, fit.height + 4);
-        // card 高度扩展
-        UIView *card2 = lbl.superview;
-        card2.frame = CGRectMake(card2.frame.origin.x, card2.frame.origin.y, card2.frame.size.width, MAX(108, 104 + fit.height + 12));
+        cardRef.frame = CGRectMake(cardRef.frame.origin.x, cardRef.frame.origin.y, cardRef.frame.size.width, MAX(150, 104 + fit.height + 12));
     });
 }
 void mfCKCopyCustomResultFromLabel(UILabel *lbl) {
