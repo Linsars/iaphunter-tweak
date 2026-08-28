@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
+#import "MFPanel.h"
 #import <dlfcn.h>
 
 // libroot 函数指针（动态加载）
