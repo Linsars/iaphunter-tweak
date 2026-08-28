@@ -8,7 +8,9 @@
 #import <dlfcn.h>
 #import <sys/mman.h>
 #import <mach-o/dyld.h>
+#import <mach-o/loader.h>
 #import <errno.h>
+#import <string.h>
 #import <objc/message.h>
 #import "fishhook.h"
 #import "MFPanel.h"
@@ -465,39 +467,48 @@ static BOOL ckPatchGOTViaScan(void) {
 
 // v2.6.90: ckPatchOutTrap 已移除——iOS 17 系统框架代码页受 PPL 保护，mprotect 表面成功但写入即 SIGSEGV（v2.6.89 全 app 崩实证）。
 // 代码页不可写，但 CK 的 GOT（__DATA_CONST 数据页）可写（fishhook 已实证）。
-// 新思路：不猜 API 名——枚举 CK 从 Security import 的所有 *Entitle* 符号（dladdr 反查），一次看清校验读的是什么。
+// v2.6.91 修复地址公式：shared cache 里 __TEXT.vmaddr ≠ 0，必须用 slide + vmaddr（v2.6.90 用 ckStart+vmaddr 读飞 → 全崩实证）
+// 同时把盲扫整个 __DATA 段改为只扫 __got/__auth_got 等 bind 槽 section（精确、快）
 static void ckDiagnoseEntitlementImports(void) {
     uint32_t cnt = _dyld_image_count();
-    uintptr_t secStart = 0, ckStart = 0;
+    uintptr_t secStart = 0;
+    intptr_t ckSlide = 0;
+    const struct mach_header *ckh = NULL;
     for (uint32_t i = 0; i < cnt; i++) {
         const char *nm = _dyld_get_image_name(i);
         if (!nm) continue;
-        const struct mach_header *h = _dyld_get_image_header(i);
-        if (!secStart && strstr(nm, "/Security")) secStart = (uintptr_t)h;
-        else if (!ckStart && strstr(nm, "CloudKit.framework/CloudKit")) ckStart = (uintptr_t)h;
+        if (!secStart && strstr(nm, "/Security")) secStart = (uintptr_t)_dyld_get_image_header(i);
+        else if (!ckh && strstr(nm, "CloudKit.framework/CloudKit")) {
+            ckh = _dyld_get_image_header(i);
+            ckSlide = _dyld_get_image_vmaddr_slide(i);
+        }
     }
-    if (!ckStart || !secStart) { mfLog(@"[ckdiag] ck=%p sec=%p not both found", (void*)ckStart, (void*)secStart); return; }
-    // 扫 CK __DATA* 段：槽值落在 Security __TEXT 范围 → dladdr 反查符号名 → 收集 Entitle*
+    if (!ckh || !secStart) { mfLog(@"[ckdiag] not both found (ck=%p sec=%p)", (void*)ckh, (void*)secStart); return; }
     NSMutableArray *found = [NSMutableArray new];
-    const struct mach_header *ckh = (const struct mach_header *)ckStart;
     uintptr_t cur = (uintptr_t)ckh + sizeof(struct mach_header_64);
     const struct load_command *lc = (const struct load_command *)cur;
     for (uint32_t i = 0; i < ckh->ncmds; i++, cur += lc->cmdsize, lc = (const struct load_command *)cur) {
         if (lc->cmd != 0x19) continue;
         const struct segment_command_64 *seg = (const struct segment_command_64 *)cur;
-        if (strncmp(seg->segname, "__DATA", 6) != 0) continue;
-        // 系统 __TEXT vmaddr=0 → 运行时地址 = ckStart + vmaddr
-        volatile uintptr_t *slots = (volatile uintptr_t *)(ckStart + seg->vmaddr);
-        uintptr_t n = seg->vmsize / 8;
-        for (uintptr_t k = 0; k < n; k++) {
-            uintptr_t v = slots[k];
-            if (v < secStart || v >= secStart + 0x400000) continue;
-            Dl_info info;
-            if (dladdr((void *)v, &info) && info.dli_sname) {
-                NSString *nm2 = [NSString stringWithUTF8String:info.dli_sname];
-                if ([nm2 containsString:@"ntitle"] && ![found containsObject:nm2]) {
-                    [found addObject:nm2];
-                    mfLog(@"[ckdiag] CK import: %@ (+%#llx)", nm2, (unsigned long long)k*8);
+        const struct section_64 *sects = (const struct section_64 *)(cur + sizeof(struct segment_command_64));
+        for (uint32_t s = 0; s < seg->nsects; s++) {
+            const struct section_64 *sec = &sects[s];
+            // 只扫 bind 槽 section
+            if (strcmp(sec->sectname, "__got") && strcmp(sec->sectname, "__auth_got") &&
+                strcmp(sec->sectname, "__nl_symbol_ptr") && strcmp(sec->sectname, "__la_symbol_ptr")) continue;
+            volatile uintptr_t *slots = (volatile uintptr_t *)(ckSlide + sec->addr);
+            uintptr_t n = sec->size / 8;
+            if (n > 100000) continue;  // 防御
+            for (uintptr_t k = 0; k < n; k++) {
+                uintptr_t v = slots[k];
+                if (v < secStart || v >= secStart + 0x400000) continue;
+                Dl_info info;
+                if (dladdr((void *)v, &info) && info.dli_sname) {
+                    NSString *nm2 = [NSString stringWithUTF8String:info.dli_sname];
+                    if ([nm2 containsString:@"ntitle"] && ![found containsObject:nm2]) {
+                        [found addObject:nm2];
+                        mfLog(@"[ckdiag] CK import: %@", nm2);
+                    }
                 }
             }
         }
