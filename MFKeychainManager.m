@@ -418,6 +418,33 @@ static CFTypeRef ckMySecTaskCopyValueForEntitlementWithError(SecTaskRef task, CF
     return ckMySecTaskCopyValueForEntitlement(task, ent, err);
 }
 
+// v2.6.92: 复数版 = [ckdiag] 实锤的 CK 唯一 entitlement import！签名:
+//   CFDictionaryRef SecTaskCopyValuesForEntitlements(SecTaskRef, CFArrayRef keys, CFErrorRef*)
+static CFDictionaryRef (*ckOrigSecTaskCopyValuesForEntitlements)(SecTaskRef, CFArrayRef, CFErrorRef *);
+static CFDictionaryRef ckMySecTaskCopyValuesForEntitlements(SecTaskRef task, CFArrayRef keys, CFErrorRef *err) {
+    CFDictionaryRef d = ckOrigSecTaskCopyValuesForEntitlements(task, keys, err);
+    if (d && keys) {
+        for (CFIndex i = 0; i < CFArrayGetCount(keys); i++) {
+            CFStringRef k = (CFStringRef)CFArrayGetValueAtIndex(keys, i);
+            if (!k) continue;
+            NSString *ks = (__bridge NSString *)k;
+            mfLog(@"[ckwarm] pluralAPI reads key: %@", ks);
+            if ([ks isEqualToString:@"com.apple.developer.icloud-services"]) {
+                NSArray *services = [(__bridge NSDictionary *)d objectForKey:ks];
+                if ([services isKindOfClass:[NSArray class]] && ![services containsObject:@"CloudKit"]) {
+                    NSMutableDictionary *m = [(__bridge NSDictionary *)d mutableCopy];
+                    NSMutableArray *s = [services mutableCopy];
+                    [s addObject:@"CloudKit"];
+                    [m setObject:s forKey:ks];
+                    mfLog(@"[ckwarm] services COMPLETED via plural API: %@ → %@", services, s);
+                    return CFBridgingRetain(m);
+                }
+            }
+        }
+    }
+    return d;
+}
+
 // v2.6.87 第三层兜底：GOT 指针扫描补丁（不依赖 MSHook/Dobby，任何注入器环境必成）
 // 原理：dyld 启动后 GOT 槽里是已解析的绝对地址 → 扫 CloudKit 镜像 __DATA* 段，
 //   找到指向 SecTaskCopyValueForEntitlement 的槽 → mprotect 改写为 my 函数。
@@ -524,29 +551,36 @@ static BOOL ckInstallServicesPatch(void) {
     // 1) MSHookFunction (Substrate/ElleKit)
     void *ms = dlsym(RTLD_DEFAULT, "MSHookFunction");
     if (ms) {
+        void *plural = dlsym(RTLD_DEFAULT, "SecTaskCopyValuesForEntitlements");
         ((void(*)(void*,void*,void**))ms)(target, (void*)ckMySecTaskCopyValueForEntitlement,
                                           (void**)&ckOrigSecTaskCopyValueForEntitlement);
-        if (ckOrigSecTaskCopyValueForEntitlement) {
+        if (plural) ((void(*)(void*,void*,void**))ms)(plural, (void*)ckMySecTaskCopyValuesForEntitlements,
+                                                      (void**)&ckOrigSecTaskCopyValuesForEntitlements);
+        if (ckOrigSecTaskCopyValueForEntitlement || ckOrigSecTaskCopyValuesForEntitlements) {
             void *targetWE = dlsym(RTLD_DEFAULT, "SecTaskCopyValueForEntitlementWithError");
             if (targetWE) ((void(*)(void*,void*,void**))ms)(targetWE, (void*)ckMySecTaskCopyValueForEntitlementWithError,
                                                             (void**)&ckOrigSecTaskCopyValueForEntitlementWithError);
-            mfLog(@"[ckwarm] engine=MSHookFunction installed");
+            mfLog(@"[ckwarm] engine=MSHookFunction installed (plural=%p)", (void*)ckOrigSecTaskCopyValuesForEntitlements);
             return YES;
         }
     }
     // 2) fishhook —— 官方实现，正确解析 iOS 15+ chained fixups / auth_got，按符号名 rebind
     {
-        struct rebinding rbs[2] = {
+        struct rebinding rbs[3] = {
             { "SecTaskCopyValueForEntitlement",
               (void *)ckMySecTaskCopyValueForEntitlement,
               (void **)&ckOrigSecTaskCopyValueForEntitlement },
             { "SecTaskCopyValueForEntitlementWithError",
               (void *)ckMySecTaskCopyValueForEntitlementWithError,
               (void **)&ckOrigSecTaskCopyValueForEntitlementWithError },
+            { "SecTaskCopyValuesForEntitlements",           // v2.6.92: ckdiag 实锤的校验路径
+              (void *)ckMySecTaskCopyValuesForEntitlements,
+              (void **)&ckOrigSecTaskCopyValuesForEntitlements },
         };
-        int n = rebind_symbols(rbs, 2);
-        mfLog(@"[ckwarm] engine=fishhook rebind=%d orig=%p", n, (void*)ckOrigSecTaskCopyValueForEntitlement);
-        if (ckOrigSecTaskCopyValueForEntitlement) {
+        int n = rebind_symbols(rbs, 3);
+        mfLog(@"[ckwarm] engine=fishhook rebind=%d singular=%p plural=%p",
+              n, (void*)ckOrigSecTaskCopyValueForEntitlement, (void*)ckOrigSecTaskCopyValuesForEntitlements);
+        if (ckOrigSecTaskCopyValueForEntitlement || ckOrigSecTaskCopyValuesForEntitlements) {
             mfLog(@"[ckwarm] engine=fishhook installed");
             return YES;
         }
@@ -582,33 +616,9 @@ void mfCloudKitWarmupStart(void) {
         return;
     }
     g_ckWarmContainerID = [containers[0] copy];
-    // v2.6.90 安全门：hook 装之前用原函数读 services **原值**——
-    //   含 CloudKit = app 自己用 CK（once 已被 app 合法跑过）→ 触发 once 安全
-    //   不含（Picsew 类 CloudDocuments-only）→ 触发必 trap → 本轮只装 hook+诊断，不触发
-    BOOL appUsesCK = NO;
-    @try {
-        SecTaskRef task = SecTaskCreateFromSelf(kCFAllocatorDefault);
-        if (task) {
-            CFTypeRef ref = SecTaskCopyValueForEntitlement(task,
-                (__bridge CFStringRef)@"com.apple.developer.icloud-services", NULL);
-            NSArray *svcs = (__bridge_transfer NSArray *)ref;
-            appUsesCK = [svcs isKindOfClass:[NSArray class]] && [svcs containsObject:@"CloudKit"];
-            if (task) CFRelease(task);
-        }
-    } @catch (NSException *e) { mfLog(@"[ckwarm] services probe exception: %@", e); }
-    mfLog(@"[ckwarm] cid=%@ appUsesCK=%d", g_ckWarmContainerID, appUsesCK);
-    if (!appUsesCK) {
-        // 只装 hook + 跑诊断，绝不触发 once（触发即 trap）。查询页显示预热中（等待精确 hook 版本）
-        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-            ckInstallServicesPatch();
-            ckDiagnoseEntitlementImports();
-            mfLog(@"[ckwarm] diagnostics done, once NOT triggered (unsafe app)");
-        });
-        return;
-    }
-    mfLog(@"[ckwarm] warming CK once on bg queue cid=%@", g_ckWarmContainerID);
+    // v2.6.92: 解除 appUsesCK 安全门——ckdiag 实锤校验走复数版 API，hook 已覆盖该路径。
+    // hook 安装成功 → 触发 once（校验读到补全的 services → 通过）；hook 失败 → 不触发（保持预热中）
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        // v2.6.87: 三层引擎装 services 补丁 hook（必须在 dlopen/首调 CK 前就位）
         if (!ckInstallServicesPatch()) {
             mfLog(@"[ckwarm] hook install failed — CK stays guarded (query page will show retry)");
             return;
@@ -616,7 +626,6 @@ void mfCloudKitWarmupStart(void) {
         // dlopen 让 CK framework 就绪
         void *h = dlopen("/System/Library/Frameworks/CloudKit.framework/CloudKit", RTLD_LAZY);
         mfLog(@"[ckwarm] dlopen CloudKit = %p", h);
-        // v2.6.90: 诊断 CK 实际 import 了哪些 entitlement API（替代被 PPL 禁掉的代码页 patch）
         ckDiagnoseEntitlementImports();
         Class ck = NSClassFromString(@"CKContainer");
         if (ck) {
