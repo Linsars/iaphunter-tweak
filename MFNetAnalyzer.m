@@ -1,4 +1,6 @@
-// MFNetAnalyzer.m — 网络分析 (v1.7.1 瘦身版)
+// MFNetAnalyzer.m — 网络分析 (v1.7.1 瘦身版：捕获开关/捕获列表/规则管理/解密捕获)
+
+#import "MFPanel.h"
 
 #pragma mark - 页面
 
