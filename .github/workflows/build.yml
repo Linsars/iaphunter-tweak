@@ -31,6 +31,7 @@ jobs:
         run: brew install ldid
 
       - name: Install Dobby prebuilt(arm64/arm64e)
+        continue-on-error: true
         run: |
           curl -L -o /tmp/dobby.tar.gz https://github.com/jmpews/Dobby/releases/download/latest/dobby-iphoneos-all.tar.gz
           mkdir -p /tmp/dobby && tar xzf /tmp/dobby.tar.gz -C /tmp/dobby
