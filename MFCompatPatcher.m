@@ -73,6 +73,18 @@ static int g_segCount;
 // LC_DYLD_CHAINED_FIXUPS 的数据(file offset)
 static uint32_t g_fixDataoff;
 
+// 主二进制磁盘文件句柄——chained fixup entry 内联在槽里,dyld 已消费(槽=绑定结果),
+// 原始 entry 只能从磁盘读(文件偏移与 starts 链语义一致)
+static FILE *g_binFp;
+
+static uint64_t mfReadFileU64(uint64_t fileoff) {
+    uint64_t v = 0;
+    if (!g_binFp) return 0;
+    fseeko(g_binFp, (off_t)fileoff, SEEK_SET);
+    if (fread(&v, 8, 1, g_binFp) != 1) return 0;
+    return v;
+}
+
 static void mfParseLcs(void) {
     g_segCount = 0;
     g_fixDataoff = 0;
@@ -127,15 +139,13 @@ static int mfFindTargetSlots(uint8_t *blob, const int *tgtOrd, void **outSlots) 
             if (ps == 0xFFFF) continue; // orphaned
             uint64_t ptrFile = ss->segment_offset + (uint64_t)pi * pageSize + ps;
             for (int guard = 0; guard < 500000; guard++) {
-                uint64_t *slot = (uint64_t *)mfFileOffToPtr(ptrFile);
-                if (!slot) break;
-                uint64_t raw = *slot;
+                uint64_t raw = mfReadFileU64(ptrFile);   // 原始 entry 必须从磁盘读(dyld 已改写运行时槽)
                 uint32_t nxt = (uint32_t)((raw >> 51) & 0xFFF);
                 if ((raw >> 63) & 1) { // bind
                     uint32_t ord = (uint32_t)(raw & 0xFFFFFF);
                     for (int t = 0; t < 4; t++) {
                         if (ord == tgtOrd[t] && outSlots[t] == NULL) {
-                            outSlots[t] = slot;
+                            outSlots[t] = (void *)mfFileOffToPtr(ptrFile); // 运行时槽地址(写槽用)
                             if (++found == 4) return found;
                         }
                     }
@@ -156,10 +166,15 @@ static void mfCompatPatchMainBinary(void) {
     mfParseLcs();
     if (!g_fixDataoff) return;
 
+    // 打开磁盘二进制(读原始 fixup entry 用)
+    NSString *exePath = [[NSBundle mainBundle] executablePath];
+    if (exePath.length) g_binFp = fopen([exePath fileSystemRepresentation], "rb");
+    if (!g_binFp) return;
+
     uint8_t *blob = mfFileOffToPtr(g_fixDataoff);
-    if (!blob) return;
+    if (!blob) { fclose(g_binFp); g_binFp = NULL; return; }
     struct dyld_chained_fixups_header *hdr = (struct dyld_chained_fixups_header *)blob;
-    if (hdr->imports_format != 1) return;
+    if (hdr->imports_format != 1) { fclose(g_binFp); g_binFp = NULL; return; }
     uint8_t *imports = blob + hdr->imports_offset;
     uint8_t *symbols = blob + hdr->symbols_offset;
 
@@ -170,7 +185,7 @@ static void mfCompatPatchMainBinary(void) {
     if (!g_impl[1]) g_impl[1] = dlsym(RTLD_DEFAULT, "_malloc");
     g_impl[2] = (void *)compat_isStackSafe;
     g_impl[3] = (void *)compat_deinitNoop;
-    if (!g_impl[0] || !g_impl[1]) return; // iOS 17 必有这俩, 防御
+    if (!g_impl[0] || !g_impl[1]) { fclose(g_binFp); g_binFp = NULL; return; } // iOS 17 必有这俩, 防御
 
     // imports 名字 → ordinal
     int tgtOrd[4] = {-1, -1, -1, -1};
@@ -187,11 +202,11 @@ static void mfCompatPatchMainBinary(void) {
         }
         if (tgtCnt == 4) break;
     }
-    if (tgtCnt == 0) return; // 非 26 SDK app, 免疫
+    if (tgtCnt == 0) { fclose(g_binFp); g_binFp = NULL; return; } // 非 26 SDK app, 免疫
 
     void *slots[4] = {NULL, NULL, NULL, NULL};
     int found = mfFindTargetSlots(blob, tgtOrd, slots);
-    if (!found) return;
+    if (!found) { fclose(g_binFp); g_binFp = NULL; return; }
 
     for (int t = 0; t < 4; t++) {
         if (!slots[t] || !g_impl[t]) continue;
@@ -201,6 +216,8 @@ static void mfCompatPatchMainBinary(void) {
         mprotect((void *)page, (size_t)sysconf(_SC_PAGESIZE), PROT_READ);
         NSLog(@"[compat] GOT patched: %s -> %p", kTgt[t], g_impl[t]);
     }
+    fclose(g_binFp);
+    g_binFp = NULL;
 }
 
 // ---- 偏好读取(与 MFPanel.m 同源) ----
