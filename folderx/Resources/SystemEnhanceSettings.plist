@@ -17,6 +17,8 @@
 			<string>com.linsars.minisfix/ReloadPrefs</string>
 			<key>cell</key>
 			<string>PSLinkListCell</string>
+			<key>defaultApplicationSwitchValue</key>
+			<false/>
 			<key>defaults</key>
 			<string>com.linsars.minisfix</string>
 			<key>detail</key>
@@ -41,6 +43,8 @@
 				</dict>
 			</array>
 			<key>showIdentifiersAsSubtitle</key>
+			<true/>
+			<key>useSearchBar</key>
 			<true/>
 		</dict>
 		<dict>
