@@ -46,11 +46,3 @@ CompatPatcher_INSTALL_PATH = /usr/lib/TweakInject
 include $(THEOS_MAKE_PATH)/tweak.mk
 SUBPROJECTS += folderx
 include $(THEOS_MAKE_PATH)/aggregate.mk
-
-
-
-# ============================================================
-# 外部依赖: Dobby(github.com/jmpews/Dobby)需预编译静态库
-# 方案:CI 中 git submodule 添加 Dobby,编译 libdobby.a 到 $(THEOS)/lib/
-# 临时占位:若无 libdobby.a,UnseenHooks 会链接失败(CI 日志会报错)
-# ============================================================

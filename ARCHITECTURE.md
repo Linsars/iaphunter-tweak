@@ -30,10 +30,8 @@ deb = 6 dylib + 1 设置 bundle
 ├── CompatPatcher.dylib filter: com.apple.UIKit(v2.7.3 新增,全局 UI 进程)
 │   └── iOS 18+ SDK 向下兼容: ctor 运行时解析主镜像 chained fixups → 4 弱符号
 │       GOT 槽 mprotect 重绑(getExtended→6参版/coroFrame→malloc/isSafe→ret1/deinit→noop)
-├── UnseenHooks.dylib  filter: Executables [backboardd, SpringBoard](v2.5.0 新增,对标 com.82flex.unseen)
-│   ├── 反检测/隐私四件套:显示隐藏画面/保护系统UI/隐藏截图/隐藏录屏
-│   ├── backboardd: Dobby inline hook CA::Render::Update/Updater/Context
-│   └── SpringBoard: 截图 action 过滤 + capture-state 屏蔽 + BKSystemShellSentinel PID 观察
+├── Unseen.dylib        layout-rootless 打包原版 com.82flex.unseen(v2.6.0 起,非自研编译;
+│   │                   设置键在 SystemEnhanceSettings.plist,prefs 域 com.82flex.unseen)
 └── FolderX.bundle     folderx/ 子项目(bundle.mk, 装系统设置)
     ├── Root.plist = 设置页: 功能[IAP工具箱/FolderX/⚡️系统增强] + 关于
     ├── SystemEnhanceSettings.plist: 伪装3键+TF2键+诊断清理+充电+WiFi+Unseen4键

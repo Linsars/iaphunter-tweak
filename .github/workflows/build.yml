@@ -30,19 +30,6 @@ jobs:
       - name: Install ldid
         run: brew install ldid
 
-      - name: Install Dobby prebuilt(arm64/arm64e)
-        continue-on-error: true
-        run: |
-          curl -L -o /tmp/dobby.tar.gz https://github.com/jmpews/Dobby/releases/download/latest/dobby-iphoneos-all.tar.gz
-          mkdir -p /tmp/dobby && tar xzf /tmp/dobby.tar.gz -C /tmp/dobby
-          echo "=== dobby files ==="
-          find /tmp/dobby -name "*.a" -o -name "*.dylib" -o -name "dobby.h" | head -20
-          sudo mkdir -p "$THEOS/lib" "$THEOS/include"
-          sudo cp /tmp/dobby/build/iphoneos/universal/libdobby.a "$THEOS/lib/libdobby.a"
-          HDR=$(find /tmp/dobby -name "dobby.h" | head -1)
-          if [ -n "$HDR" ]; then sudo cp "$HDR" "$THEOS/include/"; fi
-          ls -la "$THEOS/lib/libdobby.a" && echo "=== Dobby installed OK ==="
-
       - name: Build minisfixd daemon (privileged charge writer)
         run: |
           mkdir -p layout-rootless/usr/bin
