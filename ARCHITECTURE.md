@@ -15,10 +15,10 @@
 | **FolderX** | SpringBoard dylib + 同名设置 bundle(folderx 子项目) | — |
 | repo 名 iaphunter-tweak | 旧命名没改而已 | 与 IAPHunter 时代强绑定 |
 
-## 目标架构(v2.5.0,按注入目标分类)
+## 目标架构(v2.7.3,按注入目标分类)
 
 ```
-deb = 5 dylib + 1 设置 bundle
+deb = 6 dylib + 1 设置 bundle
 ├── FolderX.dylib      filter: com.apple.springboard
 │   ├── 文件夹变色(FX*.m, FolderColor.xm)
 │   └── 充电限制 + Wi-Fi永连(MFSystemEnhance.m, IOKit IOPMPowerSource + allowIdleSleep hook)
@@ -26,7 +26,10 @@ deb = 5 dylib + 1 设置 bundle
 │   ├── AppStore 版本伪装(MFAppStoreSpoof.m, UA+installd 版本检查)
 │   └── TestFlight 增强(MFTestFlightHooks.m, TFAppBuild swizzle,自 MFPanel.m 迁出)
 ├── IAPtools.dylib     filter: com.apple.UIKit(全局 UI 进程;原 MinisFix 改名)
-│   └── IAP工具箱面板(数据分析/Product)
+│   └── IAP工具箱面板(数据分析/Product + 兼容补丁入口)
+├── CompatPatcher.dylib filter: com.apple.UIKit(v2.7.3 新增,全局 UI 进程)
+│   └── iOS 18+ SDK 向下兼容: ctor 运行时解析主镜像 chained fixups → 4 弱符号
+│       GOT 槽 mprotect 重绑(getExtended→6参版/coroFrame→malloc/isSafe→ret1/deinit→noop)
 ├── UnseenHooks.dylib  filter: Executables [backboardd, SpringBoard](v2.5.0 新增,对标 com.82flex.unseen)
 │   ├── 反检测/隐私四件套:显示隐藏画面/保护系统UI/隐藏截图/隐藏录屏
 │   ├── backboardd: Dobby inline hook CA::Render::Update/Updater/Context
@@ -44,6 +47,7 @@ deb = 5 dylib + 1 设置 bundle
 ├── SpringBoard          → FolderX.dylib
 ├── 指定 App/守护进程     → AppHooks.dylib(改 filter Executables + ctor isProcess 分支)
 ├── 全局 UI(要面板/弹窗) → IAPtools.dylib
+├── 全局 UI(无面板,进程内自动修复) → CompatPatcher.dylib(v2.7.3+,filter com.apple.UIKit)
 ├── 纯设置项(无 hook)    → folderx bundle 对应 plist
 └── 都不是 → 单独新 dylib + 自己的 filter,别塞现有
 ```

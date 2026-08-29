@@ -300,6 +300,7 @@ void mfShowNetworkCapturePage(void); // MFNetworkCapture.m
 void mfShowCryptoToolboxPage(void);  // MFNetworkCapture.m
 void mfShowNetworkModifyPage(void);  // MFNetworkCapture.m
 void mfShowHostLogPage(void);        // MFPanel.m 本文件 (v2.6.17)
+void mfShowCompatPage(void);         // MFPanel.m 本文件 (v2.7.3 兼容补丁)
 // v2.6.17 宿主日志引擎 (MFHostLogCapture.m) —— 必须在调用点之前声明(隐式 int 会与定义冲突)
 extern void mfHostLogStart(void);
 extern void mfHostLogStop(void);
@@ -1101,6 +1102,103 @@ void mfShowHostLogPage(void) {
     mfPushPage(page);
 }
 
+// ====== v2.7.3 兼容补丁: iOS 18+ SDK app 闪退修复(CompatPatcher.dylib 的 UI 侧) ======
+static NSArray *mfCompatList(void) {
+    NSArray *l = mfPrefsDict()[@"mfCompatAppList"];
+    return [l isKindOfClass:[NSArray class]] ? l : @[];
+}
+static void mfCompatSetList(NSArray *l) {
+    NSMutableDictionary *d = [mfPrefsDict() mutableCopy];
+    d[@"mfCompatAppList"] = l;
+    mfSetPrefs(d);
+}
+static BOOL mfCompatContainsCurrent(void) {
+    NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
+    return bid.length && [mfCompatList() containsObject:bid];
+}
+
+@interface MFCompatList : NSObject <UITableViewDataSource, UITableViewDelegate>
+@property (copy) NSArray<NSString *> *items;
+@end
+@implementation MFCompatList
+- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s { return self.items.count; }
+- (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
+    static NSString *idt = @"mfCpr";
+    UITableViewCell *c = [tv dequeueReusableCellWithIdentifier:idt];
+    if (!c) {
+        c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:idt];
+        c.backgroundColor = UIColor.clearColor;
+        c.textLabel.font = [UIFont systemFontOfSize:13];
+        c.textLabel.textColor = [UIColor labelColor];
+        c.selectionStyle = UITableViewCellSelectionStyleNone;
+    }
+    c.textLabel.text = self.items[ip.row];
+    return c;
+}
+- (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
+    [tv deselectRowAtIndexPath:ip animated:NO];
+    NSMutableArray *l = [self.items mutableCopy];
+    [l removeObjectAtIndex:ip.row];
+    mfCompatSetList(l);
+    self.items = l;
+    [tv reloadData];
+    // 同步「修复当前 app」按钮状态(删除的可能是当前 app)
+    UIButton *add = [tv.superview viewWithTag:301];
+    if (add) {
+        BOOL on = mfCompatContainsCurrent();
+        [add setTitle:on ? @"✓ 已在修复列表(点我移除)" : @"➕ 修复当前 app" forState:UIControlStateNormal];
+        add.backgroundColor = on ? [UIColor systemGreenColor] : [UIColor systemBlueColor];
+    }
+    mfToast(@"已移除(重开该 app 不再修复)");
+}
+@end
+
+void mfShowCompatPage(void) {
+    UIView *page = mfMakePage(@"兼容补丁", YES);
+
+    // 说明
+    UILabel *tip = [[UILabel alloc] initWithFrame:CGRectMake(16, 46, g_mfCardW - 32, 52)];
+    tip.numberOfLines = 0;
+    tip.font = [UIFont systemFontOfSize:11];
+    tip.textColor = [UIColor secondaryLabelColor];
+    tip.text = @"iOS 18+ SDK(Xcode 26)编译的 app 在 iOS 17 上启动即崩(Swift runtime 缺符号)。\n加入列表后,重开该 app 自动注入修复。";
+    [page addSubview:tip];
+
+    // 当前 app 信息 + 添加按钮
+    NSString *bid = [[NSBundle mainBundle] bundleIdentifier] ?: @"未知";
+    UILabel *cur = [[UILabel alloc] initWithFrame:CGRectMake(16, 102, g_mfCardW - 32, 20)];
+    cur.font = [UIFont systemFontOfSize:12];
+    cur.textColor = [UIColor labelColor];
+    cur.text = [NSString stringWithFormat:@"当前: %@", bid];
+    [page addSubview:cur];
+
+    UIButton *add = [UIButton buttonWithType:UIButtonTypeSystem];
+    add.frame = CGRectMake(16, 128, g_mfCardW - 32, 40);
+    add.tag = 301;
+    add.backgroundColor = mfCompatContainsCurrent() ? [UIColor systemGreenColor] : [UIColor systemBlueColor];
+    [add setTitle:mfCompatContainsCurrent() ? @"✓ 已在修复列表(点我移除)" : @"➕ 修复当前 app" forState:UIControlStateNormal];
+    [add setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    add.titleLabel.font = [UIFont boldSystemFontOfSize:14];
+    add.layer.cornerRadius = 10;
+    [add addTarget:g_mfCtrl action:NSSelectorFromString(@"mfCompatAddTapped:") forControlEvents:UIControlEventTouchUpInside];
+    objc_setAssociatedObject(add, "cpPage", page, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [page addSubview:add];
+
+    // 已加入列表
+    UITableView *tv = [[UITableView alloc] initWithFrame:CGRectMake(0, 176, g_mfCardW, g_mfCardH - 176) style:UITableViewStylePlain];
+    tv.backgroundColor = [UIColor tertiarySystemBackgroundColor];
+    tv.separatorStyle = UITableViewCellSeparatorStyleSingleLine;
+    MFCompatList *list = [MFCompatList new];
+    list.items = mfCompatList();
+    tv.dataSource = list;
+    tv.delegate = list;
+    objc_setAssociatedObject(page, "cpList", list, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(page, "cpTV", tv, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [page addSubview:tv];
+
+    mfPushPage(page);
+}
+
 void mfShowScanPage(void) {
     UIView *page = mfMakePage(@"扫描购买", YES);
     // 启动即捕获开关(v2.0.0):下次启动生效——解决"App 先启动、后开捕获截不到老会话"
@@ -1362,6 +1460,28 @@ void mfShowProductPage(void) {
 - (void)mfShowDataAnalysisPage { mfShowDataAnalysisPage(); }
 // v2.6.17 实时日志
 - (void)mfShowHostLogPage { mfShowHostLogPage(); }
+// v2.7.3 兼容补丁
+- (void)mfShowCompatPage { mfShowCompatPage(); }
+- (void)mfCompatAddTapped:(UIButton *)btn {
+    NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
+    NSMutableArray *l = [mfCompatList() mutableCopy];
+    if (mfCompatContainsCurrent()) {
+        [l removeObject:bid];
+        mfToast(@"已移除");
+    } else {
+        if (bid.length && ![l containsObject:bid]) [l addObject:bid];
+        mfToast(@"已加入 — 重开该 app 生效");
+    }
+    mfCompatSetList(l);
+    BOOL on = mfCompatContainsCurrent();
+    [btn setTitle:on ? @"✓ 已在修复列表(点我移除)" : @"➕ 修复当前 app" forState:UIControlStateNormal];
+    btn.backgroundColor = on ? [UIColor systemGreenColor] : [UIColor systemBlueColor];
+    UIView *page = objc_getAssociatedObject(btn, "cpPage");
+    UITableView *tv = objc_getAssociatedObject(page, "cpTV");
+    MFCompatList *list = objc_getAssociatedObject(page, "cpList");
+    list.items = mfCompatList();
+    [tv reloadData];
+}
 // v2.6.21 电池详情
 - (void)mfShowBatteryPage { mfShowBatteryPage(); }
 - (void)mfHostLogSwitchChanged:(UISwitch *)sw {
@@ -1913,7 +2033,7 @@ static void iaphShowPanel(UIViewController *vc) {
         mfLog(@"PANEL STEP 4: mask added");
 
         CGFloat cardW = sb.size.width - 32;
-        CGFloat cardH = 300;  // 主页紧凑——子页 push 时自动拉长
+        CGFloat cardH = 360;  // 主页紧凑——子页 push 时自动拉长(v2.7.3: 5 按钮 3 行)
         g_mfCardW = cardW; g_mfCardH = cardH;
         g_mfHomeCardH = cardH;
         UIVisualEffectView *card = [[UIVisualEffectView alloc] initWithFrame:CGRectMake(16, (sb.size.height - cardH)/2, cardW, cardH)];
@@ -1953,6 +2073,8 @@ static void iaphShowPanel(UIViewController *vc) {
         // v2.6.21: 电池详情 + 实时日志 提到主页
         gy = mfGridButton(home, 16, gy, gw, @"电池详情", @"🔋", @selector(mfShowBatteryPage), NO, nil);
         gy = mfGridButton(home, 16 + gw + 12, gy - 92, gw, @"实时日志", @"📜", @selector(mfShowHostLogPage), NO, nil);
+        // v2.7.3: 兼容补丁(CompatPatcher)
+        gy = mfGridButton(home, 16, gy, gw, @"兼容补丁", @"🔧", @selector(mfShowCompatPage), NO, nil);
         // 网络修改已并入网络分析 → 规则管理 (v1.8.3)
         // Keychain 已并入 数据分析 板块 (v1.4.0)
 
@@ -2193,7 +2315,7 @@ static void new_viewDidAppear(id self, SEL _cmd, BOOL animated) {
     }
 }
 
-#define IAPTOOLS_VERSION @"2.7.2"
+#define IAPTOOLS_VERSION @"2.7.3"
 
 __attribute__((constructor)) static void MinisFixCtor(void) {
     @autoreleasepool {

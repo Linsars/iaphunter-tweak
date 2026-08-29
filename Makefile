@@ -10,7 +10,7 @@ export SYSROOT = $(THEOS)/sdks/iPhoneOS14.5.sdk
 include $(THEOS)/makefiles/common.mk
 
 # v2.5.0 按「注入目标」分类(真相源: ARCHITECTURE.md,架构变动必须同步更新它)
-TWEAK_NAME = FolderX AppHooks IAPtools
+TWEAK_NAME = FolderX AppHooks IAPtools CompatPatcher
 
 # FolderX(SpringBoard: 文件夹变色 + 系统增强[充电限制/Wi-Fi永连])
 FolderX_FILES = $(filter-out MFPanel.m MFNetworkCapture.m MFAppStoreSpoof.m MFTestFlightHooks.m MFKeychainManager.m MFClassDump.m MFDiagnostics.m MFNetAnalyzer.m MFCryptoToolbox.m MFCryptoHooks.m MFObjCHook.m MFHostLogCapture.m MFBatteryInfo.m MFDiagnosticCleaner.m, $(wildcard *.xm *.m *.mm))
@@ -34,6 +34,13 @@ AppHooks_FRAMEWORKS = Foundation
 AppHooks_CFLAGS = -fobjc-arc
 AppHooks_ARCHS = arm64 arm64e
 AppHooks_INSTALL_PATH = /usr/lib/TweakInject
+
+# CompatPatcher v2.7.3(全局 UIKit: iOS 18+ SDK app 运行时 GOT 修复——符号池 1 刀等价,零重签)
+CompatPatcher_FILES = MFCompatPatcher.m
+CompatPatcher_FRAMEWORKS = Foundation
+CompatPatcher_CFLAGS = -fobjc-arc
+CompatPatcher_ARCHS = arm64 arm64e
+CompatPatcher_INSTALL_PATH = /usr/lib/TweakInject
 
 
 include $(THEOS_MAKE_PATH)/tweak.mk
