@@ -133,7 +133,7 @@ static void mfParseLcs(void) {
                 if (strcmp(sect, "__stubs") == 0) {
                     memcpy(&g_stubsAddr, base + so + 32, 8);
                     memcpy(&g_stubsSize, base + so + 40, 8);
-                    memcpy(&g_stubsRes1, base + so + 64, 4);
+                    memcpy(&g_stubsRes1, base + so + 68, 4);  // reserved1(68), +64 是 flags
                     g_hasStubs = YES;
                 }
                 so += 80;
