@@ -8,6 +8,45 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
+			<string>iOS 18+ SDK(Xcode 26)编译的 app 在旧系统上启动即崩(Swift runtime 缺符号)。在此勾选闪退的 app,重新打开该 app 即自动注入修复(CompatPatcher 运行时 GOT 重绑,不改 app 文件、无需重签)。</string>
+			<key>label</key>
+			<string>iOS 兼容补丁</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.linsars.minisfix/ReloadPrefs</string>
+			<key>cell</key>
+			<string>PSLinkListCell</string>
+			<key>defaults</key>
+			<string>com.linsars.minisfix</string>
+			<key>detail</key>
+			<string>ATLApplicationListMultiSelectionController</string>
+			<key>hideSearchBarWhileScrolling</key>
+			<true/>
+			<key>includeIdentifiersInSearch</key>
+			<true/>
+			<key>key</key>
+			<string>mfCompatAppList</string>
+			<key>label</key>
+			<string>闪退 app 列表</string>
+			<key>sections</key>
+			<array>
+				<dict>
+					<key>sectionType</key>
+					<string>User</string>
+				</dict>
+				<dict>
+					<key>sectionType</key>
+					<string>System</string>
+				</dict>
+			</array>
+			<key>showIdentifiersAsSubtitle</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
 			<string>修改 appstored 请求版本与 installd 版本检查,更改后需注销或重启生效(守护进程启动时读取)</string>
 			<key>label</key>
 			<string>AppStore 版本伪装</string>
