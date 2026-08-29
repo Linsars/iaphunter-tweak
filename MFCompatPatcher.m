@@ -21,16 +21,20 @@
 #include <stdint.h>
 #include <stdarg.h>
 
-// 调试日志(越狱环境 /var/tmp 可写)——崩溃即落盘,SSH 可读
+// 调试日志——写 app 自己沙盒 Documents(沙盒绝对可写, rootless 下 /var/tmp 不可靠)
 static void mfCompatLog(const char *fmt, ...) {
-    FILE *f = fopen("/var/tmp/mfcompat.log", "a");
-    if (!f) return;
-    va_list ap;
-    va_start(ap, fmt);
-    vfprintf(f, fmt, ap);
-    va_end(ap);
-    fprintf(f, "\n");
-    fclose(f);
+    @autoreleasepool {
+        NSString *dir = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
+        if (!dir) return;
+        FILE *f = fopen([[dir stringByAppendingPathComponent:@"mfcompat.log"] UTF8String], "a");
+        if (!f) return;
+        va_list ap;
+        va_start(ap, fmt);
+        vfprintf(f, fmt, ap);
+        va_end(ap);
+        fprintf(f, "\n");
+        fclose(f);
+    }
 }
 
 // ---- dyld_chained_fixups 结构(apple-oss-distributions/dyld include/mach-o/fixup-chains.h) ----
@@ -259,10 +263,12 @@ static BOOL mfCompatNeeded(void) {
 __attribute__((constructor)) static void CompatPatcherCtor(void) {
     @autoreleasepool {
         NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
+        mfCompatLog("=== compat ctor pid=%d bid=%s ===", getpid(), bid.UTF8String ?: "NIL");
         // 系统进程守卫(与 IAPtools 同律): 只服务用户 app
         if (bid.length == 0 || [bid.lowercaseString hasPrefix:@"com.apple."]) return;
-        mfCompatLog("=== compat ctor pid=%d bid=%s ===", getpid(), bid.UTF8String ?: "?");
-        if (!mfCompatNeeded()) { mfCompatLog("[compat] bid not in list, skip"); return; }
+        BOOL needed = mfCompatNeeded();
+        mfCompatLog("[compat] needed=%d", needed);
+        if (!needed) return;
         mfCompatPatchMainBinary();
     }
 }
