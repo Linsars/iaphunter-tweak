@@ -1,5 +1,8 @@
 #!/bin/bash
-# v2.6.2: 安装后自动重启受影响进程
+# v2.7.4: MFShim 早注入导出 shim 挂 launchd env
+if [ -x /var/jb/usr/bin/mfshim-env.sh ]; then
+  /var/jb/usr/bin/mfshim-env.sh
+fi
 TWEAK_INJECT="/var/jb/usr/lib/TweakInject"
 mkdir -p "$TWEAK_INJECT"
 # 清理废弃名
