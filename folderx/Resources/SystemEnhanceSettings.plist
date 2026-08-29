@@ -30,7 +30,7 @@
 			<key>key</key>
 			<string>mfCompatAppList</string>
 			<key>label</key>
-			<string>闪退 app 列表</string>
+			<string>兼容 App 列表</string>
 			<key>sections</key>
 			<array>
 				<dict>
