@@ -19,6 +19,19 @@
 #import <unistd.h>
 #include <string.h>
 #include <stdint.h>
+#include <stdarg.h>
+
+// 调试日志(越狱环境 /var/tmp 可写)——崩溃即落盘,SSH 可读
+static void mfCompatLog(const char *fmt, ...) {
+    FILE *f = fopen("/var/tmp/mfcompat.log", "a");
+    if (!f) return;
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(f, fmt, ap);
+    va_end(ap);
+    fprintf(f, "\n");
+    fclose(f);
+}
 
 // ---- dyld_chained_fixups 结构(apple-oss-distributions/dyld include/mach-o/fixup-chains.h) ----
 #define LC_DYLD_CHAINED_FIXUPS 0x80000034
@@ -80,7 +93,7 @@ static FILE *g_binFp;
 static uint64_t mfReadFileU64(uint64_t fileoff) {
     uint64_t v = 0;
     if (!g_binFp) return 0;
-    fseeko(g_binFp, (off_t)fileoff, SEEK_SET);
+    fseek(g_binFp, (long)fileoff, SEEK_SET);   // iOS long=64 位, <4GB 安全
     if (fread(&v, 8, 1, g_binFp) != 1) return 0;
     return v;
 }
@@ -162,18 +175,21 @@ static int mfFindTargetSlots(uint8_t *blob, const int *tgtOrd, void **outSlots) 
 static void mfCompatPatchMainBinary(void) {
     g_mh = _dyld_get_image_header(0);
     g_slide = _dyld_get_image_vmaddr_slide(0);
+    mfCompatLog("[compat] enter pid=%d slide=0x%llx mh=%p", getpid(), (unsigned long long)g_slide, g_mh);
     if (!g_mh) return;
     mfParseLcs();
-    if (!g_fixDataoff) return;
+    if (!g_fixDataoff) { mfCompatLog("[compat] NO LC_DYLD_CHAINED_FIXUPS"); return; }
 
     // 打开磁盘二进制(读原始 fixup entry 用)
     NSString *exePath = [[NSBundle mainBundle] executablePath];
     if (exePath.length) g_binFp = fopen([exePath fileSystemRepresentation], "rb");
-    if (!g_binFp) return;
+    if (!g_binFp) { mfCompatLog("[compat] fopen FAIL: %s", exePath.UTF8String ?: "?"); return; }
+    mfCompatLog("[compat] opened %s", exePath.UTF8String ?: "?");
 
     uint8_t *blob = mfFileOffToPtr(g_fixDataoff);
-    if (!blob) { fclose(g_binFp); g_binFp = NULL; return; }
+    if (!blob) { mfCompatLog("[compat] blob ptr NULL"); fclose(g_binFp); g_binFp = NULL; return; }
     struct dyld_chained_fixups_header *hdr = (struct dyld_chained_fixups_header *)blob;
+    mfCompatLog("[compat] blob=%p fixDataoff=0x%x imports_fmt=%u count=%u", blob, g_fixDataoff, hdr->imports_format, hdr->imports_count);
     if (hdr->imports_format != 1) { fclose(g_binFp); g_binFp = NULL; return; }
     uint8_t *imports = blob + hdr->imports_offset;
     uint8_t *symbols = blob + hdr->symbols_offset;
@@ -185,6 +201,7 @@ static void mfCompatPatchMainBinary(void) {
     if (!g_impl[1]) g_impl[1] = dlsym(RTLD_DEFAULT, "_malloc");
     g_impl[2] = (void *)compat_isStackSafe;
     g_impl[3] = (void *)compat_deinitNoop;
+    mfCompatLog("[compat] impls: getFTM=%p malloc=%p", g_impl[0], g_impl[1]);
     if (!g_impl[0] || !g_impl[1]) { fclose(g_binFp); g_binFp = NULL; return; } // iOS 17 必有这俩, 防御
 
     // imports 名字 → ordinal
@@ -202,19 +219,26 @@ static void mfCompatPatchMainBinary(void) {
         }
         if (tgtCnt == 4) break;
     }
+    mfCompatLog("[compat] tgtCnt=%d", tgtCnt);
     if (tgtCnt == 0) { fclose(g_binFp); g_binFp = NULL; return; } // 非 26 SDK app, 免疫
 
     void *slots[4] = {NULL, NULL, NULL, NULL};
     int found = mfFindTargetSlots(blob, tgtOrd, slots);
+    mfCompatLog("[compat] slots found=%d (0x%llx 0x%llx 0x%llx 0x%llx)", found,
+        (unsigned long long)slots[0], (unsigned long long)slots[1],
+        (unsigned long long)slots[2], (unsigned long long)slots[3]);
     if (!found) { fclose(g_binFp); g_binFp = NULL; return; }
 
     for (int t = 0; t < 4; t++) {
         if (!slots[t] || !g_impl[t]) continue;
         uint64_t page = (uint64_t)slots[t] & ~(uint64_t)(sysconf(_SC_PAGESIZE) - 1);
-        if (mprotect((void *)page, (size_t)sysconf(_SC_PAGESIZE), PROT_READ | PROT_WRITE) != 0) continue;
+        if (mprotect((void *)page, (size_t)sysconf(_SC_PAGESIZE), PROT_READ | PROT_WRITE) != 0) {
+            mfCompatLog("[compat] mprotect FAIL t=%d errno=%d", t, errno);
+            continue;
+        }
         *(void **)slots[t] = g_impl[t];
         mprotect((void *)page, (size_t)sysconf(_SC_PAGESIZE), PROT_READ);
-        NSLog(@"[compat] GOT patched: %s -> %p", kTgt[t], g_impl[t]);
+        mfCompatLog("[compat] GOT patched: %s -> %p", kTgt[t], g_impl[t]);
     }
     fclose(g_binFp);
     g_binFp = NULL;
@@ -237,7 +261,8 @@ __attribute__((constructor)) static void CompatPatcherCtor(void) {
         NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
         // 系统进程守卫(与 IAPtools 同律): 只服务用户 app
         if (bid.length == 0 || [bid.lowercaseString hasPrefix:@"com.apple."]) return;
-        if (!mfCompatNeeded()) return;
+        mfCompatLog("=== compat ctor pid=%d bid=%s ===", getpid(), bid.UTF8String ?: "?");
+        if (!mfCompatNeeded()) { mfCompatLog("[compat] bid not in list, skip"); return; }
         mfCompatPatchMainBinary();
     }
 }
