@@ -102,7 +102,7 @@ int main(int argc, char **argv) {
 
     // LC_DYLD_CHAINED_FIXUPS
     uint32_t cf_off = 0;
-    q = buf + sizeof(struct mach_header_64);
+    uint8_t *q = buf + sizeof(struct mach_header_64);
     for (uint32_t i = 0; i < mh->ncmds; i++) {
         uint32_t cmd = *(uint32_t *)q;
         uint32_t cs  = *(uint32_t *)(q + 4);
