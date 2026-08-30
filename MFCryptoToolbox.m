@@ -264,7 +264,7 @@ static NSObject<UITextViewDelegate> *g_mfCryptoInputDel(void) {
 @interface MFCryptoResList : NSObject <UITableViewDataSource, UITableViewDelegate> @end
 @implementation MFCryptoResList
 - (NSArray *)entriesFor:(UITableView *)tv { return objc_getAssociatedObject(tv.superview, "entries"); }
-- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s { return self.entriesFor(tv).count; }
+- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s { return [self entriesFor:tv].count; }
 - (CGFloat)tableView:(UITableView *)tv heightForRowAtIndexPath:(NSIndexPath *)ip {
     NSArray *hs = objc_getAssociatedObject(tv.superview, "rowHs");
     return (ip.row < (NSInteger)hs.count) ? [hs[ip.row] floatValue] : 44;
@@ -288,7 +288,7 @@ static NSObject<UITextViewDelegate> *g_mfCryptoInputDel(void) {
         v.tag = 2;
         [c.contentView addSubview:v];
     }
-    NSArray *e = self.entriesFor(tv);
+    NSArray *e = [self entriesFor:tv];
     if (ip.row >= (NSInteger)e.count) return c;
     NSDictionary *d = e[ip.row];
     UILabel *lb = [c.contentView viewWithTag:1];
@@ -300,7 +300,7 @@ static NSObject<UITextViewDelegate> *g_mfCryptoInputDel(void) {
     return c;
 }
 - (UISwipeActionsConfiguration *)tableView:(UITableView *)tv trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)ip {
-    NSArray *e = self.entriesFor(tv);
+    NSArray *e = [self entriesFor:tv];
     if (ip.row >= (NSInteger)e.count) return nil;
     NSString *val = e[ip.row][@"value"];
     __weak UITableView *wtv = tv;
@@ -318,7 +318,7 @@ static NSObject<UITextViewDelegate> *g_mfCryptoInputDel(void) {
 }
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [tv deselectRowAtIndexPath:ip animated:YES];
-    NSArray *e = self.entriesFor(tv);
+    NSArray *e = [self entriesFor:tv];
     if (ip.row < (NSInteger)e.count) mfCopyText(e[ip.row][@"value"], nil);
 }
 @end
