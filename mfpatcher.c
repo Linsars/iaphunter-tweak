@@ -1,34 +1,14 @@
-// mfpatcher — iOS 26 SDK app 向下兼容二进制补丁
-// 1. imports pool 里 17.5+ only 符号 → 追加 17.0 等价名到 symbols pool + 改 name_offset
-// 2. 重算 CodeDirectory page hashes (re-sign)
+// mfpatcher — 通用 iOS 26 SDK app 向下兼容
+// 把 imports pool 里 ALL undefined 符号翻 weak → dyld 永不 abort
+// 存在的符号正常绑定, 不存在的绑 0 (weak) → app 启动
+// 加上重签(重算 CodeDirectory page hashes)防止 CSA kill
+// 跳过加密二进制 (cryptid!=0, App Store 版)
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 #include <mach-o/loader.h>
 #include <CommonCrypto/CommonDigest.h>
-
-static const char *kRename[][2] = {
-    {"_$s8StoreKit11TransactionV5OfferV11PaymentModeV9freeTrialAGvgZ",
-     "_$s8StoreKit7ProductV17SubscriptionOfferV11PaymentModeV9freeTrialAGvgZ"},
-    {"_$s8StoreKit11TransactionV5OfferV11PaymentModeVMa",
-     "_$s8StoreKit7ProductV17SubscriptionOfferV11PaymentModeVMa"},
-    {"_$s8StoreKit11TransactionV5OfferV11PaymentModeVMn",
-     "_$s8StoreKit7ProductV17SubscriptionOfferV11PaymentModeVMn"},
-    {"_$s8StoreKit11TransactionV5OfferV11PaymentModeVSQAAMc",
-     "_$s8StoreKit7ProductV17SubscriptionOfferV11PaymentModeVSQAAMc"},
-    {"_$s8StoreKit11TransactionV5OfferV11paymentModeAE07PaymentF0VSgvg",
-     "_$s8StoreKit7ProductV17SubscriptionOfferV11paymentModeAE07PaymentG0Vvg"},
-    {"_$s8StoreKit11TransactionV5OfferVMa",
-     "_$s8StoreKit7ProductV17SubscriptionOfferVMa"},
-    {"_$s8StoreKit11TransactionV5OfferVMn",
-     "_$s8StoreKit7ProductV17SubscriptionOfferVMn"},
-    {"_$s8StoreKit11TransactionV5offerAC5OfferVSgvg",
-     "_$s8StoreKit7ProductV18subscriptionOfferAC17SubscriptionOfferVSgvg"},
-    {"_$s7SwiftUI11WindowGroupV2id5title11lazyContentACyxGSSSg_AA4TextVSgxyctcfC",
-     "_$s7SwiftUI11WindowGroupV2id7contentACyxGSS_xyXEtcfC"},
-};
-#define NRENAME (sizeof(kRename)/sizeof(kRename[0]))
 
 static int resign_pages(uint8_t *buf, long sz) {
     struct mach_header_64 *mh = (struct mach_header_64 *)buf;
@@ -80,70 +60,46 @@ int main(int argc, char **argv) {
     struct mach_header_64 *mh = (struct mach_header_64 *)buf;
     if (mh->magic != MH_MAGIC_64 || mh->filetype != MH_EXECUTE) { free(buf); return 0; }
 
-    // 检查 cryptid: 加密二进制(App Store)不能 patch — __TEXT 加密导致 re-sign 必错
+    // cryptid != 0 → 加密二进制, 不碰
     uint8_t *q = buf + sizeof(struct mach_header_64);
+    int skip = 0;
     for (uint32_t i = 0; i < mh->ncmds; i++) {
         uint32_t cmd = *(uint32_t *)q;
         uint32_t cs  = *(uint32_t *)(q + 4);
-        if (cmd == 0x2C) { // LC_ENCRYPTION_INFO_64
-            uint32_t cryptid = *(uint32_t *)(q + 16);
-            if (cryptid != 0) { free(buf); return 0; } // 加密 → skip
-            break;
-        }
+        if (cmd == 0x2C) { if (*(uint32_t *)(q + 16) != 0) skip = 1; break; }
         q += cs;
     }
+    if (skip) { free(buf); return 0; }
 
-    uint32_t cf_off = 0, indirect_off = 0;
-    uint8_t *p = buf + sizeof(struct mach_header_64);
+    // LC_DYLD_CHAINED_FIXUPS
+    uint32_t cf_off = 0;
+    q = buf + sizeof(struct mach_header_64);
     for (uint32_t i = 0; i < mh->ncmds; i++) {
-        uint32_t cmd = *(uint32_t *)p;
-        uint32_t cs  = *(uint32_t *)(p + 4);
-        if (cmd == 0x80000034 && !cf_off) memcpy(&cf_off, p + 8, 4);
-        if (cmd == 0xB) memcpy(&indirect_off, p + 8 + 48, 4);
-        p += cs;
+        uint32_t cmd = *(uint32_t *)q;
+        uint32_t cs  = *(uint32_t *)(q + 4);
+        if (cmd == 0x80000034) { memcpy(&cf_off, q + 8, 4); break; }
+        q += cs;
     }
     if (!cf_off) { free(buf); return 0; }
 
     uint32_t *fh = (uint32_t *)(buf + cf_off);
-    uint32_t imports_off = fh[2], symbols_off = fh[3], imports_count = fh[4], imports_fmt = fh[5];
+    uint32_t imports_off = fh[2], imports_count = fh[4], imports_fmt = fh[5];
     if (imports_fmt != 1 || !imports_count || imports_count > 100000) { free(buf); return 0; }
 
     uint32_t *imports = (uint32_t *)(buf + cf_off + imports_off);
-    char *symPool = (char *)(buf + cf_off + symbols_off);
 
-    uint32_t pool_end = 0;
-    for (uint32_t i = 0; i < imports_count; i++) {
-        uint32_t name_off = imports[i] >> 9;
-        if (cf_off + symbols_off + name_off >= (uint32_t)sz) continue;
-        uint32_t e = name_off + strlen(symPool + name_off) + 1;
-        if (e > pool_end) pool_end = e;
-    }
-    pool_end = (pool_end + 7) & ~7;
-    uint32_t pool_limit = indirect_off ? (indirect_off - cf_off - symbols_off) : (uint32_t)(sz - cf_off - symbols_off);
-
-    int renamed = 0;
+    // 把 ALL non-weak undefined 翻 weak → 通用, 零硬编码
+    int weakified = 0;
     for (uint32_t i = 0; i < imports_count; i++) {
         uint32_t v = imports[i];
-        uint32_t name_off = v >> 9;
-        if (cf_off + symbols_off + name_off >= (uint32_t)sz) continue;
-        const char *name = symPool + name_off;
-        for (unsigned t = 0; t < NRENAME; t++) {
-            if (strcmp(name, kRename[t][0]) != 0) continue;
-            uint32_t new_len = strlen(kRename[t][1]) + 1;
-            if (pool_end + new_len > pool_limit) { fprintf(stderr, "mfpatcher: no space for %s\n", kRename[t][0]); continue; }
-            strcpy(symPool + pool_end, kRename[t][1]);
-            imports[i] = (v & 0x1FF) | (pool_end << 9);
-            pool_end += new_len;
-            renamed++;
-            break;
-        }
+        if ((v >> 8) & 1) continue;
+        imports[i] = v | (1 << 8);
+        weakified++;
     }
-    fprintf(stderr, "mfpatcher: renamed %d/%zu\n", renamed, NRENAME);
+    fprintf(stderr, "mfpatcher: weakified %d/%d imports\n", weakified, imports_count);
 
-    // 只在真正改了 imports 才写回 + 重签 (修复: 不再碰无关 app 二进制)
-    if (renamed > 0) {
-        int resigned = resign_pages(buf, sz);
-        fprintf(stderr, "mfpatcher: resign=%d\n", resigned);
+    if (weakified > 0) {
+        resign_pages(buf, sz);
         f = fopen(argv[1], "wb");
         if (!f) { free(buf); return 1; }
         fwrite(buf, 1, sz, f); fclose(f);
