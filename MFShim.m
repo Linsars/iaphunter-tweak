@@ -3,6 +3,7 @@
 // 每个导出 = trampoline, ctor 时 dlsym iOS 17.0 等价实现并填槽
 #include <dlfcn.h>
 #include <stdint.h>
+#import <Foundation/Foundation.h>
 
 // ---- 槽表(ctor 填充) ----
 static void *g_s0, *g_s1, *g_s2, *g_s3, *g_s4, *g_s5, *g_s6, *g_s7, *g_s8;
@@ -49,6 +50,13 @@ __attribute__((naked)) void shim8(void) {
 }
 
 __attribute__((constructor)) static void mfshimCtor(void) {
+    // 宽进严出: 提交路径注入, ctor 只在白名单 app 里真正干活
+    NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
+    if (!bid || [bid.lowercaseString hasPrefix:@"com.apple."]) return;
+    NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:
+        @"/var/jb/var/mobile/Library/Preferences/com.linsars.minisfix.plist"] ?: @{};
+    NSArray *list = d[@"mfCompatAppList"];
+    if (![list isKindOfClass:[NSArray class]] || ![list containsObject:bid]) return;
     // 8 个 StoreKit: 17.0 等价名
     g_s0 = dlsym(RTLD_DEFAULT, "_$s8StoreKit7ProductV17SubscriptionOfferV11PaymentModeV9freeTrialAGvgZ");
     g_s1 = dlsym(RTLD_DEFAULT, "_$s8StoreKit7ProductV17SubscriptionOfferV11PaymentModeVMa");
