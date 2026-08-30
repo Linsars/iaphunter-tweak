@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <mach-o/loader.h>
 #include <CommonCrypto/CommonDigest.h>
+#include <sys/sysctl.h>
 
 static inline uint32_t be32(const void *p) {
     const uint8_t *b = (const uint8_t *)p;
@@ -65,44 +66,30 @@ int main(int argc, char **argv) {
     struct mach_header_64 *mh = (struct mach_header_64 *)buf;
     if (mh->magic != MH_MAGIC_64 || mh->filetype != MH_EXECUTE) { free(buf); return 0; }
 
-    // ---- 兼容列表闸门: CodeDirectory identifier (BE) → prefs 搜索 ----
-    uint8_t *cdp = buf + sizeof(struct mach_header_64);
-    char bundleId[256] = {0};
-    uint32_t sig_off_tmp = 0;
+    // ---- minos 启发式: binary minos > 当前 OS → 可能有缺符号 → weakify ----
+    // 不依赖兼容列表, 不依赖 prefs, 不依赖任何 UI 状态
+    uint32_t cur_os = 17;
+    {
+        char osbuf[16] = {0};
+        size_t oslen = sizeof(osbuf);
+        if (sysctlbyname("kern.osproductversion", osbuf, &oslen, NULL, 0) == 0)
+            cur_os = (uint32_t)atoi(osbuf);
+    }
+    uint32_t bin_minos = 0;
+    uint8_t *bp = buf + sizeof(struct mach_header_64);
     for (uint32_t i = 0; i < mh->ncmds; i++) {
-        uint32_t cmd = *(uint32_t *)cdp;
-        uint32_t cs  = *(uint32_t *)(cdp + 4);
-        if (cmd == 0x1D) { memcpy(&sig_off_tmp, cdp + 8, 4); break; }
-        cdp += cs;
+        uint32_t cmd = *(uint32_t *)bp;
+        uint32_t cs  = *(uint32_t *)(bp + 4);
+        if (cmd == 0x32) { bin_minos = (*(uint32_t *)(bp + 12)) >> 16; break; }
+        bp += cs;
     }
-    if (sig_off_tmp && sig_off_tmp < (uint32_t)sz) {
-        uint32_t *sb2 = (uint32_t *)(buf + sig_off_tmp);
-        if (be32(sb2) == 0xFADE0CC0) {
-            uint32_t cnt = be32(sb2 + 2);
-            for (uint32_t i = 0; i < cnt; i++) {
-                if (be32(sb2 + 3 + i*2) != 0) continue;
-                uint8_t *cd = (uint8_t *)sb2 + be32(sb2 + 3 + i*2 + 1);
-                uint32_t identOff = be32(cd + 20);
-                snprintf(bundleId, sizeof(bundleId), "%s", (char *)cd + identOff);
-                break;
-            }
-        }
+    fprintf(stderr, "mfpatcher: bin_minos=%u cur_os=%u\n", bin_minos, cur_os);
+    if (bin_minos == 0 || bin_minos <= cur_os) {
+        fprintf(stderr, "mfpatcher: minos<=cur, skip\n");
+        free(buf);
+        return 0;
     }
-    if (!bundleId[0]) { fprintf(stderr, "mfpatcher: no bundleId\n"); free(buf); return 0; }
-
-    FILE *pf = fopen("/var/jb/var/mobile/Library/Preferences/com.linsars.minisfix.plist", "rb");
-    if (!pf) { free(buf); return 0; }
-    fseek(pf, 0, SEEK_END); long psz = ftell(pf); fseek(pf, 0, SEEK_SET);
-    char *prefs = malloc(psz + 1);
-    if (!prefs || fread(prefs, 1, psz, pf) != (size_t)psz) { free(prefs); free(buf); fclose(pf); return 0; }
-    prefs[psz] = 0; fclose(pf);
-    int inList = 0;
-    for (long i = 0; i <= psz - (long)strlen(bundleId); i++) {
-        if (memcmp(prefs + i, bundleId, strlen(bundleId)) == 0) { inList = 1; break; }
-    }
-    free(prefs);
-    if (!inList) { fprintf(stderr, "mfpatcher: %s not in list\n", bundleId); free(buf); return 0; }
-    fprintf(stderr, "mfpatcher: %s in list, patching\n", bundleId);
+    fprintf(stderr, "mfpatcher: minos>cur, patching\n");
 
     // ---- LC_DYLD_CHAINED_FIXUPS (native LE) ----
     uint32_t cf_off = 0;
