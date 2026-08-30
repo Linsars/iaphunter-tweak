@@ -336,10 +336,14 @@ void mfShowCryptoToolboxPage(void) {
     void (^relayout)(void) = ^{
         BOOL codec = (grpSeg.selectedSegmentIndex == 3);
         BOOL sym = (grpSeg.selectedSegmentIndex == 0);
+        // v2.9.5: 编解码组隐藏输入格式条（编码/解码本身就是格式，fmt 二次解析=解两次）
+        fmtSeg.hidden = codec;
+        CGFloat top = codec ? 102 : 138;
         dirSeg.hidden = !sym;
-        grpSeg.frame = CGRectMake(12, 138, sym ? w - 158 : w - 24, 30);
-        if (sym) dirSeg.frame = CGRectMake(w - 134, 138, 122, 30);
-        CGFloat y = 212;
+        grpSeg.frame = CGRectMake(12, top, sym ? w - 158 : w - 24, 30);
+        if (sym) dirSeg.frame = CGRectMake(w - 134, top, 122, 30);
+        chipScroll.frame = CGRectMake(12, top + 36, w - 24, 32);
+        CGFloat y = top + 74;
         keyF.hidden = codec; ivF.hidden = codec;
         if (!codec) {
             keyF.frame = CGRectMake(12, y, w - 24, 34); y += 40;
@@ -439,6 +443,7 @@ void mfCryptoRunAction(UIButton *btn) {
     // v2.9.4: 按「字符串 == placeholder」判定空输入（textColor 指针比较不可靠）
     NSString *txt = [input.text isEqualToString:kMFCryptoPH] ? @"" : (input.text ?: @"" );
     NSInteger fmt = fmtSeg ? fmtSeg.selectedSegmentIndex : 0;
+    if (sa && sa->group == 3) fmt = 0; // v2.9.5: 编解码组输入本身就是编码文本，禁二次解析
     // v2.9.3: 不猜 — 选什么执行什么，结果标注算法名，报错自带算法名
     NSString *result = mfCryptoExecute(algo, fmt, encrypt, txt, keyF.text, ivF.text);
     output.text = [NSString stringWithFormat:@"[%s]\n%@", sa ? sa->name : "?", result];
