@@ -80,10 +80,11 @@ int main(int argc, char **argv) {
     for (uint32_t i = 0; i < mh->ncmds; i++) {
         uint32_t cmd = *(uint32_t *)bp;
         uint32_t cs  = *(uint32_t *)(bp + 4);
-        if (cmd == 0x32) { bin_minos = (*(uint32_t *)(bp + 12)) >> 16; break; }
+        if (cmd == 0x32) { bin_minos = *(uint32_t *)(bp + 12); break; }
         bp += cs;
     }
-    fprintf(stderr, "mfpatcher: bin_minos=%u cur_os=%u\n", bin_minos, cur_os);
+    { int mj=0,mn=0; sscanf(osbuf, "%d.%d", &mj, &mn); cur_os = ((uint32_t)mj<<16)|((uint32_t)mn<<8); }
+    fprintf(stderr, "mfpatcher: bin_minos=0x%08X cur_os=0x%08X\n", bin_minos, cur_os);
     if (bin_minos == 0 || bin_minos <= cur_os) {
         fprintf(stderr, "mfpatcher: minos<=cur, skip\n");
         free(buf);
