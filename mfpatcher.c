@@ -126,15 +126,48 @@ int main(int argc, char **argv) {
 
     uint32_t *imports = (uint32_t *)(buf + cf_off + imports_off);
 
-    // weakify ALL imports (通用: 任何缺符号都不会 dyld abort)
-    int weakified = 0;
+    // 1. weakify ALL imports (通用安全网)  2. 已知 iOS 26 SDK 符号改名到 17.0 (dyld 直接解析)
+    static const char *kRename[][2] = {
+        {"_$s8StoreKit11TransactionV5OfferV11PaymentModeV9freeTrialAGvgZ","_$s8StoreKit7ProductV17SubscriptionOfferV11PaymentModeV9freeTrialAGvgZ"},
+        {"_$s8StoreKit11TransactionV5OfferV11PaymentModeVMa","_$s8StoreKit7ProductV17SubscriptionOfferV11PaymentModeVMa"},
+        {"_$s8StoreKit11TransactionV5OfferV11PaymentModeVMn","_$s8StoreKit7ProductV17SubscriptionOfferV11PaymentModeVMn"},
+        {"_$s8StoreKit11TransactionV5OfferV11PaymentModeVSQAAMc","_$s8StoreKit7ProductV17SubscriptionOfferV11PaymentModeVSQAAMc"},
+        {"_$s8StoreKit11TransactionV5OfferV11paymentModeAE07PaymentF0VSgvg","_$s8StoreKit7ProductV17SubscriptionOfferV11paymentModeAE07PaymentG0Vvg"},
+        {"_$s8StoreKit11TransactionV5OfferVMa","_$s8StoreKit7ProductV17SubscriptionOfferVMa"},
+        {"_$s8StoreKit11TransactionV5OfferVMn","_$s8StoreKit7ProductV17SubscriptionOfferVMn"},
+        {"_$s8StoreKit11TransactionV5offerAC5OfferVSgvg","_$s8StoreKit7ProductV18subscriptionOfferAC17SubscriptionOfferVSgvg"},
+        {"_$s7SwiftUI11WindowGroupV2id5title11lazyContentACyxGSSSg_AA4TextVSgxyctcfC","_$s7SwiftUI11WindowGroupV2id7contentACyxGSS_xyXEtcfC"},
+    };
+    int nrename = sizeof(kRename)/sizeof(kRename[0]);
+    char *symPool = (char *)(buf + cf_off + fh[3]);
+    uint32_t pool_end = 0;
+    for (uint32_t i = 0; i < imports_count; i++) {
+        uint32_t no = imports[i] >> 9;
+        if (cf_off + fh[3] + no >= (uint32_t)sz) continue;
+        uint32_t e = no + strlen(symPool + no) + 1;
+        if (e > pool_end) pool_end = e;
+    }
+    pool_end = (pool_end + 7) & ~7;
+    int weakified = 0, renamed = 0;
     for (uint32_t i = 0; i < imports_count; i++) {
         uint32_t v = imports[i];
-        if ((v >> 8) & 1) continue;
-        imports[i] = v | (1 << 8);
-        weakified++;
+        uint32_t no = v >> 9;
+        const char *name = symPool + no;
+        int matched = -1;
+        for (int t = 0; t < nrename; t++) { if (strcmp(name, kRename[t][0]) == 0) { matched = t; break; } }
+        if (matched >= 0) {
+            uint32_t nlen = strlen(kRename[matched][1]) + 1;
+            if (cf_off + fh[3] + pool_end + nlen < indirect_off) {
+                strcpy(symPool + pool_end, kRename[matched][1]);
+                imports[i] = (v & 0x1FF) | (1 << 8) | (pool_end << 9);
+                pool_end += nlen;
+                renamed++; weakified++;
+                continue;
+            }
+        }
+        if (!((v >> 8) & 1)) { imports[i] = v | (1 << 8); weakified++; }
     }
-    fprintf(stderr, "mfpatcher: weakified %d/%d imports\n", weakified, imports_count);
+    fprintf(stderr, "mfpatcher: weakified=%d renamed=%d/%d\n", weakified, renamed, nrename);
 
     if (weakified > 0) {
         resign_pages(buf, sz);
