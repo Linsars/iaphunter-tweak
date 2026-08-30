@@ -412,7 +412,6 @@ void mfCryptoRunAction(UIButton *btn) {
     UITextField *ivF = objc_getAssociatedObject(page, "ivF");
     UITextView *output = objc_getAssociatedObject(page, "output");
     if (!input || !output) return;
-    static BOOL mfCryptoLooksReadable(NSData *d); // v2.9.2 前置声明
     int algo = g_mfCryptoAlgo;
     const MFCryptoAlgo *sa = NULL;
     for (int i = 0; i < mfAlgoCount; i++) if (mfAlgos[i].id == algo) { sa = &mfAlgos[i]; break; }
