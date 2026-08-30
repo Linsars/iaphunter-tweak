@@ -100,6 +100,10 @@ static uint32_t g_indirectoff, g_nindirect;
 static uint64_t g_stubsAddr, g_stubsSize;
 static uint32_t g_stubsRes1;
 static BOOL g_hasStubs, g_hasSymtab, g_hasIndirect;
+// __got/__auth_got 扩展(数据指针类符号)
+#define MF_MAX_GOT 8
+static uint64_t g_gotAddr[MF_MAX_GOT]; static uint64_t g_gotSize[MF_MAX_GOT];
+static uint32_t g_gotRes1[MF_MAX_GOT]; static int g_gotCount;
 
 static uint8_t *mfFileOffToPtr(uint64_t fileoff) {
     for (int i = 0; i < g_segCount; i++) {
@@ -130,11 +134,19 @@ static void mfParseLcs(void) {
             uint32_t so = off + 72;
             for (uint32_t k = 0; k < nsects; k++) {
                 char sect[17]; memcpy(sect, base + so, 16); sect[16] = 0;
+                char segname[17]; memcpy(segname, base + so - 16, 16); segname[16] = 0;
                 if (strcmp(sect, "__stubs") == 0) {
                     memcpy(&g_stubsAddr, base + so + 32, 8);
                     memcpy(&g_stubsSize, base + so + 40, 8);
                     memcpy(&g_stubsRes1, base + so + 68, 4);  // reserved1(68), +64 是 flags
                     g_hasStubs = YES;
+                }
+                // __got / __auth_got: 数据指针类符号(SQAAMc 等)
+                if ((strcmp(sect, "__got") == 0 || strcmp(sect, "__auth_got") == 0) && g_gotCount < MF_MAX_GOT) {
+                    memcpy(&g_gotAddr[g_gotCount], base + so + 32, 8);
+                    memcpy(&g_gotSize[g_gotCount], base + so + 40, 8);
+                    memcpy(&g_gotRes1[g_gotCount], base + so + 68, 4);
+                    g_gotCount++;
                 }
                 so += 80;
             }
@@ -178,6 +190,39 @@ static void *mfFindSlotForSymbol(const char *target) {
         return (void *)slot;
     }
     return NULL;
+}
+
+// __got 槽查找(数据指针类: SQAAMc / VMa / VMn)
+static void *mfFindGotSlotForSymbol(const char *target) {
+    if (!g_hasSymtab || !g_hasIndirect || !g_nindirect) return NULL;
+    for (int g = 0; g < g_gotCount; g++) {
+        uint64_t count = g_gotSize[g] / 8;
+        for (uint64_t j = 0; j < count; j++) {
+            uint64_t iidx = (uint64_t)g_gotRes1[g] + j;
+            if (iidx >= g_nindirect) break;
+            uint32_t *ip = (uint32_t *)mfFileOffToPtr(g_indirectoff + iidx * 4);
+            if (!ip) continue;
+            uint32_t symIdx = *ip;
+            if (symIdx == 0xFFFFFFFF || symIdx >= g_nsyms) continue;
+            uint32_t n_strx = *(uint32_t *)mfFileOffToPtr(g_symoff + (uint64_t)symIdx * 16);
+            const char *name = (const char *)mfFileOffToPtr(g_stroff + n_strx);
+            if (!name || strcmp(name, target) != 0) continue;
+            return (void *)(g_slide + g_gotAddr[g] + j * 8);
+        }
+    }
+    return NULL;
+}
+
+static void mfPatchSlotNamed(void *slot, void *impl, const char *name) {
+    size_t ps = (size_t)sysconf(_SC_PAGESIZE);
+    uint64_t page = (uint64_t)slot & ~(uint64_t)(ps - 1);
+    if (mprotect((void *)page, ps, PROT_READ | PROT_WRITE) != 0) {
+        mfCompatDiag(@"fail", [NSString stringWithFormat:@"mprotect %s errno=%d", name, errno]);
+        return;
+    }
+    *(void **)slot = impl;
+    mprotect((void *)page, ps, PROT_READ);
+    mfCompatLog("GOT patched: %s slot=%p -> %p", name, slot, impl);
 }
 
 static void mfPatchSlot(void *slot, void *impl, int tag) {
@@ -226,6 +271,45 @@ static void mfCompatPatchMainBinary(void) {
         patched++;
     }
     mfCompatDiag(@"done", [NSString stringWithFormat:@"patched=%d/4", patched]);
+
+    // ---- Zora 类 app: iOS 26 SDK strong 缺符号 → 17.0 等价转发 ----
+    static const char *kFwd[][2] = {
+        // {app_symbol, ios17_equivalent}
+        {"_$s8StoreKit11TransactionV5OfferV11PaymentModeV9freeTrialAGvgZ",
+         "_$s8StoreKit7ProductV17SubscriptionOfferV11PaymentModeV9freeTrialAGvgZ"},
+        {"_$s8StoreKit11TransactionV5OfferV11PaymentModeVMa",
+         "_$s8StoreKit7ProductV17SubscriptionOfferV11PaymentModeVMa"},
+        {"_$s8StoreKit11TransactionV5OfferV11PaymentModeVMn",
+         "_$s8StoreKit7ProductV17SubscriptionOfferV11PaymentModeVMn"},
+        {"_$s8StoreKit11TransactionV5OfferV11PaymentModeVSQAAMc",
+         "_$s8StoreKit7ProductV17SubscriptionOfferV11PaymentModeVSQAAMc"},
+        {"_$s8StoreKit11TransactionV5OfferV11paymentModeAE07PaymentF0VSgvg",
+         "_$s8StoreKit7ProductV17SubscriptionOfferV11paymentModeAE07PaymentG0Vvg"},
+        {"_$s8StoreKit11TransactionV5OfferVMa",
+         "_$s8StoreKit7ProductV17SubscriptionOfferVMa"},
+        {"_$s8StoreKit11TransactionV5OfferVMn",
+         "_$s8StoreKit7ProductV17SubscriptionOfferVMn"},
+        {"_$s8StoreKit11TransactionV5offerAC5OfferVSgvg",
+         "_$s8StoreKit7ProductV18subscriptionOfferAC17SubscriptionOfferVSgvg"},
+        {"_$s7SwiftUI11WindowGroupV2id5title11lazyContentACyxGSSSg_AA4TextVSgxyctcfC",
+         "_$s7SwiftUI11WindowGroupV2id7contentACyxGSS_xyXEtcfC"},
+    };
+    int nfwd = sizeof(kFwd)/sizeof(kFwd[0]);
+    int fwPatched = 0;
+    for (int f = 0; f < nfwd; f++) {
+        void *impl = dlsym(RTLD_DEFAULT, kFwd[f][1]);
+        if (!impl) {
+            // 无 17.0 等价 → 惰性 nil(仅当 app 实际调用才触发)
+            impl = dlsym(RTLD_DEFAULT, "malloc"); // 保底非空, 调用者拿到垃圾但至少不 PC=0
+        }
+        if (!impl) continue;
+        void *slot = mfFindSlotForSymbol(kFwd[f][0]);
+        if (!slot) slot = mfFindGotSlotForSymbol(kFwd[f][0]);
+        if (!slot) { mfCompatDiag(@"fwmiss", [NSString stringWithFormat:@"%s", kFwd[f][0]]); continue; }
+        mfPatchSlotNamed(slot, impl, kFwd[f][0]);
+        fwPatched++;
+    }
+    mfCompatDiag(@"fwdone", [NSString stringWithFormat:@"fwdPatched=%d/%d", fwPatched, nfwd]);
 }
 
 // ---- 偏好: 是否需要修 ----

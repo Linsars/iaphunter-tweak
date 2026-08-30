@@ -42,19 +42,17 @@ jobs:
           ls -la layout-rootless/usr/bin/
           echo "=== minisfixd built and entitled ==="
 
-      - name: Build MFShim early-inject shim (exports strong missing symbols)
+      - name: Build mfpatcher binary (imports pool weakifier)
         run: |
           mkdir -p layout-rootless/usr/lib
           xcrun -sdk iphoneos clang -arch arm64 -arch arm64e \
             -isysroot "$THEOS/sdks/iPhoneOS14.5.sdk" \
             -miphoneos-version-min=14.5 \
-            -shared -O2 -fno-objc-arc -framework Foundation \
-            -o layout-rootless/usr/lib/MFShim.dylib MFShim.m
-          ldid -S layout-rootless/usr/lib/MFShim.dylib
-          cp mfshim-env.sh layout-rootless/usr/bin/mfshim-env.sh
-          chmod 755 layout-rootless/usr/bin/mfshim-env.sh
-          nm -gU layout-rootless/usr/lib/MFShim.dylib | grep -c "StoreKit" || true
-          echo "=== MFShim built and signed ==="
+            -O2 -Wall \
+            -o layout-rootless/usr/lib/mfpatcher mfpatcher.c
+          ldid -S layout-rootless/usr/lib/mfpatcher
+          ls -la layout-rootless/usr/lib/mfpatcher
+          echo "=== mfpatcher built and signed ==="
 
       - name: Build package
         run: make package

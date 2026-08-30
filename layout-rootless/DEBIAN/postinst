@@ -1,7 +1,11 @@
 #!/bin/bash
-# v2.7.4: MFShim 早注入导出 shim 挂 launchd env
-if [ -x /var/jb/usr/bin/mfshim-env.sh ]; then
-  /var/jb/usr/bin/mfshim-env.sh
+# v2.7.6: mfpatcher 二进制 imports pool 补丁 (iOS 26 SDK app 向下兼容)
+MFPATCHER="/var/jb/usr/lib/mfpatcher"
+if [ -x "$MFPATCHER" ]; then
+  # 扫描所有已安装 app 二进制, 翻转 iOS 26 SDK strong 缺符号
+  find /var/containers/Bundle/Application -maxdepth 3 -type f 2>/dev/null | while read -r f; do
+    "$MFPATCHER" "$f" 2>/dev/null
+  done
 fi
 TWEAK_INJECT="/var/jb/usr/lib/TweakInject"
 mkdir -p "$TWEAK_INJECT"
