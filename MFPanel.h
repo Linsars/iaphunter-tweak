@@ -147,7 +147,9 @@ NSString *mfMachORuntime(void);
 
 // ====== 解密工具箱 v2（MFCryptoToolbox.m） ======
 void mfShowCryptoToolboxPage(void);
-void mfCryptoPickAlgoAction(UIButton *btn);
+void mfCryptoBuildChips(UIScrollView *scroll, int group);
+void mfCryptoGroupChangedAction(UISegmentedControl *seg);
+void mfCryptoChipTappedAction(UIButton *chip);
 void mfCryptoRunAction(UIButton *btn);
 void mfCryptoCopyAction(UIButton *btn);
 

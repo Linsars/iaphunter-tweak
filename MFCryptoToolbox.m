@@ -258,17 +258,17 @@ void mfShowCryptoToolboxPage(void) {
     fmtSeg.apportionsSegmentWidthsByContent = YES;
     [page addSubview:fmtSeg];
 
-    UIButton *algoBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    algoBtn.frame = CGRectMake(12, 138, w - 24, 36);
-    algoBtn.backgroundColor = [UIColor systemIndigoColor];
-    algoBtn.layer.cornerRadius = 10;
-    algoBtn.tintColor = UIColor.whiteColor;
-    algoBtn.titleLabel.font = [UIFont boldSystemFontOfSize:13];
-    [algoBtn setTitle:@"算法: AES-CBC ▾" forState:UIControlStateNormal];
-    objc_setAssociatedObject(algoBtn, "algo", @(0), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    [page addSubview:algoBtn];
+    // v2.9.1: 算法选择内嵌化 — 分组 segment + 横滑 chip，替代 action sheet 弹窗
+    UISegmentedControl *grpSeg = [[UISegmentedControl alloc] initWithItems:@[@"对称", @"哈希", @"HMAC", @"编解码"]];
+    grpSeg.frame = CGRectMake(12, 138, w - 24, 30);
+    grpSeg.selectedSegmentIndex = 0;
+    [page addSubview:grpSeg];
 
-    UITextField *keyF = [[UITextField alloc] initWithFrame:CGRectMake(12, 180, w - 24, 34)];
+    UIScrollView *chipScroll = [[UIScrollView alloc] initWithFrame:CGRectMake(12, 174, w - 24, 32)];
+    chipScroll.showsHorizontalScrollIndicator = NO;
+    [page addSubview:chipScroll];
+
+    UITextField *keyF = [[UITextField alloc] initWithFrame:CGRectZero];
     keyF.placeholder = @"Key（hex / base64 / 文本自动识别）";
     keyF.font = [UIFont systemFontOfSize:12];
     keyF.borderStyle = UITextBorderStyleRoundedRect;
@@ -276,7 +276,7 @@ void mfShowCryptoToolboxPage(void) {
     mfAttachKbBar(keyF);   // v2.7.1: 键盘收起工具条
     [page addSubview:keyF];
 
-    UITextField *ivF = [[UITextField alloc] initWithFrame:CGRectMake(12, 218, w - 24, 34)];
+    UITextField *ivF = [[UITextField alloc] initWithFrame:CGRectZero];
     ivF.placeholder = @"IV / Nonce（不足补零，可空）";
     ivF.font = [UIFont systemFontOfSize:12];
     ivF.borderStyle = UITextBorderStyleRoundedRect;
@@ -307,67 +307,100 @@ void mfShowCryptoToolboxPage(void) {
     [copyBtn setTitle:@"📋 复制" forState:UIControlStateNormal];
     [page addSubview:copyBtn];
 
+    // 布局函数：编解码组隐藏 Key/IV，其余控件上移占位
+    void (^relayout)(void) = ^{
+        BOOL codec = (grpSeg.selectedSegmentIndex == 3);
+        CGFloat y = 212;
+        keyF.hidden = codec; ivF.hidden = codec;
+        if (!codec) {
+            keyF.frame = CGRectMake(12, y, w - 24, 34); y += 40;
+            ivF.frame  = CGRectMake(12, y, w - 24, 34); y += 40;
+        }
+        runBtn.frame  = CGRectMake(12, y, w - 24, 38); y += 46;
+        output.frame  = CGRectMake(12, y, w - 24, g_mfCardH - y - 50);
+        copyBtn.frame = CGRectMake(w - 92, g_mfCardH - 46, 80, 34);
+    };
+
     objc_setAssociatedObject(page, "input", input, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    objc_setAssociatedObject(page, "fmtSeg", fmtSeg, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    objc_setAssociatedObject(page, "algoBtn", algoBtn, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(page, "grpSeg", grpSeg, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(page, "keyF", keyF, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(page, "ivF", ivF, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(page, "output", output, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
-    [algoBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfCryptoPickAlgo:") forControlEvents:UIControlEventTouchUpInside];
+    extern void mfCryptoBuildChips(UIScrollView *scroll, int group);
+    objc_setAssociatedObject(page, "chipScroll", chipScroll, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    mfCryptoBuildChips(chipScroll, 0);
+    relayout();
+
+    [grpSeg addTarget:g_mfCtrl action:NSSelectorFromString(@"mfCryptoGroupChanged:") forControlEvents:UIControlEventValueChanged];
+    objc_setAssociatedObject(grpSeg, "relayout", relayout, OBJC_ASSOCIATION_COPY_NONATOMIC);
     [runBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfCryptoRun:") forControlEvents:UIControlEventTouchUpInside];
     [copyBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfCryptoCopy:") forControlEvents:UIControlEventTouchUpInside];
 
     mfPushPage(page);
 }
 
-// Ctrl 实现（MFPanel.m 转发到这些 C 函数）
-void mfCryptoPickAlgoAction(UIButton *btn) {
-    UIView *page = (UIView *)btn.superview;
-    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"选择算法" message:nil preferredStyle:UIAlertControllerStyleActionSheet];
-    NSArray *groups = @[@[@"AES-CBC", @"AES-ECB", @"AES-CTR"],
-                        @[@"MD5", @"SHA1", @"SHA256", @"SHA512"],
-                        @[@"HMAC-SHA256", @"HMAC-SHA1", @"HMAC-MD5"],
-                        @[@"Base64 编码", @"Base64 解码", @"Hex 编码", @"Hex 解码", @"URL 编码", @"URL 解码", @"JWT 解码"]];
-    __block int idCursor = 0;
-    for (NSArray *g in groups) {
-        for (NSString *nm in g) {
-            int aid = -1;
-            for (int i = 0; i < mfAlgoCount; i++) if (!strcmp(mfAlgos[i].name, nm.UTF8String)) { aid = mfAlgos[i].id; break; }
-            idCursor++;
-            [sheet addAction:[UIAlertAction actionWithTitle:nm style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-                UIButton *ab = objc_getAssociatedObject(page, "algoBtn");
-                objc_setAssociatedObject(ab, "algo", @(aid), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-                [ab setTitle:[NSString stringWithFormat:@"算法: %@ ▾", nm] forState:UIControlStateNormal];
-            }]];
-        }
+// ===== v2.9.1: 内嵌算法选择（替代 action sheet 弹窗）=====
+static int g_mfCryptoAlgo = 0;   // 当前算法 id（文件级状态，页面重建时复位）
+
+static void mfCryptoHighlightChips(UIScrollView *scroll) {
+    for (UIView *v in scroll.subviews) {
+        if (![v isKindOfClass:[UIButton class]]) continue;
+        UIButton *b = (UIButton *)v;
+        BOOL sel = (b.tag == (NSUInteger)g_mfCryptoAlgo);
+        b.backgroundColor = sel ? [UIColor systemIndigoColor] : [UIColor secondarySystemFillColor];
+        [b setTitleColor:sel ? UIColor.whiteColor : UIColor.labelColor forState:UIControlStateNormal];
     }
-    [sheet addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    UIViewController *presenter = g_mfPanelRootVC;
-    while (presenter.presentedViewController && presenter.presentedViewController != presenter)
-        presenter = presenter.presentedViewController;
-    if (!presenter || !presenter.view.window)
-        for (UIWindow *w2 in [UIApplication sharedApplication].windows)
-            if (w2.isKeyWindow) { presenter = w2.rootViewController; break; }
-    UIView *overlay = g_mfPanelOverlay;
-    overlay.hidden = YES;
-    sheet.popoverPresentationController.sourceView = btn;
-    [presenter presentViewController:sheet animated:YES completion:^{
-        overlay.hidden = NO; // action sheet 是浮层不占 presentation 层级，立即恢复
-    }];
+}
+
+void mfCryptoBuildChips(UIScrollView *scroll, int group) {
+    for (UIView *sub in scroll.subviews) [sub removeFromSuperview];
+    CGFloat x = 0;
+    for (int i = 0; i < mfAlgoCount; i++) {
+        if (mfAlgos[i].group != group) continue;
+        NSString *nm = @(mfAlgos[i].name);
+        CGFloat cw = [nm sizeWithAttributes:@{NSFontAttributeName: [UIFont systemFontOfSize:12]}].width + 24;
+        UIButton *chip = [UIButton buttonWithType:UIButtonTypeSystem];
+        chip.frame = CGRectMake(x, 3, cw, 26);
+        chip.layer.cornerRadius = 13;
+        chip.titleLabel.font = [UIFont systemFontOfSize:12];
+        chip.tag = mfAlgos[i].id;
+        [chip setTitle:nm forState:UIControlStateNormal];
+        [chip addTarget:g_mfCtrl action:NSSelectorFromString(@"mfCryptoChipTapped:") forControlEvents:UIControlEventTouchUpInside];
+        [scroll addSubview:chip];
+        x += cw + 8;
+    }
+    scroll.contentSize = CGSizeMake(MAX(x - 8, 10), 32);
+    mfCryptoHighlightChips(scroll);
+}
+
+void mfCryptoGroupChangedAction(UISegmentedControl *seg) {
+    UIView *page = (UIView *)seg.superview;
+    UIScrollView *scroll = objc_getAssociatedObject(page, "chipScroll");
+    if (!scroll) return;
+    int group = (int)seg.selectedSegmentIndex;
+    for (int i = 0; i < mfAlgoCount; i++) {
+        if (mfAlgos[i].group == group) { g_mfCryptoAlgo = mfAlgos[i].id; break; }
+    }
+    mfCryptoBuildChips(scroll, group);
+    void (^relayout)(void) = objc_getAssociatedObject(seg, "relayout");
+    if (relayout) relayout();
+}
+
+void mfCryptoChipTappedAction(UIButton *chip) {
+    g_mfCryptoAlgo = (int)chip.tag;
+    mfCryptoHighlightChips((UIScrollView *)chip.superview);
 }
 
 void mfCryptoRunAction(UIButton *btn) {
     UIView *page = (UIView *)btn.superview;
     UITextView *input = objc_getAssociatedObject(page, "input");
     UISegmentedControl *fmtSeg = objc_getAssociatedObject(page, "fmtSeg");
-    UIButton *algoBtn = objc_getAssociatedObject(page, "algoBtn");
     UITextField *keyF = objc_getAssociatedObject(page, "keyF");
     UITextField *ivF = objc_getAssociatedObject(page, "ivF");
     UITextView *output = objc_getAssociatedObject(page, "output");
     if (!input || !output) return;
-
-    int algo = [objc_getAssociatedObject(algoBtn, "algo") intValue];
+    int algo = g_mfCryptoAlgo;
     // 占位符文本当空处理
     NSString *txt = input.textColor == [UIColor placeholderTextColor] ? @"" : input.text;
     NSString *result = mfCryptoExecute(algo, fmtSeg.selectedSegmentIndex, YES, txt, keyF.text, ivF.text);

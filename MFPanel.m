@@ -1854,7 +1854,8 @@ void mfShowProductPage(void) {
 
 // Crypto 工具箱
 // Crypto 工具箱 v2（MFCryptoToolbox.m）
-- (void)mfCryptoPickAlgo:(UIButton *)btn { mfCryptoPickAlgoAction(btn); }
+- (void)mfCryptoGroupChanged:(UISegmentedControl *)seg { mfCryptoGroupChangedAction(seg); }
+- (void)mfCryptoChipTapped:(UIButton *)chip { mfCryptoChipTappedAction(chip); }
 - (void)mfCryptoRun:(UIButton *)btn { mfCryptoRunAction(btn); }
 - (void)mfCryptoCopy:(UIButton *)btn { mfCryptoCopyAction(btn); }
 // 左滑操作入口（记录挂在 self 的 "mfSwipeRec"，不依赖按钮参数）
