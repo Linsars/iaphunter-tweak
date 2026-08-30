@@ -238,6 +238,23 @@ static NSString *mfCryptoExecute(int algo, NSInteger inFmt, BOOL encrypt,
 
 #pragma mark - 页面
 
+// v2.9.4: 输入框真 placeholder 管理（UITextView 不会在输入时自动换 textColor，
+// 旧写法「textColor 指针当标记」导致执行时永远把输入当占位符 → inlen=0）
+static NSString * const kMFCryptoPH = @"在此粘贴要处理的内容…";
+@interface MFCryptoPHDel : NSObject <UITextViewDelegate> @end
+@implementation MFCryptoPHDel
+- (void)textViewDidBeginEditing:(UITextView *)tv {
+    if ([tv.text isEqualToString:kMFCryptoPH]) { tv.text = @""; tv.textColor = UIColor.labelColor; }
+}
+- (void)textViewDidEndEditing:(UITextView *)tv {
+    if (!tv.text.length) { tv.text = kMFCryptoPH; tv.textColor = [UIColor placeholderTextColor]; }
+}
+@end
+static NSObject<UITextViewDelegate> *g_mfCryptoInputDel(void) {
+    static MFCryptoPHDel *d = nil;
+    return d ?: (d = [MFCryptoPHDel new]);
+}
+
 void mfShowCryptoToolboxPage(void) {
     UIView *page = mfMakePage(@"🔐 解密工具箱", YES);
     CGFloat w = g_mfCardW;
@@ -249,6 +266,7 @@ void mfShowCryptoToolboxPage(void) {
     input.autocorrectionType = UITextAutocorrectionTypeNo;
     input.text = @"在此粘贴要处理的内容…";
     input.textColor = [UIColor placeholderTextColor];
+    input.delegate = g_mfCryptoInputDel();
     mfAttachKbBar(input);   // v2.7.1: 键盘收起工具条
     [page addSubview:input];
 
@@ -418,13 +436,14 @@ void mfCryptoRunAction(UIButton *btn) {
     UISegmentedControl *dirSeg = objc_getAssociatedObject(page, "dirSeg");
     BOOL encrypt = dirSeg ? (dirSeg.selectedSegmentIndex == 0) : YES;
     // 占位符文本当空处理
-    NSString *txt = input.textColor == [UIColor placeholderTextColor] ? @"" : input.text;
+    // v2.9.4: 按「字符串 == placeholder」判定空输入（textColor 指针比较不可靠）
+    NSString *txt = [input.text isEqualToString:kMFCryptoPH] ? @"" : (input.text ?: @"" );
     NSInteger fmt = fmtSeg ? fmtSeg.selectedSegmentIndex : 0;
     // v2.9.3: 不猜 — 选什么执行什么，结果标注算法名，报错自带算法名
     NSString *result = mfCryptoExecute(algo, fmt, encrypt, txt, keyF.text, ivF.text);
     output.text = [NSString stringWithFormat:@"[%s]\n%@", sa ? sa->name : "?", result];
-    mfLog(@"[MF] crypto run algo=%d(%s) fmt=%ld enc=%d inlen=%lu",
-          algo, sa ? sa->name : "?", (long)fmt, encrypt, (unsigned long)txt.length);
+    mfLog(@"[MF] crypto run algo=%d fmt=%ld enc=%d inlen=%lu",
+          algo, (long)fmt, encrypt, (unsigned long)txt.length);
 }
 
 void mfCryptoCopyAction(UIButton *btn) {
