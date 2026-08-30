@@ -268,6 +268,13 @@ void mfShowCryptoToolboxPage(void) {
     chipScroll.showsHorizontalScrollIndicator = NO;
     [page addSubview:chipScroll];
 
+    // v2.9.3: 对称组 加密/解密 方向（此前 encrypt 硬编码 YES，解密不可达）
+    UISegmentedControl *dirSeg = [[UISegmentedControl alloc] initWithItems:@[@"加密", @"解密"]];
+    dirSeg.frame = CGRectMake(w - 134, 138, 122, 30);
+    dirSeg.selectedSegmentIndex = 0;
+    [page addSubview:dirSeg];
+    objc_setAssociatedObject(page, "dirSeg", dirSeg, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
     UITextField *keyF = [[UITextField alloc] initWithFrame:CGRectZero];
     keyF.placeholder = @"Key（hex / base64 / 文本自动识别）";
     keyF.font = [UIFont systemFontOfSize:12];
@@ -307,9 +314,13 @@ void mfShowCryptoToolboxPage(void) {
     [copyBtn setTitle:@"📋 复制" forState:UIControlStateNormal];
     [page addSubview:copyBtn];
 
-    // 布局函数：编解码组隐藏 Key/IV，其余控件上移占位
+    // 布局函数：编解码组隐藏 Key/IV；对称组收缩分组条并显示 加密/解密
     void (^relayout)(void) = ^{
         BOOL codec = (grpSeg.selectedSegmentIndex == 3);
+        BOOL sym = (grpSeg.selectedSegmentIndex == 0);
+        dirSeg.hidden = !sym;
+        grpSeg.frame = CGRectMake(12, 138, sym ? w - 158 : w - 24, 30);
+        if (sym) dirSeg.frame = CGRectMake(w - 134, 138, 122, 30);
         CGFloat y = 212;
         keyF.hidden = codec; ivF.hidden = codec;
         if (!codec) {
@@ -403,42 +414,18 @@ void mfCryptoRunAction(UIButton *btn) {
     if (!input || !output) return;
     static BOOL mfCryptoLooksReadable(NSData *d); // v2.9.2 前置声明
     int algo = g_mfCryptoAlgo;
+    const MFCryptoAlgo *sa = NULL;
+    for (int i = 0; i < mfAlgoCount; i++) if (mfAlgos[i].id == algo) { sa = &mfAlgos[i]; break; }
+    UISegmentedControl *dirSeg = objc_getAssociatedObject(page, "dirSeg");
+    BOOL encrypt = dirSeg ? (dirSeg.selectedSegmentIndex == 0) : YES;
     // 占位符文本当空处理
     NSString *txt = input.textColor == [UIColor placeholderTextColor] ? @"" : input.text;
     NSInteger fmt = fmtSeg ? fmtSeg.selectedSegmentIndex : 0;
-
-    // v2.9.2: 所选算法需要 Key 但 Key 为空 → 自动尝试 Base64/Hex 解码兜底
-    const MFCryptoAlgo *sa = NULL;
-    for (int i = 0; i < mfAlgoCount; i++) if (mfAlgos[i].id == algo) { sa = &mfAlgos[i]; break; }
-    NSString *result = nil;
-    if (sa && (sa->group == 0 || sa->group == 2) && !(keyF.text ?: @"").length && txt.length) {
-        NSData *b64 = [[NSData alloc] initWithBase64EncodedString:txt options:NSDataBase64DecodingIgnoreUnknownCharacters];
-        if (b64.length && mfCryptoLooksReadable(b64)) {
-            mfToast(@"Key 为空，已按 Base64 解码");
-            result = [@"[自动: Base64 解码]\n" stringByAppendingString:mfCryptoExecute(31, 0, YES, txt, @"", @"")];
-        } else {
-            NSData *hex = mfCryptoUnhex(txt);
-            if (hex.length >= 4 && mfCryptoLooksReadable(hex)) {
-                mfToast(@"Key 为空，已按 Hex 解码");
-                result = [@"[自动: Hex 解码]\n" stringByAppendingString:mfCryptoExecute(33, 0, YES, txt, @"", @"")];
-            }
-        }
-    }
-    if (!result) result = mfCryptoExecute(algo, fmt, YES, txt, keyF.text, ivF.text);
-    output.text = result;
-    mfLog(@"[MF] crypto run algo=%d(%s) fmt=%ld inlen=%lu auto=%d",
-          algo, sa ? sa->name : "?", (long)fmt, (unsigned long)txt.length, result.hasPrefix(@"[自动"));
-}
-
-// v2.9.2: 解码结果可读性判定（valid UTF8，或 ASCII 可打印比例 >70%）
-static BOOL mfCryptoLooksReadable(NSData *d) {
-    if (!d.length) return NO;
-    NSString *utf = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
-    if (utf.length) return YES;
-    NSUInteger printable = 0;
-    const uint8_t *b = d.bytes;
-    for (NSUInteger i = 0; i < d.length; i++) if (b[i] >= 0x20 && b[i] < 0x7F) printable++;
-    return printable * 10 >= d.length * 7;
+    // v2.9.3: 不猜 — 选什么执行什么，结果标注算法名，报错自带算法名
+    NSString *result = mfCryptoExecute(algo, fmt, encrypt, txt, keyF.text, ivF.text);
+    output.text = [NSString stringWithFormat:@"[%s]\n%@", sa ? sa->name : "?", result];
+    mfLog(@"[MF] crypto run algo=%d(%s) fmt=%ld enc=%d inlen=%lu",
+          algo, sa ? sa->name : "?", (long)fmt, encrypt, (unsigned long)txt.length);
 }
 
 void mfCryptoCopyAction(UIButton *btn) {
