@@ -5,6 +5,45 @@
 #include <string.h>
 #include <stdint.h>
 #include <mach-o/loader.h>
+#include <CommonCrypto/CommonDigest.h>
+
+// ---- 重签: 重算 CodeDirectory page hashes ----
+static int resign_pages(uint8_t *buf, long sz) {
+    struct mach_header_64 *mh = (struct mach_header_64 *)buf;
+    uint8_t *p = buf + sizeof(struct mach_header_64);
+    uint32_t sig_off = 0;
+    for (uint32_t i = 0; i < mh->ncmds; i++) {
+        uint32_t cmd = *(uint32_t *)p;
+        uint32_t cs  = *(uint32_t *)(p + 4);
+        if (cmd == 0x1D) { memcpy(&sig_off, p + 8, 4); break; }
+        p += cs;
+    }
+    if (!sig_off || sig_off >= (uint32_t)sz) return -1;
+    uint32_t *sb = (uint32_t *)(buf + sig_off);
+    if (sb[0] != 0xFADE0CC0) return -1;
+    uint32_t sb_count = sb[2];
+    for (uint32_t i = 0; i < sb_count; i++) {
+        uint32_t type = sb[3 + i*2], off = sb[3 + i*2 + 1];
+        if (type != 0) continue; // 只要 CodeDirectory
+        uint8_t *cd = (uint8_t *)sb + off;
+        uint32_t hashOff  = *(uint32_t *)(cd + 16);
+        uint32_t nSlots   = *(uint32_t *)(cd + 28);
+        uint32_t codeLim  = *(uint32_t *)(cd + 32);
+        uint32_t hashSize = *(uint32_t *)(cd + 36);
+        uint8_t  psLog2   = *(cd + 42);
+        if (hashSize != 32 || !nSlots || !codeLim) return -1;
+        uint32_t ps = 1 << psLog2;
+        uint8_t *hashes = cd + hashOff;
+        for (uint32_t s = 0; s < nSlots; s++) {
+            uint32_t o = s * ps;
+            if (o >= codeLim) break;
+            uint32_t l = (o + ps > codeLim) ? (codeLim - o) : ps;
+            CC_SHA256(buf + o, l, hashes + s * hashSize);
+        }
+        return 0;
+    }
+    return -1;
+}
 
 static const char *kTargets[] = {
     "_$s8StoreKit11TransactionV5OfferV11PaymentModeV9freeTrialAGvgZ",
@@ -68,10 +107,11 @@ static int patch_binary(const char *path) {
     }
 
     if (dirty) {
+        resign_pages(buf, sz);
         f = fopen(path, "wb");
         if (!f) { free(buf); return -1; }
         fwrite(buf, 1, sz, f); fclose(f);
-        fprintf(stderr, "mfpatcher: weakified %d symbols in %s\n", patched, path);
+        fprintf(stderr, "mfpatcher: weakified %d + resigned %s\n", patched, path);
     }
     free(buf);
     return dirty ? 0 : 1;
