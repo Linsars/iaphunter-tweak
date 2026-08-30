@@ -1,12 +1,6 @@
 #!/bin/bash
-# v2.7.6: mfpatcher 二进制 imports pool 补丁 (iOS 26 SDK app 向下兼容)
-MFPATCHER="/var/jb/usr/lib/mfpatcher"
-if [ -x "$MFPATCHER" ]; then
-  # 扫描所有已安装 app 二进制, 翻转 iOS 26 SDK strong 缺符号
-  find /var/containers/Bundle/Application -maxdepth 3 -type f 2>/dev/null | while read -r f; do
-    "$MFPATCHER" "$f" 2>/dev/null
-  done
-fi
+# v2.8.2: 扫描不放 postinst — 由 com.linsars.mfpatcher.plist 在每次开机时执行
+# 用户在设置→兼容App列表勾选 → 用户空间重启 → 开机扫描自动 patch 列表内 app
 TWEAK_INJECT="/var/jb/usr/lib/TweakInject"
 mkdir -p "$TWEAK_INJECT"
 # 清理废弃名
