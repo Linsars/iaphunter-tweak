@@ -1,8 +1,6 @@
-// mfpatcher — 通用 iOS 26 SDK app 向下兼容
-// 把 imports pool 里 ALL undefined 符号翻 weak → dyld 永不 abort
-// 存在的符号正常绑定, 不存在的绑 0 (weak) → app 启动
-// 加上重签(重算 CodeDirectory page hashes)防止 CSA kill
-// 跳过加密二进制 (cryptid!=0, App Store 版)
+// mfpatcher — iOS 26 SDK app 向下兼容 (通用)
+// 兼容列表闸门: CodeDirectory identifier(bundle ID) → prefs 搜索 → 命中才 patch
+// CS blob 全部 BIG-ENDIAN (Apple CodeSigning 规范), Mach-O load commands 原生 LE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,28 +8,35 @@
 #include <mach-o/loader.h>
 #include <CommonCrypto/CommonDigest.h>
 
+static inline uint32_t be32(const void *p) {
+    const uint8_t *b = (const uint8_t *)p;
+    return ((uint32_t)b[0] << 24) | ((uint32_t)b[1] << 16) | ((uint32_t)b[2] << 8) | b[3];
+}
+
+// ---- 重签: 重算 CodeDirectory page hashes (CS blob = BE) ----
 static int resign_pages(uint8_t *buf, long sz) {
     struct mach_header_64 *mh = (struct mach_header_64 *)buf;
     uint8_t *p = buf + sizeof(struct mach_header_64);
     uint32_t sig_off = 0;
     for (uint32_t i = 0; i < mh->ncmds; i++) {
-        uint32_t cmd = *(uint32_t *)p;
+        uint32_t cmd = *(uint32_t *)p; // load cmds = native LE
         uint32_t cs  = *(uint32_t *)(p + 4);
         if (cmd == 0x1D) { memcpy(&sig_off, p + 8, 4); break; }
         p += cs;
     }
     if (!sig_off || sig_off >= (uint32_t)sz) return -1;
     uint32_t *sb = (uint32_t *)(buf + sig_off);
-    if (sb[0] != 0xFADE0CC0) return -1;
-    uint32_t sb_count = sb[2];
+    if (be32(sb) != 0xFADE0CC0) return -1;
+    uint32_t sb_count = be32(sb + 2);
     for (uint32_t i = 0; i < sb_count; i++) {
-        uint32_t type = sb[3 + i*2], off = sb[3 + i*2 + 1];
+        uint32_t type = be32(sb + 3 + i*2);
+        uint32_t off  = be32(sb + 3 + i*2 + 1);
         if (type != 0) continue;
         uint8_t *cd = (uint8_t *)sb + off;
-        uint32_t hashOff  = *(uint32_t *)(cd + 16);
-        uint32_t nSlots   = *(uint32_t *)(cd + 28);
-        uint32_t codeLim  = *(uint32_t *)(cd + 32);
-        uint32_t hashSize = *(uint32_t *)(cd + 36);
+        uint32_t hashOff  = be32(cd + 16);
+        uint32_t nSlots   = be32(cd + 28);
+        uint32_t codeLim  = be32(cd + 32);
+        uint32_t hashSize = be32(cd + 36);
         uint8_t  psLog2   = *(cd + 42);
         if (hashSize != 32 || !nSlots || !codeLim || codeLim > (uint32_t)sz) return -1;
         uint32_t ps = 1 << psLog2;
@@ -60,7 +65,7 @@ int main(int argc, char **argv) {
     struct mach_header_64 *mh = (struct mach_header_64 *)buf;
     if (mh->magic != MH_MAGIC_64 || mh->filetype != MH_EXECUTE) { free(buf); return 0; }
 
-    // 兼容 App 列表闸门: 从 CodeDirectory 提取 identifier(bundle ID) → 搜 prefs
+    // ---- 兼容列表闸门: CodeDirectory identifier (BE) → prefs 搜索 ----
     uint8_t *cdp = buf + sizeof(struct mach_header_64);
     char bundleId[256] = {0};
     uint32_t sig_off_tmp = 0;
@@ -72,35 +77,34 @@ int main(int argc, char **argv) {
     }
     if (sig_off_tmp && sig_off_tmp < (uint32_t)sz) {
         uint32_t *sb2 = (uint32_t *)(buf + sig_off_tmp);
-        if (sb2[0] == 0xFADE0CC0) {
-            for (uint32_t i = 0; i < sb2[2]; i++) {
-                if (sb2[3+i*2] != 0) continue;
-                uint8_t *cd = (uint8_t *)sb2 + sb2[3+i*2+1];
-                uint32_t identOff = *(uint32_t *)(cd + 20);
+        if (be32(sb2) == 0xFADE0CC0) {
+            uint32_t cnt = be32(sb2 + 2);
+            for (uint32_t i = 0; i < cnt; i++) {
+                if (be32(sb2 + 3 + i*2) != 0) continue;
+                uint8_t *cd = (uint8_t *)sb2 + be32(sb2 + 3 + i*2 + 1);
+                uint32_t identOff = be32(cd + 20);
                 snprintf(bundleId, sizeof(bundleId), "%s", (char *)cd + identOff);
                 break;
             }
         }
     }
-    if (!bundleId[0]) { free(buf); return 0; }
+    if (!bundleId[0]) { fprintf(stderr, "mfpatcher: no bundleId\n"); free(buf); return 0; }
 
     FILE *pf = fopen("/var/jb/var/mobile/Library/Preferences/com.linsars.minisfix.plist", "rb");
     if (!pf) { free(buf); return 0; }
     fseek(pf, 0, SEEK_END); long psz = ftell(pf); fseek(pf, 0, SEEK_SET);
     char *prefs = malloc(psz + 1);
-    if (fread(prefs, 1, psz, pf) != (size_t)psz) { free(prefs); free(buf); fclose(pf); return 0; }
+    if (!prefs || fread(prefs, 1, psz, pf) != (size_t)psz) { free(prefs); free(buf); fclose(pf); return 0; }
     prefs[psz] = 0; fclose(pf);
     int inList = 0;
-    { // memmem fallback
-        for (long i = 0; i <= psz - (long)strlen(bundleId); i++) {
-            if (memcmp(prefs + i, bundleId, strlen(bundleId)) == 0) { inList = 1; break; }
-        }
+    for (long i = 0; i <= psz - (long)strlen(bundleId); i++) {
+        if (memcmp(prefs + i, bundleId, strlen(bundleId)) == 0) { inList = 1; break; }
     }
     free(prefs);
     if (!inList) { fprintf(stderr, "mfpatcher: %s not in list\n", bundleId); free(buf); return 0; }
     fprintf(stderr, "mfpatcher: %s in list, patching\n", bundleId);
 
-    // LC_DYLD_CHAINED_FIXUPS
+    // ---- LC_DYLD_CHAINED_FIXUPS (native LE) ----
     uint32_t cf_off = 0;
     uint8_t *q = buf + sizeof(struct mach_header_64);
     for (uint32_t i = 0; i < mh->ncmds; i++) {
@@ -117,7 +121,7 @@ int main(int argc, char **argv) {
 
     uint32_t *imports = (uint32_t *)(buf + cf_off + imports_off);
 
-    // 把 ALL non-weak undefined 翻 weak → 通用, 零硬编码
+    // weakify ALL imports (通用: 任何缺符号都不会 dyld abort)
     int weakified = 0;
     for (uint32_t i = 0; i < imports_count; i++) {
         uint32_t v = imports[i];
@@ -132,6 +136,7 @@ int main(int argc, char **argv) {
         f = fopen(argv[1], "wb");
         if (!f) { free(buf); return 1; }
         fwrite(buf, 1, sz, f); fclose(f);
+        fprintf(stderr, "mfpatcher: patched %s\n", argv[1]);
     }
     free(buf);
     return 0;
