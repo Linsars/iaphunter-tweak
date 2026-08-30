@@ -1,20 +1,29 @@
 #!/bin/bash
-# v2.8.2: 扫描不放 postinst — 由 com.linsars.mfpatcher.plist 在每次开机时执行
-# 用户在设置→兼容App列表勾选 → 用户空间重启 → 开机扫描自动 patch 列表内 app
+# v2.8.7: mfpatcher 扫描在 postinst (root 权限) + LaunchDaemon (开机, root) 双保险
+# minos 启发式自动判断, 不依赖兼容列表
 TWEAK_INJECT="/var/jb/usr/lib/TweakInject"
 mkdir -p "$TWEAK_INJECT"
-# 清理废弃名
 rm -f "$TWEAK_INJECT/MinisFix.dylib" "$TWEAK_INJECT/AppStoreSpoof.dylib"
-# AppHooks 目标进程
+
+# postinst 阶段以 root 直接扫描 (minos > cur OS → weakify + resign)
+MFPATCHER="/var/jb/usr/lib/mfpatcher"
+if [ -x "$MFPATCHER" ]; then
+  find /var/containers/Bundle/Application -maxdepth 3 -type f 2>/dev/null | while read -r f; do
+    "$MFPATCHER" "$f" 2>/dev/null
+  done
+fi
+
 killall -9 installd appstored 2>/dev/null
-# FolderX/IAPtools 目标进程(respring)
 killall -9 SpringBoard 2>/dev/null
-# Unseen 目标进程(backboardd 重启会短暂黑屏)
 killall -9 backboardd 2>/dev/null
-# v2.6.31: minisfixd 特权充电 daemon(bootstrap 幂等,已加载则跳过)
 PLIST="/var/jb/Library/LaunchDaemons/com.linsars.minisfixd.plist"
 if [ -f "$PLIST" ]; then
   /var/jb/bin/launchctl bootout system "$PLIST" >/dev/null 2>&1
   /var/jb/bin/launchctl bootstrap system "$PLIST" >/dev/null 2>&1
+fi
+MFPLIST="/var/jb/Library/LaunchDaemons/com.linsars.mfpatcher.plist"
+if [ -f "$MFPLIST" ]; then
+  /var/jb/bin/launchctl bootout system "$MFPLIST" >/dev/null 2>&1
+  /var/jb/bin/launchctl bootstrap system "$MFPLIST" >/dev/null 2>&1
 fi
 exit 0
