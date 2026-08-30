@@ -48,7 +48,7 @@ jobs:
           xcrun -sdk iphoneos clang -arch arm64 -arch arm64e \
             -isysroot "$THEOS/sdks/iPhoneOS14.5.sdk" \
             -miphoneos-version-min=14.5 \
-            -shared -O2 -fno-objc-arc \
+            -shared -O2 -fno-objc-arc -framework Foundation \
             -o layout-rootless/usr/lib/MFShim.dylib MFShim.m
           ldid -S layout-rootless/usr/lib/MFShim.dylib
           cp mfshim-env.sh layout-rootless/usr/bin/mfshim-env.sh
