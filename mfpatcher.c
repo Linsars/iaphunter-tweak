@@ -69,8 +69,8 @@ int main(int argc, char **argv) {
     // ---- minos 启发式: binary minos > 当前 OS → 可能有缺符号 → weakify ----
     // 不依赖兼容列表, 不依赖 prefs, 不依赖任何 UI 状态
     uint32_t cur_os = 17;
+    char osbuf[16] = {0};
     {
-        char osbuf[16] = {0};
         size_t oslen = sizeof(osbuf);
         if (sysctlbyname("kern.osproductversion", osbuf, &oslen, NULL, 0) == 0)
             cur_os = (uint32_t)atoi(osbuf);
