@@ -80,6 +80,19 @@ int main(int argc, char **argv) {
     struct mach_header_64 *mh = (struct mach_header_64 *)buf;
     if (mh->magic != MH_MAGIC_64 || mh->filetype != MH_EXECUTE) { free(buf); return 0; }
 
+    // 检查 cryptid: 加密二进制(App Store)不能 patch — __TEXT 加密导致 re-sign 必错
+    uint8_t *q = buf + sizeof(struct mach_header_64);
+    for (uint32_t i = 0; i < mh->ncmds; i++) {
+        uint32_t cmd = *(uint32_t *)q;
+        uint32_t cs  = *(uint32_t *)(q + 4);
+        if (cmd == 0x2C) { // LC_ENCRYPTION_INFO_64
+            uint32_t cryptid = *(uint32_t *)(q + 16);
+            if (cryptid != 0) { free(buf); return 0; } // 加密 → skip
+            break;
+        }
+        q += cs;
+    }
+
     uint32_t cf_off = 0, indirect_off = 0;
     uint8_t *p = buf + sizeof(struct mach_header_64);
     for (uint32_t i = 0; i < mh->ncmds; i++) {
