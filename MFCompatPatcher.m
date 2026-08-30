@@ -28,11 +28,16 @@
 // ---- 诊断(双通道) ----
 static void mfCompatDiag(NSString *step, NSString *detail) {
     @autoreleasepool {
-        NSMutableDictionary *prefs = [[NSDictionary dictionaryWithContentsOfFile:@MF_PREF_PATH] mutableCopy] ?: [NSMutableDictionary dictionary];
+        // 闸门1: 系统(com.apple.*)进程零接触 prefs
+        NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
+        if (!bid || [bid.lowercaseString hasPrefix:@"com.apple."]) return;
+        NSMutableDictionary *prefs = [[NSDictionary dictionaryWithContentsOfFile:@MF_PREF_PATH] mutableCopy];
+        // 闸门2: 读失败(沙盒/权限) → 不写回, 保护已有设置不被覆盖
+        if (!prefs) return;
         NSMutableDictionary *diag = [prefs[@"mfCompatDiag"] mutableCopy] ?: [NSMutableDictionary dictionary];
         diag[step] = detail ?: @"";
         diag[@"last_pid"] = @(getpid());
-        diag[@"last_bid"] = [[NSBundle mainBundle] bundleIdentifier] ?: @"?";
+        diag[@"last_bid"] = bid;
         prefs[@"mfCompatDiag"] = diag;
         [prefs writeToFile:@MF_PREF_PATH atomically:YES];
     }
