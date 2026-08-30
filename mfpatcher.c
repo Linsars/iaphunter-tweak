@@ -60,16 +60,45 @@ int main(int argc, char **argv) {
     struct mach_header_64 *mh = (struct mach_header_64 *)buf;
     if (mh->magic != MH_MAGIC_64 || mh->filetype != MH_EXECUTE) { free(buf); return 0; }
 
-    // cryptid != 0 → 加密二进制, 不碰
-    uint8_t *q = buf + sizeof(struct mach_header_64);
-    int skip = 0;
+    // 兼容 App 列表闸门: 从 CodeDirectory 提取 identifier(bundle ID) → 搜 prefs
+    uint8_t *cdp = buf + sizeof(struct mach_header_64);
+    char bundleId[256] = {0};
+    uint32_t sig_off_tmp = 0;
     for (uint32_t i = 0; i < mh->ncmds; i++) {
-        uint32_t cmd = *(uint32_t *)q;
-        uint32_t cs  = *(uint32_t *)(q + 4);
-        if (cmd == 0x2C) { if (*(uint32_t *)(q + 16) != 0) skip = 1; break; }
-        q += cs;
+        uint32_t cmd = *(uint32_t *)cdp;
+        uint32_t cs  = *(uint32_t *)(cdp + 4);
+        if (cmd == 0x1D) { memcpy(&sig_off_tmp, cdp + 8, 4); break; }
+        cdp += cs;
     }
-    if (skip) { free(buf); return 0; }
+    if (sig_off_tmp && sig_off_tmp < (uint32_t)sz) {
+        uint32_t *sb2 = (uint32_t *)(buf + sig_off_tmp);
+        if (sb2[0] == 0xFADE0CC0) {
+            for (uint32_t i = 0; i < sb2[2]; i++) {
+                if (sb2[3+i*2] != 0) continue;
+                uint8_t *cd = (uint8_t *)sb2 + sb2[3+i*2+1];
+                uint32_t identOff = *(uint32_t *)(cd + 20);
+                snprintf(bundleId, sizeof(bundleId), "%s", (char *)cd + identOff);
+                break;
+            }
+        }
+    }
+    if (!bundleId[0]) { free(buf); return 0; }
+
+    FILE *pf = fopen("/var/jb/var/mobile/Library/Preferences/com.linsars.minisfix.plist", "rb");
+    if (!pf) { free(buf); return 0; }
+    fseek(pf, 0, SEEK_END); long psz = ftell(pf); fseek(pf, 0, SEEK_SET);
+    char *prefs = malloc(psz + 1);
+    if (fread(prefs, 1, psz, pf) != (size_t)psz) { free(prefs); free(buf); fclose(pf); return 0; }
+    prefs[psz] = 0; fclose(pf);
+    int inList = 0;
+    { // memmem fallback
+        for (long i = 0; i <= psz - (long)strlen(bundleId); i++) {
+            if (memcmp(prefs + i, bundleId, strlen(bundleId)) == 0) { inList = 1; break; }
+        }
+    }
+    free(prefs);
+    if (!inList) { fprintf(stderr, "mfpatcher: %s not in list\n", bundleId); free(buf); return 0; }
+    fprintf(stderr, "mfpatcher: %s in list, patching\n", bundleId);
 
     // LC_DYLD_CHAINED_FIXUPS
     uint32_t cf_off = 0;
