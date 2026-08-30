@@ -322,6 +322,7 @@ void mfShowCryptoToolboxPage(void) {
     };
 
     objc_setAssociatedObject(page, "input", input, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(page, "fmtSeg", fmtSeg, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(page, "grpSeg", grpSeg, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(page, "keyF", keyF, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(page, "ivF", ivF, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -400,11 +401,44 @@ void mfCryptoRunAction(UIButton *btn) {
     UITextField *ivF = objc_getAssociatedObject(page, "ivF");
     UITextView *output = objc_getAssociatedObject(page, "output");
     if (!input || !output) return;
+    static BOOL mfCryptoLooksReadable(NSData *d); // v2.9.2 前置声明
     int algo = g_mfCryptoAlgo;
     // 占位符文本当空处理
     NSString *txt = input.textColor == [UIColor placeholderTextColor] ? @"" : input.text;
-    NSString *result = mfCryptoExecute(algo, fmtSeg.selectedSegmentIndex, YES, txt, keyF.text, ivF.text);
+    NSInteger fmt = fmtSeg ? fmtSeg.selectedSegmentIndex : 0;
+
+    // v2.9.2: 所选算法需要 Key 但 Key 为空 → 自动尝试 Base64/Hex 解码兜底
+    const MFCryptoAlgo *sa = NULL;
+    for (int i = 0; i < mfAlgoCount; i++) if (mfAlgos[i].id == algo) { sa = &mfAlgos[i]; break; }
+    NSString *result = nil;
+    if (sa && (sa->group == 0 || sa->group == 2) && !(keyF.text ?: @"").length && txt.length) {
+        NSData *b64 = [[NSData alloc] initWithBase64EncodedString:txt options:NSDataBase64DecodingIgnoreUnknownCharacters];
+        if (b64.length && mfCryptoLooksReadable(b64)) {
+            mfToast(@"Key 为空，已按 Base64 解码");
+            result = [@"[自动: Base64 解码]\n" stringByAppendingString:mfCryptoExecute(31, 0, YES, txt, @"", @"")];
+        } else {
+            NSData *hex = mfCryptoUnhex(txt);
+            if (hex.length >= 4 && mfCryptoLooksReadable(hex)) {
+                mfToast(@"Key 为空，已按 Hex 解码");
+                result = [@"[自动: Hex 解码]\n" stringByAppendingString:mfCryptoExecute(33, 0, YES, txt, @"", @"")];
+            }
+        }
+    }
+    if (!result) result = mfCryptoExecute(algo, fmt, YES, txt, keyF.text, ivF.text);
     output.text = result;
+    mfLog(@"[MF] crypto run algo=%d(%s) fmt=%ld inlen=%lu auto=%d",
+          algo, sa ? sa->name : "?", (long)fmt, (unsigned long)txt.length, result.hasPrefix(@"[自动"));
+}
+
+// v2.9.2: 解码结果可读性判定（valid UTF8，或 ASCII 可打印比例 >70%）
+static BOOL mfCryptoLooksReadable(NSData *d) {
+    if (!d.length) return NO;
+    NSString *utf = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
+    if (utf.length) return YES;
+    NSUInteger printable = 0;
+    const uint8_t *b = d.bytes;
+    for (NSUInteger i = 0; i < d.length; i++) if (b[i] >= 0x20 && b[i] < 0x7F) printable++;
+    return printable * 10 >= d.length * 7;
 }
 
 void mfCryptoCopyAction(UIButton *btn) {
