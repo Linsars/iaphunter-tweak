@@ -14,18 +14,29 @@ static inline uint32_t be32(const void *p) {
     return ((uint32_t)b[0] << 24) | ((uint32_t)b[1] << 16) | ((uint32_t)b[2] << 8) | b[3];
 }
 
-// ---- 重签: 重算 CodeDirectory page hashes (CS blob = BE) ----
+// ---- 重签: 只重算 __LINKEDIT 范围内的 page hash ----
+// __TEXT 加密页 hash 保留原值(内核解密后自验), __DATA 未修改保留原值
+// 只有 __LINKEDIT 被我们修改, 只需重签这些页
 static int resign_pages(uint8_t *buf, long sz) {
     struct mach_header_64 *mh = (struct mach_header_64 *)buf;
     uint8_t *p = buf + sizeof(struct mach_header_64);
     uint32_t sig_off = 0;
+    uint64_t le_start = 0, le_end = 0; // __LINKEDIT 文件范围
     for (uint32_t i = 0; i < mh->ncmds; i++) {
-        uint32_t cmd = *(uint32_t *)p; // load cmds = native LE
+        uint32_t cmd = *(uint32_t *)p;
         uint32_t cs  = *(uint32_t *)(p + 4);
-        if (cmd == 0x1D) { memcpy(&sig_off, p + 8, 4); break; }
+        if (cmd == 0x1D) { memcpy(&sig_off, p + 8, 4); }
+        if (cmd == 0x19) { // LC_SEGMENT_64
+            char sn[17]; memcpy(sn, p + 8, 16); sn[16] = 0;
+            if (strcmp(sn, "__LINKEDIT") == 0) {
+                memcpy(&le_start, p + 40, 8); // fileoff
+                memcpy(&le_end, p + 48, 8);   // filesize
+                le_end += le_start;
+            }
+        }
         p += cs;
     }
-    if (!sig_off || sig_off >= (uint32_t)sz) return -1;
+    if (!sig_off || sig_off >= (uint32_t)sz || !le_start) return -1;
     uint32_t *sb = (uint32_t *)(buf + sig_off);
     if (be32(sb) != 0xFADE0CC0) return -1;
     uint32_t sb_count = be32(sb + 2);
@@ -42,13 +53,19 @@ static int resign_pages(uint8_t *buf, long sz) {
         if (hashSize != 32 || !nSlots || !codeLim || codeLim > (uint32_t)sz) return -1;
         uint32_t ps = 1 << psLog2;
         uint8_t *hashes = cd + hashOff;
+        int recalc = 0;
         for (uint32_t s = 0; s < nSlots; s++) {
             uint32_t o = s * ps;
             if (o >= codeLim) break;
-            uint32_t l = (o + ps > codeLim) ? (codeLim - o) : ps;
-            CC_SHA256(buf + o, l, hashes + s * hashSize);
+            // 只重签 __LINKEDIT 范围内的页
+            if (o >= le_start && o < le_end) {
+                uint32_t l = (o + ps > codeLim) ? (codeLim - o) : ps;
+                CC_SHA256(buf + o, l, hashes + s * hashSize);
+                recalc++;
+            }
+            // __TEXT/__DATA 页 hash 保留原值(内核解密后自验)
         }
-        return 0;
+        return recalc > 0 ? 0 : -1;
     }
     return -1;
 }
