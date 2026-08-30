@@ -151,7 +151,6 @@ void mfCryptoBuildChips(UIScrollView *scroll, int group);
 void mfCryptoGroupChangedAction(UISegmentedControl *seg);
 void mfCryptoChipTappedAction(UIButton *chip);
 void mfCryptoRunAction(UIButton *btn);
-void mfCryptoCopyAction(UIButton *btn);
 
 // ====== T1 解密捕获（MFCryptoHooks.m） ======
 void mfShowCryptoCapturePage(void);          // 捕获列表页（含开关/清空）

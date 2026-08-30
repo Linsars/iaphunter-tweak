@@ -105,19 +105,18 @@ static NSData *mfCryptoParseInput(NSString *text, NSInteger fmt) {
     }
 }
 
-// 输出三视图：hex + base64 + UTF8 尝试（可打印比例 >70% 才显示文本视图）
-static NSString *mfCryptoOutputViews(NSData *d) {
-    if (!d.length) return @"(空)";
-    NSMutableString *r = [NSMutableString stringWithFormat:@"HEX:\n%@\n\nBASE64:\n%@", mfCryptoToHex(d), [d base64EncodedStringWithOptions:0]];
+// 输出条目化 v2.9.5：HEX/BASE64/UTF8 各一条，供左划复制列表
+static NSArray *mfCryptoOneEntry(NSString *label, NSString *value) {
+    return @[@{@"label": label ?: @"", @"value": value ?: @""}];
+}
+static NSArray *mfCryptoViewsEntries(NSData *d) {
+    if (!d.length) return mfCryptoOneEntry(@"⚠️", @"(空)");
+    NSMutableArray *r = [NSMutableArray array];
+    [r addObject:@{@"label": @"HEX", @"value": mfCryptoToHex(d)}];
+    [r addObject:@{@"label": @"BASE64", @"value": [d base64EncodedStringWithOptions:0]}];
     NSString *utf = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
-    if (utf.length) {
-        NSUInteger printable = 0;
-        for (NSUInteger i = 0; i < utf.length && i < 200; i++)
-            if ([[NSCharacterSet alphanumericCharacterSet] characterIsMember:[utf characterAtIndex:i]] ||
-                [@"{}[]():;,.-_+/=?@#$%^&*!~'\"<>" containsString:[utf substringWithRange:NSMakeRange(i, 1)]]) printable++;
-        if (printable * 10 >= MIN(utf.length, 200) * 7)
-            [r appendFormat:@"\n\nUTF8:\n%@", utf.length > 800 ? [[utf substringToIndex:800] stringByAppendingString:@"…"] : utf];
-    }
+    if (utf.length)
+        [r addObject:@{@"label": @"UTF8", @"value": utf.length > 800 ? [[utf substringToIndex:800] stringByAppendingString:@"…"] : utf}];
     return r;
 }
 
@@ -194,46 +193,52 @@ static NSString *mfCryptoJwtDecode(NSString *token) {
 
 #pragma mark - 执行分发
 
-static NSString *mfCryptoExecute(int algo, NSInteger inFmt, BOOL encrypt,
+static NSArray *mfCryptoExecuteE(int algo, NSInteger inFmt, BOOL encrypt,
                                  NSString *inputText, NSString *keyText, NSString *ivText) {
     NSData *in = mfCryptoParseInput(inputText, inFmt);
-    if (!in.length && algo != 40) return @"⚠️ 输入为空或格式解析失败";
+    if (!in.length && algo != 40) return mfCryptoOneEntry(@"⚠️", @"输入为空或格式解析失败");
 
-    // 编解码组
+    // 编解码组（输入本身就是编码文本，不做二次解析）
     switch (algo) {
-        case 30: return mfCryptoOutputViews([[in base64EncodedStringWithOptions:0] dataUsingEncoding:NSUTF8StringEncoding] ?: [NSData data]);
-        case 31: return mfCryptoOutputViews([[NSData alloc] initWithBase64EncodedString:[[NSString alloc] initWithData:in encoding:NSUTF8StringEncoding] ?: @"" options:NSDataBase64DecodingIgnoreUnknownCharacters] ?: [NSData data]);
-        case 32: return mfCryptoToHex(in);
-        case 33: return mfCryptoOutputViews(mfCryptoUnhex([[NSString alloc] initWithData:in encoding:NSUTF8StringEncoding] ?: @"") ?: [NSData data]);
+        case 30: return mfCryptoOneEntry(@"Base64", [in base64EncodedStringWithOptions:0]);
+        case 31: {
+            NSData *d = [[NSData alloc] initWithBase64EncodedString:[[NSString alloc] initWithData:in encoding:NSUTF8StringEncoding] ?: @"" options:NSDataBase64DecodingIgnoreUnknownCharacters];
+            return d.length ? mfCryptoViewsEntries(d) : mfCryptoOneEntry(@"⚠️", @"Base64 解析失败");
+        }
+        case 32: return mfCryptoOneEntry(@"Hex", mfCryptoToHex(in));
+        case 33: {
+            NSData *d = mfCryptoUnhex([[NSString alloc] initWithData:in encoding:NSUTF8StringEncoding] ?: @"");
+            return d.length ? mfCryptoViewsEntries(d) : mfCryptoOneEntry(@"⚠️", @"Hex 解析失败");
+        }
         case 34: {
             NSString *s = [[NSString alloc] initWithData:in encoding:NSUTF8StringEncoding] ?: @"";
-            return [s stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLQueryAllowedCharacterSet]] ?: @"⚠️ 编码失败";
+            return mfCryptoOneEntry(@"URL", [s stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLQueryAllowedCharacterSet]] ?: @"⚠️ 编码失败");
         }
         case 35: {
             NSString *s = [[NSString alloc] initWithData:in encoding:NSUTF8StringEncoding] ?: @"";
-            return [s stringByRemovingPercentEncoding] ?: @"⚠️ 解码失败";
+            return mfCryptoOneEntry(@"URL", [s stringByRemovingPercentEncoding] ?: @"⚠️ 解码失败");
         }
-        case 40: return mfCryptoJwtDecode([[NSString alloc] initWithData:in encoding:NSUTF8StringEncoding] ?: @"");
+        case 40: return mfCryptoOneEntry(@"JWT", mfCryptoJwtDecode([[NSString alloc] initWithData:in encoding:NSUTF8StringEncoding] ?: @""));
     }
 
     // 哈希组
-    if (algo >= 10 && algo <= 13) return mfCryptoOutputViews(mfCryptoHashData(in, algo));
+    if (algo >= 10 && algo <= 13) return mfCryptoViewsEntries(mfCryptoHashData(in, algo));
 
     // HMAC 组
     if (algo >= 20 && algo <= 22) {
         NSData *key = mfCryptoParseSecret(keyText ?: @"");
-        if (!key.length) return @"⚠️ 请填 Key";
-        return mfCryptoOutputViews(mfCryptoHmac(in, key, algo));
+        if (!key.length) return mfCryptoOneEntry(@"⚠️", @"请填 Key");
+        return mfCryptoViewsEntries(mfCryptoHmac(in, key, algo));
     }
 
     // 对称组
     NSData *key = mfCryptoParseSecret(keyText ?: @"");
-    if (!key.length) return @"⚠️ 请填 Key";
+    if (!key.length) return mfCryptoOneEntry(@"⚠️", @"请填 Key");
     NSData *iv = mfCryptoNormalizeIV(ivText, kCCBlockSizeAES128);
     NSString *err = nil;
     NSData *out = mfCryptoSymmetric(in, key, iv, algo, encrypt, &err);
-    if (!out) return [NSString stringWithFormat:@"⚠️ %@", err ?: @"失败"];
-    return mfCryptoOutputViews(out);
+    if (!out) return mfCryptoOneEntry(@"⚠️", [NSString stringWithFormat:@"%@", err ?: @"失败"]);
+    return mfCryptoViewsEntries(out);
 }
 
 #pragma mark - 页面
@@ -253,6 +258,73 @@ static NSString * const kMFCryptoPH = @"在此粘贴要处理的内容…";
 static NSObject<UITextViewDelegate> *g_mfCryptoInputDel(void) {
     static MFCryptoPHDel *d = nil;
     return d ?: (d = [MFCryptoPHDel new]);
+}
+
+// v2.9.5: 结果条目列表 — 左划复制 / 点行复制
+@interface MFCryptoResList : NSObject <UITableViewDataSource, UITableViewDelegate> @end
+@implementation MFCryptoResList
+- (NSArray *)entriesFor:(UITableView *)tv { return objc_getAssociatedObject(tv.superview, "entries"); }
+- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s { return self.entriesFor(tv).count; }
+- (CGFloat)tableView:(UITableView *)tv heightForRowAtIndexPath:(NSIndexPath *)ip {
+    NSArray *hs = objc_getAssociatedObject(tv.superview, "rowHs");
+    return (ip.row < (NSInteger)hs.count) ? [hs[ip.row] floatValue] : 44;
+}
+- (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
+    static NSString *rid = @"MFCryptoRes";
+    UITableViewCell *c = [tv dequeueReusableCellWithIdentifier:rid];
+    if (!c) {
+        c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:rid];
+        c.backgroundColor = UIColor.clearColor;
+        c.selectionStyle = UITableViewCellSelectionStyleNone;
+        UILabel *lb = [[UILabel alloc] initWithFrame:CGRectMake(12, 7, 80, 14)];
+        lb.font = [UIFont monospacedSystemFontOfSize:9 weight:UIFontWeightSemibold];
+        lb.textColor = [UIColor secondaryLabelColor];
+        lb.tag = 1;
+        [c.contentView addSubview:lb];
+        UILabel *v = [[UILabel alloc] initWithFrame:CGRectMake(12, 23, 100, 16)];
+        v.font = [UIFont fontWithName:@"Menlo-Regular" size:10] ?: [UIFont monospacedSystemFontOfSize:10 weight:UIFontWeightRegular];
+        v.textColor = UIColor.labelColor;
+        v.numberOfLines = 8;
+        v.tag = 2;
+        [c.contentView addSubview:v];
+    }
+    NSArray *e = self.entriesFor(tv);
+    if (ip.row >= (NSInteger)e.count) return c;
+    NSDictionary *d = e[ip.row];
+    UILabel *lb = [c.contentView viewWithTag:1];
+    UILabel *v = [c.contentView viewWithTag:2];
+    lb.text = d[@"label"];
+    v.text = d[@"value"];
+    CGFloat rowH = [self tableView:tv heightForRowAtIndexPath:ip];
+    v.frame = CGRectMake(12, 23, tv.bounds.size.width - 24, rowH - 27);
+    return c;
+}
+- (UISwipeActionsConfiguration *)tableView:(UITableView *)tv trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)ip {
+    NSArray *e = self.entriesFor(tv);
+    if (ip.row >= (NSInteger)e.count) return nil;
+    NSString *val = e[ip.row][@"value"];
+    __weak UITableView *wtv = tv;
+    UIContextualAction *a = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleNormal title:@"📋 复制" handler:^(UIContextualAction *act, UIView *sv, void (^done)(BOOL)) {
+        mfCopyText(val, nil);
+        done(YES);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [wtv setEditing:NO animated:YES];
+        });
+    }];
+    a.backgroundColor = [UIColor systemIndigoColor];
+    UISwipeActionsConfiguration *cfg = [UISwipeActionsConfiguration configurationWithActions:@[a]];
+    cfg.performsFirstActionWithFullSwipe = NO;
+    return cfg;
+}
+- (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
+    [tv deselectRowAtIndexPath:ip animated:YES];
+    NSArray *e = self.entriesFor(tv);
+    if (ip.row < (NSInteger)e.count) mfCopyText(e[ip.row][@"value"], nil);
+}
+@end
+static NSObject<UITableViewDataSource, UITableViewDelegate> *g_mfCryptoResList(void) {
+    static MFCryptoResList *l = nil;
+    return l ?: (l = [MFCryptoResList new]);
 }
 
 void mfShowCryptoToolboxPage(void) {
@@ -318,19 +390,19 @@ void mfShowCryptoToolboxPage(void) {
     [runBtn setTitle:@"▶ 执行" forState:UIControlStateNormal];
     [page addSubview:runBtn];
 
-    UITextView *output = [[UITextView alloc] initWithFrame:CGRectMake(12, 302, w - 24, g_mfCardH - 352)];
-    output.font = [UIFont fontWithName:@"Menlo-Regular" size:10] ?: [UIFont monospacedSystemFontOfSize:10 weight:UIFontWeightRegular];
-    output.backgroundColor = [UIColor secondarySystemBackgroundColor];
-    output.layer.cornerRadius = 10;
-    output.editable = NO;
-    [page addSubview:output];
+    UITableView *resTable = [[UITableView alloc] initWithFrame:CGRectMake(12, 322, w - 24, g_mfCardH - 372) style:UITableViewStylePlain];
+    resTable.backgroundColor = [UIColor secondarySystemBackgroundColor];
+    resTable.layer.cornerRadius = 10;
+    resTable.clipsToBounds = YES;
+    resTable.dataSource = g_mfCryptoResList();
+    resTable.delegate = g_mfCryptoResList();
+    resTable.keyboardDismissMode = UIScrollViewKeyboardDismissModeInteractive;
+    [page addSubview:resTable];
 
-    UIButton *copyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    copyBtn.frame = CGRectMake(w - 92, g_mfCardH - 46, 80, 34);
-    copyBtn.backgroundColor = [UIColor secondarySystemFillColor];
-    copyBtn.layer.cornerRadius = 9;
-    [copyBtn setTitle:@"📋 复制" forState:UIControlStateNormal];
-    [page addSubview:copyBtn];
+    UILabel *status = [[UILabel alloc] initWithFrame:CGRectMake(16, 300, w - 32, 14)];
+    status.font = [UIFont systemFontOfSize:10];
+    status.textColor = [UIColor secondaryLabelColor];
+    [page addSubview:status];
 
     // 布局函数：编解码组隐藏 Key/IV；对称组收缩分组条并显示 加密/解密
     void (^relayout)(void) = ^{
@@ -349,9 +421,9 @@ void mfShowCryptoToolboxPage(void) {
             keyF.frame = CGRectMake(12, y, w - 24, 34); y += 40;
             ivF.frame  = CGRectMake(12, y, w - 24, 34); y += 40;
         }
-        runBtn.frame  = CGRectMake(12, y, w - 24, 38); y += 46;
-        output.frame  = CGRectMake(12, y, w - 24, g_mfCardH - y - 50);
-        copyBtn.frame = CGRectMake(w - 92, g_mfCardH - 46, 80, 34);
+        runBtn.frame  = CGRectMake(12, y, w - 24, 38); y += 44;
+        status.frame  = CGRectMake(16, y, w - 32, 14); y += 18;
+        resTable.frame = CGRectMake(12, y, w - 24, g_mfCardH - y - 12);
     };
 
     objc_setAssociatedObject(page, "input", input, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -359,7 +431,8 @@ void mfShowCryptoToolboxPage(void) {
     objc_setAssociatedObject(page, "grpSeg", grpSeg, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(page, "keyF", keyF, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(page, "ivF", ivF, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    objc_setAssociatedObject(page, "output", output, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(page, "resTable", resTable, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(page, "status", status, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
     extern void mfCryptoBuildChips(UIScrollView *scroll, int group);
     objc_setAssociatedObject(page, "chipScroll", chipScroll, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -369,7 +442,6 @@ void mfShowCryptoToolboxPage(void) {
     [grpSeg addTarget:g_mfCtrl action:NSSelectorFromString(@"mfCryptoGroupChanged:") forControlEvents:UIControlEventValueChanged];
     objc_setAssociatedObject(grpSeg, "relayout", relayout, OBJC_ASSOCIATION_COPY_NONATOMIC);
     [runBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfCryptoRun:") forControlEvents:UIControlEventTouchUpInside];
-    [copyBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfCryptoCopy:") forControlEvents:UIControlEventTouchUpInside];
 
     mfPushPage(page);
 }
@@ -432,8 +504,9 @@ void mfCryptoRunAction(UIButton *btn) {
     UISegmentedControl *fmtSeg = objc_getAssociatedObject(page, "fmtSeg");
     UITextField *keyF = objc_getAssociatedObject(page, "keyF");
     UITextField *ivF = objc_getAssociatedObject(page, "ivF");
-    UITextView *output = objc_getAssociatedObject(page, "output");
-    if (!input || !output) return;
+    UITableView *resTable = objc_getAssociatedObject(page, "resTable");
+    UILabel *status = objc_getAssociatedObject(page, "status");
+    if (!input || !resTable) return;
     int algo = g_mfCryptoAlgo;
     const MFCryptoAlgo *sa = NULL;
     for (int i = 0; i < mfAlgoCount; i++) if (mfAlgos[i].id == algo) { sa = &mfAlgos[i]; break; }
@@ -444,15 +517,21 @@ void mfCryptoRunAction(UIButton *btn) {
     NSString *txt = [input.text isEqualToString:kMFCryptoPH] ? @"" : (input.text ?: @"" );
     NSInteger fmt = fmtSeg ? fmtSeg.selectedSegmentIndex : 0;
     if (sa && sa->group == 3) fmt = 0; // v2.9.5: 编解码组输入本身就是编码文本，禁二次解析
-    // v2.9.3: 不猜 — 选什么执行什么，结果标注算法名，报错自带算法名
-    NSString *result = mfCryptoExecute(algo, fmt, encrypt, txt, keyF.text, ivF.text);
-    output.text = [NSString stringWithFormat:@"[%s]\n%@", sa ? sa->name : "?", result];
-    mfLog(@"[MF] crypto run algo=%d fmt=%ld enc=%d inlen=%lu",
-          algo, (long)fmt, encrypt, (unsigned long)txt.length);
+    NSArray *entries = mfCryptoExecuteE(algo, fmt, encrypt, txt, keyF.text, ivF.text);
+    // 行高按内容算（monospace 10pt ≈ 6pt/字符，最多 8 行）
+    NSMutableArray *hs = [NSMutableArray array];
+    CGFloat perLine = MAX((g_mfCardW - 100) / 6.0, 20);
+    for (NSDictionary *e in entries) {
+        NSUInteger lines = MAX(1, (NSUInteger)ceil([(e[@"value"] ?: @"") length] / perLine));
+        lines = MIN(lines, (NSUInteger)8);
+        [hs addObject:@(MAX(lines * 13 + 27, 44))];
+    }
+    objc_setAssociatedObject(page, "entries", entries, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(page, "rowHs", hs, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    status.text = [NSString stringWithFormat:@"算法: %s · 输入 %lu 字符 · 左划或点按复制", sa ? sa->name : "?", (unsigned long)txt.length];
+    [resTable reloadData];
+    mfLog(@"[MF] crypto run algo=%d fmt=%ld enc=%d inlen=%lu rows=%lu",
+          algo, (long)fmt, encrypt, (unsigned long)txt.length, (unsigned long)entries.count);
 }
 
-void mfCryptoCopyAction(UIButton *btn) {
-    UIView *page = (UIView *)btn.superview;
-    UITextView *output = objc_getAssociatedObject(page, "output");
-    if (output.text.length) [UIPasteboard generalPasteboard].string = output.text;
-}
+
