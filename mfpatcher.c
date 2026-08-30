@@ -126,12 +126,15 @@ int main(int argc, char **argv) {
         }
     }
     fprintf(stderr, "mfpatcher: renamed %d/%zu\n", renamed, NRENAME);
-    int resigned = resign_pages(buf, sz);
-    fprintf(stderr, "mfpatcher: resign=%d\n", resigned);
 
-    f = fopen(argv[1], "wb");
-    if (!f) { free(buf); return 1; }
-    fwrite(buf, 1, sz, f); fclose(f);
+    // 只在真正改了 imports 才写回 + 重签 (修复: 不再碰无关 app 二进制)
+    if (renamed > 0) {
+        int resigned = resign_pages(buf, sz);
+        fprintf(stderr, "mfpatcher: resign=%d\n", resigned);
+        f = fopen(argv[1], "wb");
+        if (!f) { free(buf); return 1; }
+        fwrite(buf, 1, sz, f); fclose(f);
+    }
     free(buf);
     return 0;
 }
