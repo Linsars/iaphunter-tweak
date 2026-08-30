@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <mach-o/loader.h>
 #include <CommonCrypto/CommonDigest.h>
+#include <sys/sysctl.h>
 
 static inline uint32_t be32(const void *p) {
     const uint8_t *b = (const uint8_t *)p;
