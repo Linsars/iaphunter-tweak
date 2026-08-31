@@ -13,7 +13,7 @@ static long g_subHits = 0;
 
 #pragma mark - 商品 ID 源(SK1 扫描列表)
 
-static NSArray *mfSubPids(void) {
+NSArray *mfSubPids(void) { // 非 static: MFReceiptForge.m 共用
     NSArray *p = [[NSUserDefaults standardUserDefaults] objectForKey:@"SavedIAPIDs"];
     NSMutableArray *clean = [NSMutableArray array];
     for (NSString *pid in p) {
@@ -46,6 +46,9 @@ static BOOL mfSubIsTarget(NSURL *u) {
         return YES; // SW SDK 的 session/events 响应均携带 entitlement 数据
     if ([h isEqualToString:@"api.adapty.io"] || [h isEqualToString:@"api-backup.adapty.io"])
         return [p containsString:@"/in-apps"] || [p containsString:@"/profiles"] || [p containsString:@"/purchase"];
+    // v2.11.0: 客户端直调 verifyReceipt 的老 app
+    if ([h isEqualToString:@"buy.itunes.apple.com"] || [h isEqualToString:@"sandbox.itunes.apple.com"])
+        return [p hasSuffix:@"/verifyReceipt"];
     return NO;
 }
 
@@ -83,6 +86,33 @@ static NSString *mfSubJSON(NSURL *u) {
             @"\"entitlements\":[{\"identifier\":\"pro\",\"type\":\"SERVICE_LEVEL\",\"isActive\":true,"
             @"\"productIds\":[%@],\"isLifetime\":true,\"willRenew\":true,\"startsAt\":\"%@\",\"expiresAt\":\"%@\"}]}}",
             parr, now, far];
+    }
+
+    // v2.11.0: Apple verifyReceipt JSON(in_app 来自扫描列表)
+    if ([h isEqualToString:@"buy.itunes.apple.com"] || [h isEqualToString:@"sandbox.itunes.apple.com"]) {
+        NSMutableString *inApp = [NSMutableString string];
+        long long i = 0;
+        for (NSString *pid in pids) {
+            [inApp appendFormat:@"%@{\"quantity\":\"1\",\"product_id\":\"%@\",\"transaction_id\":\"mfsk1.vr.%lld\","
+             @"\"original_transaction_id\":\"mfsk1.vr.%lld\",\"purchase_date\":\"%@\",\"original_purchase_date\":\"%@\","
+             @"\"expires_date\":\"2099-09-09T09:09:09Z\",\"is_trial_period\":\"false\"}",
+             inApp.length ? @"," : @"", pid, i, i, now, now];
+            i++;
+        }
+        return [NSString stringWithFormat:
+            @"{\"status\":0,\"environment\":\"Production\","
+            @"\"receipt\":{\"receipt_type\":\"Production\",\"adam_id\":100000,\"app_item_id\":100000,"
+            @"\"bundle_id\":\"%@\",\"application_version\":\"%@\",\"download_id\":100000,"
+            @"\"version_external_identifier\":0,\"original_application_version\":\"1.0\","
+            @"\"request_date\":\"%@\",\"receipt_creation_date\":\"%@\",\"original_purchase_date\":\"%@\","
+            @"\"in_app\":[%@]},"
+            @"\"latest_receipt_info\":[%@],"
+            @"\"pending_renewal_info\":[{\"auto_renew_product_id\":\"%@\",\"product_id\":\"%@\","
+            @"\"original_transaction_id\":\"mfsk1.vr.0\",\"auto_renew_status\":\"1\"}],"
+            @"\"latest_receipt\":\"mfsk1-blob\"}",
+            [NSBundle mainBundle].bundleIdentifier ?: @"com.mf.unknown",
+            [NSBundle mainBundle].objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"1.0",
+            now, now, now, inApp, inApp, pids.firstObject ?: @"com.mf.product", pids.firstObject ?: @"com.mf.product"];
     }
 
     // Adapty

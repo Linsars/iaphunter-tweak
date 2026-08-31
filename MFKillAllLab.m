@@ -7,8 +7,11 @@
 
 void mfSK1SwitchChanged(UISwitch *sw);      // MFObjCHook.m
 void mfSubInjectSwitchChanged(UISwitch *sw); // MFSubInject.m
+void mfReceiptForgeSwitchChanged(UISwitch *sw); // MFReceiptForge.m
 long mfSubInjectHits(void);
 BOOL mfSubInjectIsOn(void);
+long mfReceiptForgeHits(void);
+BOOL mfReceiptForgeIsOn(void);
 
 // 宿主 app 是否接入了订阅 SDK(面板内提示用, 不阻断)
 static NSString *mfLabDetectSDKs(void) {
@@ -68,6 +71,22 @@ void mfShowKillAllLabPage(void) {
     [sw2 addTarget:g_mfCtrl action:NSSelectorFromString(@"mfSubInjectSwitchChanged:") forControlEvents:UIControlEventValueChanged];
     [r2 addSubview:sw2];
     [page addSubview:r2];
+    y += 64;
+
+    // 层 3: 收据伪造
+    UIView *r3 = [[UIView alloc] initWithFrame:CGRectMake(12, y, cw - 24, 56)];
+    r3.backgroundColor = [UIColor secondarySystemBackgroundColor];
+    r3.layer.cornerRadius = 10;
+    UILabel *l3 = [[UILabel alloc] initWithFrame:CGRectMake(12, 8, cw - 110, 40)];
+    l3.numberOfLines = 2;
+    l3.text = @"🧾 收据伪造\n本地解析收据判定类(Picsew 等)";
+    l3.font = [UIFont systemFontOfSize:12];
+    [r3 addSubview:l3];
+    UISwitch *sw3 = [[UISwitch alloc] initWithFrame:CGRectMake(cw - 24 - 66, 12, 51, 31)];
+    sw3.on = [[NSUserDefaults standardUserDefaults] boolForKey:@"mfReceiptForgeEnabled"];
+    [sw3 addTarget:g_mfCtrl action:NSSelectorFromString(@"mfReceiptForgeSwitchChanged:") forControlEvents:UIControlEventValueChanged];
+    [r3 addSubview:sw3];
+    [page addSubview:r3];
     y += 66;
 
     // SDK 检测提示
@@ -84,7 +103,7 @@ void mfShowKillAllLabPage(void) {
     hint.font = [UIFont systemFontOfSize:10];
     hint.textColor = [UIColor tertiaryLabelColor];
     hint.numberOfLines = 0;
-    hint.text = @"产品 ID 来自「扫描购买」列表, 两者共用:\n· 本地判定类 → 只开 SK1\n· 云端订阅类 → SK1 + 订阅注入\n· 判定层数据流: 扫描购买→启用→重开 app→恢复购买\n· 实验层, 不保证所有 app 生效";
+    hint.text = @"产品 ID 来自「扫描购买」列表, 三层共用:\n· 本地判定类 → 只开 SK1\n· 云端订阅类 → SK1 + 订阅注入\n· 收据解析类 → SK1 + 收据伪造\n· 严格验签(hash/证书链)的 app 收据层过不了\n· 判定层数据流: 扫描购买→启用→重开 app→恢复购买\n· 实验层, 不保证所有 app 生效";
     [page addSubview:hint];
 
     objc_setAssociatedObject(page, "labStatus", st, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -95,9 +114,10 @@ void mfShowKillAllLabPage(void) {
     dispatch_source_set_timer(t, DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC, 1 * NSEC_PER_SEC);
     dispatch_source_set_event_handler(t, ^{
         if (!wst || !wst.window) { dispatch_source_cancel(t); return; }
-        wst.text = [NSString stringWithFormat:@"SK1:%@ 订阅注入:%@ (命中 %ld 次)",
+        wst.text = [NSString stringWithFormat:@"SK1:%@ 注入:%@(%ld) 收据:%@(%ld)",
             [[NSUserDefaults standardUserDefaults] boolForKey:@"mfSK1Enabled"] ? @"ON" : @"off",
-            mfSubInjectIsOn() ? @"ON" : @"off", mfSubInjectHits()];
+            mfSubInjectIsOn() ? @"ON" : @"off", mfSubInjectHits(),
+            mfReceiptForgeIsOn() ? @"ON" : @"off", mfReceiptForgeHits()];
     });
     dispatch_resume(t);
 

@@ -1418,6 +1418,7 @@ void mfShowProductPage(void) {
 - (void)mfObjCTxProbeTapped { mfObjCTxProbeTapped(); }
 - (void)mfSK1SwitchChanged:(UISwitch *)sw { mfSK1SwitchChanged(sw); }
 - (void)mfSubInjectSwitchChanged:(UISwitch *)sw { mfSubInjectSwitchChanged(sw); }
+- (void)mfReceiptForgeSwitchChanged:(UISwitch *)sw { mfReceiptForgeSwitchChanged(sw); }
 - (void)mfShowKillAllLabPage { mfShowKillAllLabPage(); }
 - (void)mfObjCHookToggle:(UISwitch *)sw { mfObjCHookToggle(sw); }
 - (void)mfObjCHookDelTapped:(UIButton *)b { mfObjCHookDelTapped(b); }
@@ -2259,6 +2260,7 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
         // v2.6.56: SK1 通杀冷启动自动应用(持久化开关)
         mfSK1AutoStart();
         mfSubInjectAutoStart();
+        mfReceiptForgeAutoStart();
 
         // 手势注册
         Class vcCls = NSClassFromString(@"UIViewController");
