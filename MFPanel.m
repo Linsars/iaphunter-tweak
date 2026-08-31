@@ -830,6 +830,10 @@ static void mfQueryRevenueCatOfferings(NSString *key, void (^cb)(NSSet *pids)) {
         NSString *t = p.localizedTitle;
         if (t.length) tmap[p.productIdentifier] = t;
     }
+    // v2.11.5: Apple 确认有效的商品 = 最高置信 → 直接进 Top 档案(喂收据/dispatch)
+    extern void mfTopRecord(NSString *pid);
+    for (NSString *pid in map) mfTopRecord(pid);
+    if (map.count) mfLog(@"[iap] scan validated %lu pids → top", (unsigned long)map.count);
     if (self.cb) self.cb([map copy], [tmap copy]);
 }
 - (void)request:(SKRequest *)request didFailWithError:(NSError *)error {
