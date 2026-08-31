@@ -98,6 +98,18 @@ void mfShowKillAllLabPage(void) {
     [page addSubview:det];
     y += 38;
 
+    // 判定侦察按钮
+    UIButton *probeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    probeBtn.frame = CGRectMake(12, y, cw - 24, 34);
+    probeBtn.backgroundColor = [UIColor systemTealColor];
+    probeBtn.layer.cornerRadius = 9;
+    probeBtn.tintColor = UIColor.whiteColor;
+    [probeBtn setTitle:@"🔍 判定侦察(扫判定方法)" forState:UIControlStateNormal];
+    probeBtn.titleLabel.font = [UIFont systemFontOfSize:12];
+    [probeBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfJudgeProbeTapped") forControlEvents:UIControlEventTouchUpInside];
+    [page addSubview:probeBtn];
+    y += 42;
+
     // 说明
     UILabel *hint = [[UILabel alloc] initWithFrame:CGRectMake(16, y, cw - 32, 96)];
     hint.font = [UIFont systemFontOfSize:10];

@@ -1436,6 +1436,9 @@ void mfShowProductPage(void) {
 - (void)mfSubInjectSwitchChanged:(UISwitch *)sw { mfSubInjectSwitchChanged(sw); }
 - (void)mfReceiptForgeSwitchChanged:(UISwitch *)sw { mfReceiptForgeSwitchChanged(sw); }
 - (void)mfShowKillAllLabPage { mfShowKillAllLabPage(); }
+- (void)mfJudgeProbeTapped {
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{ mfJudgeProbeRun(); });
+}
 - (void)mfObjCHookToggle:(UISwitch *)sw { mfObjCHookToggle(sw); }
 - (void)mfObjCHookDelTapped:(UIButton *)b { mfObjCHookDelTapped(b); }
 - (void)mfObjCHookEditTapped:(UIView *)row { mfObjCHookEditTappedFromView(row); }
@@ -2315,7 +2318,9 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
         }
 
         extern void mfFileIDsDiag(void);
+        extern void mfJudgeProbeAuto(void);
         mfFileIDsDiag();
-        mfLog(@"=== IAPtools ctor DONE (build v2.11.10) ===");
+        mfJudgeProbeAuto();
+        mfLog(@"=== IAPtools ctor DONE (build " MF_BUILD_VER @") ===");
     }
 }
