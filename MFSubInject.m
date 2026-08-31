@@ -85,10 +85,11 @@ NSArray *mfSubPids(void) { // 非 static: MFReceiptForge.m 共用
         if (![pid isKindOfClass:[NSString class]]) { if (doDiag) mfLog(@"[mfsubpids] drop nonstring %@", [pid class]); continue; }
         if (!mfPIDLooksReal(pid)) { if (doDiag) mfLog(@"[mfsubpids] filter kill %@", pid); continue; }
         if ([clean containsObject:pid]) continue;
-        // JSON 安全: 剥引号/反斜杠/控制符
+        // JSON 安全: 剥引号/反斜杠/控制符 (v2.12.1 修复: 按 controlCharacterSet 切分去控制符,
+        // 之前误用 invertedSet = 按正常字符切分 = 所有 ID 被洗成空串 = clean 恒 0 = 恒 fallback)
         NSString *s = [pid stringByReplacingOccurrencesOfString:@"\"" withString:@""];
         s = [s stringByReplacingOccurrencesOfString:@"\\" withString:@""];
-        NSCharacterSet *bad = [[NSCharacterSet controlCharacterSet] invertedSet];
+        NSCharacterSet *bad = [NSCharacterSet controlCharacterSet];
         s = [[s componentsSeparatedByCharactersInSet:bad] componentsJoinedByString:@""];
         if (s.length && s.length <= 200) [clean addObject:s];
     }
