@@ -79,9 +79,11 @@ NSArray *mfSubPids(void) { // 非 static: MFReceiptForge.m 共用
     NSArray *top = [d objectForKey:@"mfTopIDs"] ?: @[];
     NSArray *rest = [d objectForKey:@"SavedIAPIDs"] ?: @[];
     NSMutableArray *clean = [NSMutableArray array];
+    static int diagLogged = 0;   // v2.12.0: 每进程前 2 次调用打全量诊断
+    int doDiag = diagLogged < 2; if (doDiag) diagLogged++;
     for (NSString *pid in [mfFileIDsRead() arrayByAddingObjectsFromArray:[top arrayByAddingObjectsFromArray:rest]]) {
-        if (![pid isKindOfClass:[NSString class]]) continue;
-        if (!mfPIDLooksReal(pid)) continue;
+        if (![pid isKindOfClass:[NSString class]]) { if (doDiag) mfLog(@"[mfsubpids] drop nonstring %@", [pid class]); continue; }
+        if (!mfPIDLooksReal(pid)) { if (doDiag) mfLog(@"[mfsubpids] filter kill %@", pid); continue; }
         if ([clean containsObject:pid]) continue;
         // JSON 安全: 剥引号/反斜杠/控制符
         NSString *s = [pid stringByReplacingOccurrencesOfString:@"\"" withString:@""];
@@ -89,6 +91,13 @@ NSArray *mfSubPids(void) { // 非 static: MFReceiptForge.m 共用
         NSCharacterSet *bad = [[NSCharacterSet controlCharacterSet] invertedSet];
         s = [[s componentsSeparatedByCharactersInSet:bad] componentsJoinedByString:@""];
         if (s.length && s.length <= 200) [clean addObject:s];
+    }
+    if (doDiag) {
+        NSArray *fid = mfFileIDsRead();
+        mfLog(@"[mfsubpids] file=%lu top=%lu rest=%lu clean=%lu first=%@",
+              (unsigned long)fid.count, (unsigned long)top.count, (unsigned long)rest.count,
+              (unsigned long)clean.count, clean.firstObject ?: @"-");
+        for (NSString *p in fid) if (doDiag) mfLog(@"[mfsubpids] file item: %@", p);
     }
     if (clean.count) return clean;
     return @[@"com.mf.premium.lifetime"];
