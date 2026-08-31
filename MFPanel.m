@@ -1364,7 +1364,6 @@ void mfShowProductPage(void) {
     gy = mfGridButton(page, 16, gy, gw, @"扫描购买", @"🔍", @selector(mfShowScanPage), NO, nil);
     gy = mfGridButton(page, 16 + gw + 12, gy - 92, gw, @"手动购买", @"⌨️", @selector(mfShowManualBuyPage), NO, nil);
     gy = mfGridButton(page, 16, gy, gw, @"图标解锁", @"🎨", @selector(mfShowIconPage), NO, nil);
-    mfGridButton(page, 16 + gw + 12, gy - 92, gw, @"通杀实验", @"🧪", @selector(mfShowKillAllLabPage), NO, nil);
     mfPushPage(page);
 }
 
@@ -1434,11 +1433,6 @@ void mfShowProductPage(void) {
 - (void)mfObjCTxProbeTapped { mfObjCTxProbeTapped(); }
 - (void)mfSubInjectSwitchChanged:(UISwitch *)sw { mfSubInjectSwitchChanged(sw); }
 - (void)mfReceiptForgeSwitchChanged:(UISwitch *)sw { mfReceiptForgeSwitchChanged(sw); }
-- (void)mfKeychainProbeTapped { dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{ mfKeychainProbeRun(); }); }
-- (void)mfShowKillAllLabPage { mfShowKillAllLabPage(); }
-- (void)mfJudgeProbeTapped {
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{ mfJudgeProbeRun(); });
-}
 - (void)mfObjCHookToggle:(UISwitch *)sw { mfObjCHookToggle(sw); }
 - (void)mfObjCHookDelTapped:(UIButton *)b { mfObjCHookDelTapped(b); }
 - (void)mfObjCHookEditTapped:(UIView *)row { mfObjCHookEditTappedFromView(row); }
@@ -2316,11 +2310,7 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
         }
 
         extern void mfFileIDsDiag(void);
-        extern void mfJudgeProbeAuto(void);
-        extern void mfKeychainProbeRun(void);
         mfFileIDsDiag();
-        mfJudgeProbeAuto();
-        mfKeychainProbeRun();
         mfLog([NSString stringWithFormat:@"=== IAPtools ctor DONE (build %s) ===", MF_BUILD_VER_S]);
     }
 }
