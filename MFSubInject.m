@@ -31,11 +31,15 @@ BOOL mfPIDLooksReal(NSString *pid) {
 }
 
 NSArray *mfSubPids(void) { // 非 static: MFReceiptForge.m 共用
-    NSArray *p = [[NSUserDefaults standardUserDefaults] objectForKey:@"SavedIAPIDs"];
+    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+    // v2.11.3: mfTopIDs(ProductsRequest/SKProduct 亲口确认) 优先, SavedIAPIDs 兜底
+    NSArray *top = [d objectForKey:@"mfTopIDs"] ?: @[];
+    NSArray *rest = [d objectForKey:@"SavedIAPIDs"] ?: @[];
     NSMutableArray *clean = [NSMutableArray array];
-    for (NSString *pid in p) {
+    for (NSString *pid in [top arrayByAddingObjectsFromArray:rest]) {
         if (![pid isKindOfClass:[NSString class]]) continue;
         if (!mfPIDLooksReal(pid)) continue;
+        if ([clean containsObject:pid]) continue;
         // JSON 安全: 剥引号/反斜杠/控制符
         NSString *s = [pid stringByReplacingOccurrencesOfString:@"\"" withString:@""];
         s = [s stringByReplacingOccurrencesOfString:@"\\" withString:@""];

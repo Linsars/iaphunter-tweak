@@ -480,6 +480,7 @@ void mfObjCHookDelTapped(UIButton *b) {
 //   有真实交易时透传原值(不干扰正常购买流程)
 static BOOL g_sk1on = NO;
 // v2.6.60: 前向声明(定义在模块尾部, mfSK1Enable 引用)
+extern NSArray *mfSubPids(void); // MFSubInject.m — 过滤+Top置顶后的商品 ID
 static void (*orig_sk1_finish)(id, SEL, id);
 static void hook_sk1_finish(id self, SEL _cmd, id tx);
 static void mfSK1PushFakes(void);
@@ -529,7 +530,7 @@ static NSArray *hook_sk1_transactions(id self, SEL _cmd) {
     NSArray *real = orig_sk1_transactions ? orig_sk1_transactions(self, _cmd) : nil;
     if (!g_sk1on) return real;
     if (real && real.count > 0) return real;   // 有真实交易 → 透传
-    NSArray *pids = [[NSUserDefaults standardUserDefaults] objectForKey:@"SavedIAPIDs"] ?: @[];
+    NSArray *pids = mfSubPids(); // v2.11.3: 过滤+Top置顶, 不再读原始列表
     NSMutableArray *fakes = [NSMutableArray array];
     for (NSString *pid in pids) {
         if (pid.length == 0 || pid.length > 200) continue;
@@ -585,7 +586,7 @@ static void hook_sk1_updated(id self, SEL _cmd, id txs) {
     if (orig_sk1_updated) orig_sk1_updated(self, _cmd, txs);
     // fake → 直接分发 observers(绕开原版内部)
     if (g_sk1on) {
-        NSArray *pids = [[NSUserDefaults standardUserDefaults] objectForKey:@"SavedIAPIDs"] ?: @[];
+        NSArray *pids = mfSubPids(); // v2.11.3: 过滤+Top置顶, 不再读原始列表
         NSMutableArray *fakes = [NSMutableArray array];
         for (NSString *pid in pids) {
             if (pid.length == 0 || pid.length > 200) continue;
@@ -660,7 +661,7 @@ void mfSK1AutoStart(void) {
 // v2.6.59: 主动推送——storekitd 无真实交易时 updatedTransactions: 不回调, 我们直接推
 static void mfSK1PushFakes(void) {
     if (!g_sk1on) return;
-    NSArray *pids = [[NSUserDefaults standardUserDefaults] objectForKey:@"SavedIAPIDs"] ?: @[];
+    NSArray *pids = mfSubPids(); // v2.11.3: 过滤+Top置顶, 不再读原始列表
     if (pids.count == 0) { OH_LOG(@"SK1 push: no pids"); return; }
     NSMutableArray *fakes = [NSMutableArray array];
     for (NSString *pid in pids) {

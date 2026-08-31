@@ -2017,7 +2017,14 @@ static void ensureStoreKit(void) {
 static IMP orig_SKProduct_pid;
 static NSString *new_SKProduct_pid(id self, SEL _cmd) {
     NSString *r = ((NSString *(*)(id, SEL))orig_SKProduct_pid)(self, _cmd);
-    if (r) { IAPRecord(r); mfLog(@"[iap] SK1 SKProduct pid: %@", r); }
+    if (r) {
+        IAPRecord(r);
+        extern void mfTopRecord(NSString *pid); // v2.11.3: 真实 SKProduct 响应对象 = 最高置信
+        mfTopRecord(r);
+        static NSMutableSet *logged = nil;
+        if (!logged) logged = [NSMutableSet set];
+        if (![logged containsObject:r]) { [logged addObject:r]; mfLog(@"[iap] SK1 SKProduct pid: %@", r); }
+    }
     return r;
 }
 static IMP orig_SKPayment_pid;
@@ -2033,6 +2040,20 @@ static NSString *new_SKPaymentTxn_pid(id self, SEL _cmd) {
     return r;
 }
 static IMP orig_SKProductsReq_init;
+// v2.11.3: 高置信 ID 单独归档(ProductsRequest 亲口要的 + 真实 SKProduct 响应) — 收据/dispatch 优先用
+void mfTopRecord(NSString *pid) {
+    if (pid.length == 0 || pid.length > 100) return;
+    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+    NSMutableArray *top = [NSMutableArray arrayWithArray:([d objectForKey:@"mfTopIDs"] ?: @[])];
+    if ([top containsObject:pid]) return;
+    [top removeObject:pid];
+    [top insertObject:pid atIndex:0];
+    if (top.count > 60) [top removeObjectsInRange:NSMakeRange(60, top.count - 60)];
+    [d setObject:top forKey:@"mfTopIDs"]; [d synchronize];
+    extern void mfReceiptForgeInvalidate(void);
+    mfReceiptForgeInvalidate();
+    mfLog(@"[iap] top id: %@ (total %lu)", pid, (unsigned long)top.count);
+}
 static id new_SKProductsReq_init(id self, SEL _cmd, NSSet *identifiers) {
     mfLog(@"[iap] SK1 ProductsRequest: %lu ids → %@", (unsigned long)identifiers.count, identifiers);
     // v2.11.2: ProductsRequest 的 ID 是 app 亲口要买的(最高置信) — 优先插入列表头
@@ -2042,6 +2063,7 @@ static id new_SKProductsReq_init(id self, SEL _cmd, NSSet *identifiers) {
     BOOL changed = NO;
     for (NSString *pid in identifiers) {
         if (![pid isKindOfClass:[NSString class]] || !mfPIDLooksReal(pid)) continue;
+        mfTopRecord(pid);
         [list removeObject:pid];
         [list insertObject:pid atIndex:0];
         changed = YES;
