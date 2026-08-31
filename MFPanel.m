@@ -1432,10 +1432,8 @@ void mfShowProductPage(void) {
 - (void)mfObjCLocateScan:(UIButton *)b { mfRunSelectorLocatorFromButton(b); }
 - (void)mfObjCForceSandboxTapped { mfObjCForceSandboxTapped(); }
 - (void)mfObjCTxProbeTapped { mfObjCTxProbeTapped(); }
-- (void)mfSK1SwitchChanged:(UISwitch *)sw { mfSK1SwitchChanged(sw); }
 - (void)mfSubInjectSwitchChanged:(UISwitch *)sw { mfSubInjectSwitchChanged(sw); }
 - (void)mfReceiptForgeSwitchChanged:(UISwitch *)sw { mfReceiptForgeSwitchChanged(sw); }
-- (void)mfJudgeTakeoverSwitchChanged:(UISwitch *)sw { mfJudgeTakeoverSwitchChanged(sw); }
 - (void)mfKeychainProbeTapped { dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{ mfKeychainProbeRun(); }); }
 - (void)mfShowKillAllLabPage { mfShowKillAllLabPage(); }
 - (void)mfJudgeProbeTapped {
@@ -2301,11 +2299,8 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
 
         // v2.6.48: ObjC 规则冷启动自动应用(每个注入的 app 进程生效——跨进程规则的根基)
         mfObjCHookApplySilent();
-        // v2.6.56: SK1 通杀冷启动自动应用(持久化开关)
-        mfSK1AutoStart();
         mfSubInjectAutoStart();
         mfReceiptForgeAutoStart();
-        mfJudgeTakeoverAutoStart();
 
         // 手势注册
         Class vcCls = NSClassFromString(@"UIViewController");
