@@ -830,14 +830,15 @@ static void mfQueryRevenueCatOfferings(NSString *key, void (^cb)(NSSet *pids)) {
         NSString *t = p.localizedTitle;
         if (t.length) tmap[p.productIdentifier] = t;
     }
-    // v2.11.5: Apple 确认有效的商品 = 最高置信 → 直接进 Top 档案(喂收据/dispatch)
-    // 同时落 SavedIAPIDs(否则 mfSubPids 只有 Top 没有 rest 也能吃)
+    // v2.11.5: Apple 确认有效的商品 = 最高置信 → 文件级存储(mfFileIDsAdd) + Top + SavedIAPIDs
     extern void mfTopRecord(NSString *pid);
+    extern void mfFileIDsAdd(NSString *pid);
     NSUserDefaults *dd = [NSUserDefaults standardUserDefaults];
     NSMutableArray *saved = [NSMutableArray arrayWithArray:([dd objectForKey:@"SavedIAPIDs"] ?: @[])];
     BOOL ch = NO;
     for (NSString *pid in map) {
         mfTopRecord(pid);
+        mfFileIDsAdd(pid); // v2.11.8: app 抹 defaults 也抹不掉
         if (![saved containsObject:pid]) { [saved addObject:pid]; ch = YES; }
     }
     if (ch) { [dd setObject:saved forKey:@"SavedIAPIDs"]; [dd synchronize]; }
@@ -2055,6 +2056,8 @@ static IMP orig_SKProductsReq_init;
 // v2.11.3: 高置信 ID 单独归档(ProductsRequest 亲口要的 + 真实 SKProduct 响应) — 收据/dispatch 优先用
 void mfTopRecord(NSString *pid) {
     if (pid.length == 0 || pid.length > 100) return;
+    extern void mfFileIDsAdd(NSString *pid); // v2.11.8: 文件级主存储(防 defaults 被抹)
+    mfFileIDsAdd(pid);
     NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
     NSMutableArray *top = [NSMutableArray arrayWithArray:([d objectForKey:@"mfTopIDs"] ?: @[])];
     if ([top containsObject:pid]) return;

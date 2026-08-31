@@ -30,13 +30,50 @@ BOOL mfPIDLooksReal(NSString *pid) {
     return YES;
 }
 
+// v2.11.8: 文件级 ID 存储 — NSUserDefaults 会被 app 抹掉(实测 07:00 写 07:02 空), 自己的文件自己守
+static NSString *mfIAPIDsFilePath(void) {
+    static NSString *p = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSString *dir = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
+        NSString *sub = [dir stringByAppendingPathComponent:@"MinisFix"];
+        [[NSFileManager defaultManager] createDirectoryAtPath:sub withIntermediateDirectories:YES attributes:nil error:NULL];
+        p = [sub stringByAppendingPathComponent:@"iapids.plist"];
+    });
+    return p;
+}
+static NSMutableArray *g_fileIDs = nil;
+static dispatch_semaphore_t g_fileSem = NULL;
+static NSArray *mfFileIDsRead(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ g_fileSem = dispatch_semaphore_create(1); });
+    dispatch_semaphore_wait(g_fileSem, DISPATCH_TIME_FOREVER);
+    if (!g_fileIDs) g_fileIDs = [[NSArray arrayWithContentsOfFile:mfIAPIDsFilePath()] ?: @[] mutableCopy];
+    dispatch_semaphore_signal(g_fileSem);
+    return g_fileIDs ?: @[];
+}
+void mfFileIDsAdd(NSString *pid) { // 高置信插头部; MFPanel.m 调用
+    if (pid.length == 0 || pid.length > 100) return;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ mfFileIDsRead(); });
+    dispatch_semaphore_wait(g_fileSem, DISPATCH_TIME_FOREVER);
+    if (![g_fileIDs containsObject:pid]) {
+        [g_fileIDs removeObject:pid];
+        [g_fileIDs insertObject:pid atIndex:0];
+        if (g_fileIDs.count > 200) [g_fileIDs removeObjectsInRange:NSMakeRange(200, g_fileIDs.count - 200)];
+        [g_fileIDs writeToFile:mfIAPIDsFilePath() atomically:YES];
+        mfLog(@"[iap] file id: %@ (total %lu)", pid, (unsigned long)g_fileIDs.count);
+    }
+    dispatch_semaphore_signal(g_fileSem);
+}
+
 NSArray *mfSubPids(void) { // 非 static: MFReceiptForge.m 共用
+    // v2.11.8: 文件存储为主, NSUserDefaults(mfTopIDs/SavedIAPIDs)作迁移兜底
     NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
-    // v2.11.3: mfTopIDs(ProductsRequest/SKProduct 亲口确认) 优先, SavedIAPIDs 兜底
     NSArray *top = [d objectForKey:@"mfTopIDs"] ?: @[];
     NSArray *rest = [d objectForKey:@"SavedIAPIDs"] ?: @[];
     NSMutableArray *clean = [NSMutableArray array];
-    for (NSString *pid in [top arrayByAddingObjectsFromArray:rest]) {
+    for (NSString *pid in [mfFileIDsRead() arrayByAddingObjectsFromArray:[top arrayByAddingObjectsFromArray:rest]]) {
         if (![pid isKindOfClass:[NSString class]]) continue;
         if (!mfPIDLooksReal(pid)) continue;
         if ([clean containsObject:pid]) continue;

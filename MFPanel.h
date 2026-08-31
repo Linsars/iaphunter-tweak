@@ -174,6 +174,7 @@ void mfSK1SwitchChanged(UISwitch *sw);   // ⚡ SK1 通杀开关
 void mfSubInjectSwitchChanged(UISwitch *sw); // 📡 订阅 SDK 响应注入开关 (MFSubInject.m)
 void mfSubInjectAutoStart(void);
 NSArray *mfSubPids(void);                // 扫描列表商品 ID (MFSubInject.m, 收据层共用)
+void mfFileIDsAdd(NSString *pid);   // v2.11.8 文件级 ID 存储 (MFSubInject.m)
 void mfReceiptForgeSwitchChanged(UISwitch *sw); // 🧾 收据伪造开关 (MFReceiptForge.m)
 void mfReceiptForgeAutoStart(void);
 void mfReceiptForgeInvalidate(void);   // v2.11.1: 列表变化时强制重建
