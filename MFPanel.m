@@ -1348,6 +1348,7 @@ void mfShowProductPage(void) {
     gy = mfGridButton(page, 16, gy, gw, @"扫描购买", @"🔍", @selector(mfShowScanPage), NO, nil);
     gy = mfGridButton(page, 16 + gw + 12, gy - 92, gw, @"手动购买", @"⌨️", @selector(mfShowManualBuyPage), NO, nil);
     gy = mfGridButton(page, 16, gy, gw, @"图标解锁", @"🎨", @selector(mfShowIconPage), NO, nil);
+    mfGridButton(page, 16 + gw + 12, gy - 92, gw, @"通杀实验", @"🧪", @selector(mfShowKillAllLabPage), NO, nil);
     mfPushPage(page);
 }
 
@@ -1416,6 +1417,8 @@ void mfShowProductPage(void) {
 - (void)mfObjCForceSandboxTapped { mfObjCForceSandboxTapped(); }
 - (void)mfObjCTxProbeTapped { mfObjCTxProbeTapped(); }
 - (void)mfSK1SwitchChanged:(UISwitch *)sw { mfSK1SwitchChanged(sw); }
+- (void)mfSubInjectSwitchChanged:(UISwitch *)sw { mfSubInjectSwitchChanged(sw); }
+- (void)mfShowKillAllLabPage { mfShowKillAllLabPage(); }
 - (void)mfObjCHookToggle:(UISwitch *)sw { mfObjCHookToggle(sw); }
 - (void)mfObjCHookDelTapped:(UIButton *)b { mfObjCHookDelTapped(b); }
 - (void)mfObjCHookEditTapped:(UIView *)row { mfObjCHookEditTappedFromView(row); }
@@ -2255,6 +2258,7 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
         mfObjCHookApplySilent();
         // v2.6.56: SK1 通杀冷启动自动应用(持久化开关)
         mfSK1AutoStart();
+        mfSubInjectAutoStart();
 
         // 手势注册
         Class vcCls = NSClassFromString(@"UIViewController");

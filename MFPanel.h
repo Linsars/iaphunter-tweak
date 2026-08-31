@@ -171,6 +171,9 @@ void mfObjCHookFormAddTapped(void);
 void mfObjCForceSandboxTapped(void);   // 🧪 强制 sandbox(私有 API)
 void mfObjCTxProbeTapped(void);   // 🧪 伪造交易实验
 void mfSK1SwitchChanged(UISwitch *sw);   // ⚡ SK1 通杀开关
+void mfSubInjectSwitchChanged(UISwitch *sw); // 📡 订阅 SDK 响应注入开关 (MFSubInject.m)
+void mfSubInjectAutoStart(void);
+void mfShowKillAllLabPage(void);         // 🧪 通杀实验页 (MFKillAllLab.m)
 void mfSK1AutoStart(void);   // 冷启动自动应用   // v2.6.47 页面内表单添加(替代弹窗)
 void mfObjCHookToggle(UISwitch *sw);
 void mfObjCHookEditTappedFromView(UIView *row);   // v2.6.79 点 cell 编辑

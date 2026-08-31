@@ -231,19 +231,7 @@ void mfShowObjCHookPage(void) {
     hint.text = @"精确 hook 方法返回值(作用于当前 app)";
     hint.font = [UIFont systemFontOfSize:11]; hint.textColor = [UIColor tertiaryLabelColor];
     hint.numberOfLines = 0; [sv addSubview:hint]; y += 24;
-    // v2.6.57: SK1 通杀 UISwitch(对齐实时捕获开关样式——持久化+冷启动自动恢复)
-    UIView *sk1Row = [[UIView alloc] initWithFrame:CGRectMake(12, y, cw-24, 40)];
-    sk1Row.backgroundColor = [UIColor secondarySystemBackgroundColor];
-    sk1Row.layer.cornerRadius = 10;
-    UILabel *sk1Lb = [[UILabel alloc] initWithFrame:CGRectMake(10, 10, cw-90, 20)];
-    sk1Lb.text = @"⚡ SK1 通杀(伪造已购交易, 通用)";
-    sk1Lb.font = [UIFont systemFontOfSize:13];
-    [sk1Row addSubview:sk1Lb];
-    UISwitch *sk1Sw = [[UISwitch alloc] initWithFrame:CGRectMake(cw-24-70, 4, 51, 31)];
-    sk1Sw.on = [[NSUserDefaults standardUserDefaults] boolForKey:@"mfSK1Enabled"];
-    [sk1Sw addTarget:g_mfCtrl action:NSSelectorFromString(@"mfSK1SwitchChanged:") forControlEvents:UIControlEventValueChanged];
-    [sk1Row addSubview:sk1Sw];
-    [sv addSubview:sk1Row]; y += 48;
+    // v2.10.0: SK1 通杀开关迁至 Product→通杀实验页(此处移除, 状态共用 mfSK1Enabled)
 
     // v2.6.47: 页面内表单(替代系统弹窗)——对齐面板原生交互
     g_clsF = [[UITextField alloc] initWithFrame:CGRectMake(16, y, (cw-40)/2, 34)];
