@@ -110,8 +110,17 @@ void mfJudgeProbeDeep(NSArray *clsNames) {
 }
 
 void mfJudgeProbeAuto(void) {
-    // ctor 后 15s 自动跑(等 app 类全部加载) + 深挖判定链
+    // v2.14.1: 只在「用户开了 IAP 功能且 app 有购买特征」时自动跑 — 不再打扰所有 app
+    // 特征: SavedIAPIDs/mfTopIDs 非空(说明用户在这个 app 扫描过) 或进程里有 StoreKit 判定类
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+        NSArray *ids = [d objectForKey:@"mfTopIDs"] ?: @[];
+        NSArray *rest = [d objectForKey:@"SavedIAPIDs"] ?: @[];
+        BOOL hasIAPContext = ids.count > 0 || rest.count > 0;
+        if (!hasIAPContext) {
+            mfLog(@"[judge] skip (no IAP context in this app)");
+            return;
+        }
         mfJudgeProbeRun();
         mfJudgeProbeDeep(@[@"MOSubscriptionCenter", @"YJPurchase.PurchasesReceiptParser",
                            @"YJPurchase.StoreEntitlement", @"Picsew.PurchaseLevel",
