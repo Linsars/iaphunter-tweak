@@ -21,8 +21,12 @@ BOOL mfPIDLooksReal(NSString *pid) {
                       @"square.grid", @"xmark", @"checkmark", @"questionmark", @"head.profile",
                       @"minus.plus", @"hourglass.badge", @"memories.", @"pencil.tip", @"inset.filled",
                       @"iphone-", @"iphone_", @"iPad_", @"watch-", @"beats.", @"airpods", @"homepod",
-                      @"byok_", @"com.apple.", @"X-Crashlytics", @"Crashlytics"];
+                      @"byok_", @"com.apple.", @"X-Crashlytics", @"Crashlytics",
+                      @"FIRCLS", @"token", @"subscription_cancel", @"subscription_convert",
+                      @"subscription_renew", @"app_upgrade", @"badge.plus", @"_ACv", @"Pro_129", @"Mac_"];
     for (NSString *p in junk) if ([pid containsString:p]) return NO;
+    // 保留条件: 含点(反向域名/命名空间) 或 带下划线的语义短语
+    if (![pid containsString:@"."] && ![pid containsString:@"_"]) return NO;
     return YES;
 }
 

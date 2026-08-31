@@ -2035,7 +2035,23 @@ static NSString *new_SKPaymentTxn_pid(id self, SEL _cmd) {
 static IMP orig_SKProductsReq_init;
 static id new_SKProductsReq_init(id self, SEL _cmd, NSSet *identifiers) {
     mfLog(@"[iap] SK1 ProductsRequest: %lu ids → %@", (unsigned long)identifiers.count, identifiers);
-    for (NSString *pid in identifiers) IAPRecord(pid);
+    // v2.11.2: ProductsRequest 的 ID 是 app 亲口要买的(最高置信) — 优先插入列表头
+    extern BOOL mfPIDLooksReal(NSString *pid);
+    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+    NSMutableArray *list = [NSMutableArray arrayWithArray:([d objectForKey:@"SavedIAPIDs"] ?: @[])];
+    BOOL changed = NO;
+    for (NSString *pid in identifiers) {
+        if (![pid isKindOfClass:[NSString class]] || !mfPIDLooksReal(pid)) continue;
+        [list removeObject:pid];
+        [list insertObject:pid atIndex:0];
+        changed = YES;
+    }
+    if (changed) {
+        if (list.count > 60) [list removeObjectsInRange:NSMakeRange(60, list.count - 60)];
+        [d setObject:list forKey:@"SavedIAPIDs"]; [d synchronize];
+        extern void mfReceiptForgeInvalidate(void);
+        mfReceiptForgeInvalidate();
+    }
     return ((id(*)(id, SEL, NSSet *))orig_SKProductsReq_init)(self, _cmd, identifiers);
 }
 

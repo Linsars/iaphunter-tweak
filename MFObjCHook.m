@@ -563,6 +563,9 @@ static void mfSK1DispatchFakes(NSArray *fakes) {
     if (fakes.count == 0) return;
     extern void mfReceiptForgeInvalidate(void); // v2.11.1: 列表变了 → 收据重建
     mfReceiptForgeInvalidate();
+    if (fakes.count > 32) {
+        fakes = [fakes subarrayWithRange:NSMakeRange(0, 32)]; // v2.11.2: 洪峰截断, 垃圾淹没判定逻辑
+    }
     id q = [objc_getClass("SKPaymentQueue") performSelector:NSSelectorFromString(@"defaultQueue")];
     if (!q) return;
     id observers = ((id(*)(id,SEL))objc_msgSend)(q, NSSelectorFromString(@"transactionObservers"));
