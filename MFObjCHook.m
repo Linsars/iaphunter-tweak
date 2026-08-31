@@ -587,6 +587,8 @@ static void hook_sk1_updated(id self, SEL _cmd, id txs) {
     // fake → 直接分发 observers(绕开原版内部)
     if (g_sk1on) {
         NSArray *pids = mfSubPids(); // v2.11.3: 过滤+Top置顶, 不再读原始列表
+        // v2.11.4: 只有 fallback(列表空) → 不推
+        if (pids.count <= 1) return;
         NSMutableArray *fakes = [NSMutableArray array];
         for (NSString *pid in pids) {
             if (pid.length == 0 || pid.length > 200) continue;
@@ -663,6 +665,11 @@ static void mfSK1PushFakes(void) {
     if (!g_sk1on) return;
     NSArray *pids = mfSubPids(); // v2.11.3: 过滤+Top置顶, 不再读原始列表
     if (pids.count == 0) { OH_LOG(@"SK1 push: no pids"); return; }
+    // v2.11.4: 只有 fallback(列表空) → 不推, 等 app 内购页喂数据
+    if (pids.count == 1 && [pids[0] isEqualToString:@"com.mf.premium.lifetime"]) {
+        OH_LOG(@"SK1 push: list empty, skip");
+        return;
+    }
     NSMutableArray *fakes = [NSMutableArray array];
     for (NSString *pid in pids) {
         if (pid.length == 0 || pid.length > 200) continue;

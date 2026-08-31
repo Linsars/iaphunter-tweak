@@ -370,6 +370,13 @@ static NSURL *hook_receiptURL(id self, SEL _cmd) {
         return nil;
     }
     g_forgeHits++;
+    // v2.11.4: 列表还是空(fallback only) → 透传真收据, 不喂垃圾弹夹
+    NSArray *cur = mfSubPids();
+    if (cur.count == 1 && [cur[0] isEqualToString:@"com.mf.premium.lifetime"]) {
+        mfLog(@"[rcforge] passthrough (list empty, 先开一次 app 内购页)");
+        if (orig_receiptURL) return ((NSURL *(*)(id, SEL))orig_receiptURL)(self, _cmd);
+        return nil;
+    }
     @try {
         NSUInteger pc = mfSubPids().count;
         static dispatch_once_t once; static dispatch_semaphore_t sem = NULL;
