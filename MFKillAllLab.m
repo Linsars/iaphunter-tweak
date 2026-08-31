@@ -127,6 +127,18 @@ void mfShowKillAllLabPage(void) {
     [page addSubview:probeBtn];
     y += 42;
 
+    // Keychain 深挖按钮
+    UIButton *kcBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    kcBtn.frame = CGRectMake(12, y, cw - 24, 34);
+    kcBtn.backgroundColor = [UIColor systemOrangeColor];
+    kcBtn.layer.cornerRadius = 9;
+    kcBtn.tintColor = UIColor.whiteColor;
+    [kcBtn setTitle:@"🔑 Keychain 深挖" forState:UIControlStateNormal];
+    kcBtn.titleLabel.font = [UIFont systemFontOfSize:12];
+    [kcBtn addTarget:g_mfCtrl action:NSSelectorFromString(@"mfKeychainProbeTapped") forControlEvents:UIControlEventTouchUpInside];
+    [page addSubview:kcBtn];
+    y += 42;
+
     // 说明
     UILabel *hint = [[UILabel alloc] initWithFrame:CGRectMake(16, y, cw - 32, 96)];
     hint.font = [UIFont systemFontOfSize:10];

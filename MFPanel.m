@@ -1436,6 +1436,7 @@ void mfShowProductPage(void) {
 - (void)mfSubInjectSwitchChanged:(UISwitch *)sw { mfSubInjectSwitchChanged(sw); }
 - (void)mfReceiptForgeSwitchChanged:(UISwitch *)sw { mfReceiptForgeSwitchChanged(sw); }
 - (void)mfJudgeTakeoverSwitchChanged:(UISwitch *)sw { mfJudgeTakeoverSwitchChanged(sw); }
+- (void)mfKeychainProbeTapped { dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{ mfKeychainProbeRun(); }); }
 - (void)mfShowKillAllLabPage { mfShowKillAllLabPage(); }
 - (void)mfJudgeProbeTapped {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{ mfJudgeProbeRun(); });
@@ -2321,8 +2322,10 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
 
         extern void mfFileIDsDiag(void);
         extern void mfJudgeProbeAuto(void);
+        extern void mfKeychainProbeRun(void);
         mfFileIDsDiag();
         mfJudgeProbeAuto();
+        mfKeychainProbeRun();
         mfLog([NSString stringWithFormat:@"=== IAPtools ctor DONE (build %s) ===", MF_BUILD_VER_S]);
     }
 }

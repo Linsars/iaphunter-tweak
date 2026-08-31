@@ -177,6 +177,8 @@ NSArray *mfSubPids(void);                // 扫描列表商品 ID (MFSubInject.m
 void mfFileIDsAdd(NSString *pid);   // v2.11.8 文件级 ID 存储 (MFSubInject.m)
 void mfJudgeProbeRun(void);          // v2.13.0 判定函数侦察 (MFJudgeProbe.m)
 NSArray *mfJudgeHitsSnapshot(void);
+void mfKeychainProbeRun(void);
+NSArray *mfKeychainProbeSnapshot(void);
 void mfReceiptForgeSwitchChanged(UISwitch *sw); // 🧾 收据伪造开关 (MFReceiptForge.m)
 void mfJudgeTakeoverSwitchChanged(UISwitch *sw); // 🎯 判定接管开关 (MFObjCHook.m)
 void mfJudgeTakeoverAutoStart(void);
