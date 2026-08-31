@@ -69,7 +69,53 @@ void mfJudgeProbeRun(void) {
 }
 
 NSArray *mfJudgeHitsSnapshot(void) { return g_judgeHits ?: @[]; }
+
+// v2.14.0: 深挖 — 目标类全方法+ivar 导出(判定链取证)
+static NSArray *g_deepClasses = nil; // 类名数组
+void mfJudgeProbeDeep(NSArray *clsNames) {
+    NSMutableArray *out = [NSMutableArray array];
+    for (NSString *nm in clsNames) {
+        Class cls = objc_getClass(nm.UTF8String);
+        if (!cls) { [out addObject:@{@"class": nm, @"sel": @"(class not found)", @"kind": @"-"}]; continue; }
+        unsigned int cnt = 0;
+        Method *ml = class_copyMethodList(cls, &cnt);
+        for (unsigned int i = 0; i < cnt; i++) {
+            char *rt = method_copyReturnType(ml[i]); char ret = rt ? rt[0] : 0; if (rt) free(rt);
+            NSString *kind = ret == 'B' || ret == 'c' ? @"BOOL" : (ret == '@' ? @"id" : [NSString stringWithFormat:@"%c", ret ? ret : '?']);
+            [out addObject:@{@"class": nm, @"sel": NSStringFromSelector(method_getName(ml[i])), @"kind": kind,
+                             @"enc": [NSString stringWithUTF8String:method_getTypeEncoding(ml[i])] ?: @""}];
+        }
+        if (ml) free(ml);
+        // 类方法
+        ml = class_copyMethodList(object_getClass(cls), &cnt);
+        for (unsigned int i = 0; i < cnt; i++) {
+            [out addObject:@{@"class": [nm stringByAppendingString:@" (class)"], @"sel": NSStringFromSelector(method_getName(ml[i])), @"kind": @"+method", @"enc": @""}];
+        }
+        if (ml) free(ml);
+        // ivar
+        unsigned int ic = 0;
+        Ivar *iv = class_copyIvarList(cls, &ic);
+        for (unsigned int i = 0; i < ic; i++) {
+            [out addObject:@{@"class": [nm stringByAppendingString:@" ivar"], @"sel": [NSString stringWithUTF8String:ivar_getName(iv[i])] ?: @"?", @"kind": @"ivar", @"enc": @""}];
+        }
+        if (iv) free(iv);
+    }
+    g_judgeHits = out;
+    NSString *dir = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
+    NSString *sub = [dir stringByAppendingPathComponent:@"MinisFix"];
+    [[NSFileManager defaultManager] createDirectoryAtPath:sub withIntermediateDirectories:YES attributes:nil error:NULL];
+    [out writeToFile:[sub stringByAppendingPathComponent:@"judge_deep.plist"] atomically:YES];
+    mfLog(@"[judge] deep done: %lu entries saved", (unsigned long)out.count);
+    mfToast([NSString stringWithFormat:@"深挖完成: %lu 条", (unsigned long)out.count]);
+}
+
 void mfJudgeProbeAuto(void) {
-    // ctor 后 15s 自动跑(等 app 类全部加载) + 监听 paywall 出现后补跑
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ mfJudgeProbeRun(); });
+    // ctor 后 15s 自动跑(等 app 类全部加载) + 深挖判定链
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        mfJudgeProbeRun();
+        mfJudgeProbeDeep(@[@"MOSubscriptionCenter", @"YJPurchase.PurchasesReceiptParser",
+                           @"YJPurchase.StoreEntitlement", @"Picsew.PurchaseLevel",
+                           @"Picsew.PaywallProduct", @"Picsew.PaywallViewController",
+                           @"PARSubscriptionStatus", @"Picsew.AppRootController"]);
+    });
 }
