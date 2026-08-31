@@ -111,7 +111,7 @@ static NSString *mfSubJSON(NSURL *u) {
             @"\"original_transaction_id\":\"mfsk1.vr.0\",\"auto_renew_status\":\"1\"}],"
             @"\"latest_receipt\":\"mfsk1-blob\"}",
             [NSBundle mainBundle].bundleIdentifier ?: @"com.mf.unknown",
-            [NSBundle mainBundle].objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"1.0",
+            [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"1.0",
             now, now, now, inApp, inApp, pids.firstObject ?: @"com.mf.product", pids.firstObject ?: @"com.mf.product"];
     }
 
