@@ -831,9 +831,17 @@ static void mfQueryRevenueCatOfferings(NSString *key, void (^cb)(NSSet *pids)) {
         if (t.length) tmap[p.productIdentifier] = t;
     }
     // v2.11.5: Apple 确认有效的商品 = 最高置信 → 直接进 Top 档案(喂收据/dispatch)
+    // 同时落 SavedIAPIDs(否则 mfSubPids 只有 Top 没有 rest 也能吃)
     extern void mfTopRecord(NSString *pid);
-    for (NSString *pid in map) mfTopRecord(pid);
-    if (map.count) mfLog(@"[iap] scan validated %lu pids → top", (unsigned long)map.count);
+    NSUserDefaults *dd = [NSUserDefaults standardUserDefaults];
+    NSMutableArray *saved = [NSMutableArray arrayWithArray:([dd objectForKey:@"SavedIAPIDs"] ?: @[])];
+    BOOL ch = NO;
+    for (NSString *pid in map) {
+        mfTopRecord(pid);
+        if (![saved containsObject:pid]) { [saved addObject:pid]; ch = YES; }
+    }
+    if (ch) { [dd setObject:saved forKey:@"SavedIAPIDs"]; [dd synchronize]; }
+    if (map.count) mfLog(@"[iap] scan validated %lu pids → top (saved %lu)", (unsigned long)map.count, (unsigned long)saved.count);
     if (self.cb) self.cb([map copy], [tmap copy]);
 }
 - (void)request:(SKRequest *)request didFailWithError:(NSError *)error {
