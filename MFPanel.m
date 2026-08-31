@@ -2314,6 +2314,6 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
             mfLog(@"ctor longPress method added");
         }
 
-        mfLog(@"=== IAPtools ctor DONE ===");
+        mfLog(@"=== IAPtools ctor DONE (build v2.11.9) ===");
     }
 }
