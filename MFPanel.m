@@ -841,7 +841,7 @@ static void mfQueryRevenueCatOfferings(NSString *key, void (^cb)(NSSet *pids)) {
         if (![saved containsObject:pid]) { [saved addObject:pid]; ch = YES; }
     }
     if (ch) { [dd setObject:saved forKey:@"SavedIAPIDs"]; [dd synchronize]; }
-    if (map.count) mfLog(@"[iap] scan validated %lu pids → top (saved %lu)", (unsigned long)map.count, (unsigned long)saved.count);
+    if (map.count) mfLog(@"[iap] scan validated: %@ (saved %lu)", [map.allKeys componentsJoinedByString:@", "], (unsigned long)saved.count);
     if (self.cb) self.cb([map copy], [tmap copy]);
 }
 - (void)request:(SKRequest *)request didFailWithError:(NSError *)error {
@@ -2068,24 +2068,7 @@ void mfTopRecord(NSString *pid) {
 }
 static id new_SKProductsReq_init(id self, SEL _cmd, NSSet *identifiers) {
     mfLog(@"[iap] SK1 ProductsRequest: %lu ids → %@", (unsigned long)identifiers.count, identifiers);
-    // v2.11.2: ProductsRequest 的 ID 是 app 亲口要买的(最高置信) — 优先插入列表头
-    extern BOOL mfPIDLooksReal(NSString *pid);
-    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
-    NSMutableArray *list = [NSMutableArray arrayWithArray:([d objectForKey:@"SavedIAPIDs"] ?: @[])];
-    BOOL changed = NO;
-    for (NSString *pid in identifiers) {
-        if (![pid isKindOfClass:[NSString class]] || !mfPIDLooksReal(pid)) continue;
-        mfTopRecord(pid);
-        [list removeObject:pid];
-        [list insertObject:pid atIndex:0];
-        changed = YES;
-    }
-    if (changed) {
-        if (list.count > 60) [list removeObjectsInRange:NSMakeRange(60, list.count - 60)];
-        [d setObject:list forKey:@"SavedIAPIDs"]; [d synchronize];
-        extern void mfReceiptForgeInvalidate(void);
-        mfReceiptForgeInvalidate();
-    }
+    // v2.11.7: 请求参数不再进 Top(未验证垃圾会占坑) — Top 只收 Apple 确认过的响应对象
     return ((id(*)(id, SEL, NSSet *))orig_SKProductsReq_init)(self, _cmd, identifiers);
 }
 
