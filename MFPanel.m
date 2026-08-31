@@ -1435,6 +1435,7 @@ void mfShowProductPage(void) {
 - (void)mfSK1SwitchChanged:(UISwitch *)sw { mfSK1SwitchChanged(sw); }
 - (void)mfSubInjectSwitchChanged:(UISwitch *)sw { mfSubInjectSwitchChanged(sw); }
 - (void)mfReceiptForgeSwitchChanged:(UISwitch *)sw { mfReceiptForgeSwitchChanged(sw); }
+- (void)mfJudgeTakeoverSwitchChanged:(UISwitch *)sw { mfJudgeTakeoverSwitchChanged(sw); }
 - (void)mfShowKillAllLabPage { mfShowKillAllLabPage(); }
 - (void)mfJudgeProbeTapped {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{ mfJudgeProbeRun(); });
@@ -2303,6 +2304,7 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
         mfSK1AutoStart();
         mfSubInjectAutoStart();
         mfReceiptForgeAutoStart();
+        mfJudgeTakeoverAutoStart();
 
         // 手势注册
         Class vcCls = NSClassFromString(@"UIViewController");

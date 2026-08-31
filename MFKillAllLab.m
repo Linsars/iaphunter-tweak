@@ -8,6 +8,7 @@
 void mfSK1SwitchChanged(UISwitch *sw);      // MFObjCHook.m
 void mfSubInjectSwitchChanged(UISwitch *sw); // MFSubInject.m
 void mfReceiptForgeSwitchChanged(UISwitch *sw); // MFReceiptForge.m
+void mfJudgeTakeoverSwitchChanged(UISwitch *sw); // MFObjCHook.m
 long mfSubInjectHits(void);
 BOOL mfSubInjectIsOn(void);
 long mfReceiptForgeHits(void);
@@ -88,6 +89,22 @@ void mfShowKillAllLabPage(void) {
     [r3 addSubview:sw3];
     [page addSubview:r3];
     y += 66;
+
+    // 层 4: 判定接管
+    UIView *r4 = [[UIView alloc] initWithFrame:CGRectMake(12, y, cw - 24, 56)];
+    r4.backgroundColor = [UIColor secondarySystemBackgroundColor];
+    r4.layer.cornerRadius = 10;
+    UILabel *l4 = [[UILabel alloc] initWithFrame:CGRectMake(12, 8, cw - 110, 40)];
+    l4.numberOfLines = 2;
+    l4.text = @"🎯 判定接管\n订阅中心注入 isSubscribed=YES 实例";
+    l4.font = [UIFont systemFontOfSize:12];
+    [r4 addSubview:l4];
+    UISwitch *sw4 = [[UISwitch alloc] initWithFrame:CGRectMake(cw - 24 - 66, 12, 51, 31)];
+    sw4.on = [[NSUserDefaults standardUserDefaults] boolForKey:@"mfJudgeTakeoverEnabled"];
+    [sw4 addTarget:g_mfCtrl action:NSSelectorFromString(@"mfJudgeTakeoverSwitchChanged:") forControlEvents:UIControlEventValueChanged];
+    [r4 addSubview:sw4];
+    [page addSubview:r4];
+    y += 64;
 
     // SDK 检测提示
     UILabel *det = [[UILabel alloc] initWithFrame:CGRectMake(16, y, cw - 32, 30)];

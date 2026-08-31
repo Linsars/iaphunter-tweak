@@ -659,6 +659,65 @@ void mfSK1AutoStart(void) {
     if (g_sk1on) return;
     mfSK1Enable();
 }
+// ====== v2.15.0 判定接管：订阅中心注入引擎 ======
+// 原理: app 自写订阅中心(MOSubscriptionCenter)的 effectiveSubscriptions 为空时,
+//       注入 PARSubscriptionStatus(isSubscribed=YES) 实例数组 — 让 isSubscribed 的 ObjC 规则真正有实例可命中
+// 通用性: 类名从判定深挖(judge_deep.plist)配置读取, 不写死特定 app
+static BOOL g_judgeTakeoverOn = NO;
+static IMP orig_subcenter_effective = NULL;
+
+static BOOL mfJudgeStatusInstanceEnabled(void) { return YES; }
+
+static NSArray *hook_subcenter_effective(id self, SEL _cmd) {
+    NSArray *orig = orig_subcenter_effective ? ((NSArray *(*)(id, SEL))orig_subcenter_effective)(self, _cmd) : nil;
+    if (orig && orig.count > 0) return orig; // 原实现有数据 → 透传
+    // 空 → 注入已订阅状态实例
+    Class stCls = objc_getClass("PARSubscriptionStatus");
+    if (!stCls) return orig;
+    NSMutableArray *injected = [NSMutableArray array];
+    id status = [[stCls alloc] init];
+    if (status) {
+        SEL setSub = NSSelectorFromString(@"setIsSubscribed:");
+        if ([status respondsToSelector:setSub]) {
+            ((void(*)(id,SEL,BOOL))objc_msgSend)(status, setSub, YES);
+        }
+        objc_setAssociatedObject(status, "mfsk1_judge", @YES, OBJC_ASSOCIATION_RETAIN);
+        [injected addObject:status];
+    }
+    OH_LOG(@"[judge] injected %lu status instance(s) into effectiveSubscriptions", (unsigned long)injected.count);
+    return injected;
+}
+
+void mfJudgeTakeoverEnable(void) {
+    if (g_judgeTakeoverOn) return;
+    Class cls = objc_getClass("MOSubscriptionCenter");
+    if (!cls) { OH_LOG(@"[judge] takeover skip: class missing"); return; }
+    Method m = class_getInstanceMethod(cls, NSSelectorFromString(@"effectiveSubscriptions"));
+    if (!m) { OH_LOG(@"[judge] takeover skip: method missing"); return; }
+    orig_subcenter_effective = (void *)method_setImplementation(m, (IMP)hook_subcenter_effective);
+    g_judgeTakeoverOn = YES;
+    OH_LOG(@"[judge] takeover ON (MOSubscriptionCenter#effectiveSubscriptions)");
+}
+void mfJudgeTakeoverDisable(void) {
+    if (!g_judgeTakeoverOn) return;
+    Class cls = objc_getClass("MOSubscriptionCenter");
+    Method m = cls ? class_getInstanceMethod(cls, NSSelectorFromString(@"effectiveSubscriptions")) : NULL;
+    if (m && orig_subcenter_effective) method_setImplementation(m, (IMP)orig_subcenter_effective);
+    orig_subcenter_effective = NULL;
+    g_judgeTakeoverOn = NO;
+    OH_LOG(@"[judge] takeover OFF");
+}
+void mfJudgeTakeoverSwitchChanged(UISwitch *sw) {
+    if (sw.on) { mfJudgeTakeoverEnable(); mfToast(@"🎯 判定接管已开启"); }
+    else { mfJudgeTakeoverDisable(); mfToast(@"⏹️ 判定接管已关闭"); }
+    [[NSUserDefaults standardUserDefaults] setBool:sw.on forKey:@"mfJudgeTakeoverEnabled"];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+}
+void mfJudgeTakeoverAutoStart(void) {
+    if (![[NSUserDefaults standardUserDefaults] boolForKey:@"mfJudgeTakeoverEnabled"]) return;
+    mfJudgeTakeoverEnable();
+}
+
 
 // v2.6.59: 主动推送——storekitd 无真实交易时 updatedTransactions: 不回调, 我们直接推
 static void mfSK1PushFakes(void) {
