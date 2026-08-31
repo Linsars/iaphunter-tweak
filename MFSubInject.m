@@ -67,6 +67,12 @@ void mfFileIDsAdd(NSString *pid) { // 高置信插头部; MFPanel.m 调用
     dispatch_semaphore_signal(g_fileSem);
 }
 
+// v2.11.10: 沙盒指纹 — Documents 路径含容器 UUID, 两份日志一对比就知道是不是同一个安装
+void mfFileIDsDiag(void) {
+    NSArray *a = mfFileIDsRead();
+    mfLog(@"[MF] sandbox doc=%@ file_ids=%lu", mfIAPIDsFilePath(), (unsigned long)a.count);
+}
+
 NSArray *mfSubPids(void) { // 非 static: MFReceiptForge.m 共用
     // v2.11.8: 文件存储为主, NSUserDefaults(mfTopIDs/SavedIAPIDs)作迁移兜底
     NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
