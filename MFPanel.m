@@ -2321,6 +2321,6 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
         extern void mfJudgeProbeAuto(void);
         mfFileIDsDiag();
         mfJudgeProbeAuto();
-        mfLog(@"=== IAPtools ctor DONE (build " MF_BUILD_VER @") ===");
+        mfLog([NSString stringWithFormat:@"=== IAPtools ctor DONE (build %s) ===", MF_BUILD_VER_S]);
     }
 }
