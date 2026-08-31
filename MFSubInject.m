@@ -31,7 +31,7 @@ static NSArray *mfSubPids(void) {
 
 static NSString *mfSubNowISO(void) {
     static NSISO8601DateFormatter *f = nil;
-    if (!f) { f = [NSISO8601DateFormatter new]; f.formatOptions = NSISO8601FormatWithInternetDateTime; }
+    if (!f) { f = [NSISO8601DateFormatter new]; f.formatOptions = NSISO8601DateFormatWithInternetDateTime; }
     return [f stringFromDate:[NSDate date]];
 }
 
