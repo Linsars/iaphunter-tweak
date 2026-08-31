@@ -45,7 +45,8 @@ void mfJudgeProbeRun(void) {
             BOOL kwHit = NO;
             for (NSString *kw in kws) if ([low containsString:kw]) { kwHit = YES; break; }
             if (!kwHit) continue;
-            char ret = method_getReturnType(ml[i]);
+            char ret = 0;
+            { char *rt = method_copyReturnType(ml[i]); if (rt) { ret = rt[0]; free(rt); } }
             // 只挑返回 BOOL(char B/BOOL 'c')或对象的判定方法
             NSString *kind = nil;
             if (ret == 'B' || ret == 'c') kind = @"BOOL";
