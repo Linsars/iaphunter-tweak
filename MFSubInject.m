@@ -13,11 +13,25 @@ static long g_subHits = 0;
 
 #pragma mark - 商品 ID 源(SK1 扫描列表)
 
+// 通用垃圾 ID 过滤(SF Symbol/设备名/内部前缀) — 非针对特定 app
+BOOL mfPIDLooksReal(NSString *pid) {
+    if (pid.length < 4 || pid.length > 64) return NO;
+    if ([pid hasPrefix:@"mfsk1."] || [pid hasPrefix:@"X-"]) return NO;
+    NSArray *junk = @[@".fill", @".badge.", @".slash", @".and.arrow", @"arrowtriangle", @"batteryblock",
+                      @"square.grid", @"xmark", @"checkmark", @"questionmark", @"head.profile",
+                      @"minus.plus", @"hourglass.badge", @"memories.", @"pencil.tip", @"inset.filled",
+                      @"iphone-", @"iphone_", @"iPad_", @"watch-", @"beats.", @"airpods", @"homepod",
+                      @"byok_", @"com.apple.", @"X-Crashlytics", @"Crashlytics"];
+    for (NSString *p in junk) if ([pid containsString:p]) return NO;
+    return YES;
+}
+
 NSArray *mfSubPids(void) { // 非 static: MFReceiptForge.m 共用
     NSArray *p = [[NSUserDefaults standardUserDefaults] objectForKey:@"SavedIAPIDs"];
     NSMutableArray *clean = [NSMutableArray array];
     for (NSString *pid in p) {
         if (![pid isKindOfClass:[NSString class]]) continue;
+        if (!mfPIDLooksReal(pid)) continue;
         // JSON 安全: 剥引号/反斜杠/控制符
         NSString *s = [pid stringByReplacingOccurrencesOfString:@"\"" withString:@""];
         s = [s stringByReplacingOccurrencesOfString:@"\\" withString:@""];

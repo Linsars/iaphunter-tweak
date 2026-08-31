@@ -214,6 +214,7 @@ static BOOL g_forgeOn = NO;
 static IMP orig_receiptURL = NULL, orig_txReceipt = NULL;
 static long g_forgeHits = 0;
 static NSURL *g_forgeURL = nil;
+static NSUInteger g_forgePidCount = NSUIntegerMax; // v2.11.1: pid 变化即重建
 
 NSArray *mfSubPids(void); // MFSubInject.m
 
@@ -369,8 +370,14 @@ static NSURL *hook_receiptURL(id self, SEL _cmd) {
         return nil;
     }
     g_forgeHits++;
-    if (!g_forgeURL) {
-        @try {
+    @try {
+        NSUInteger pc = mfSubPids().count;
+        static dispatch_once_t once; static dispatch_semaphore_t sem = NULL;
+        dispatch_once(&once, ^{ sem = dispatch_semaphore_create(1); });
+        dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
+        // v2.11.1: 扫描列表从空到有(或条数变化) → 强制重建收据
+        BOOL stale = (!g_forgeURL || g_forgePidCount != pc);
+        if (stale) {
             NSMutableData *d = mfRcContainer();
             NSString *dir = [NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES) firstObject];
             if (![[NSFileManager defaultManager] fileExistsAtPath:dir])
@@ -378,14 +385,16 @@ static NSURL *hook_receiptURL(id self, SEL _cmd) {
             NSString *path = [dir stringByAppendingPathComponent:@"mfreceipt.pkcs7"];
             [d writeToFile:path atomically:YES];
             g_forgeURL = [NSURL fileURLWithPath:path];
-            mfLog(@"[rcforge] receipt %lu bytes -> %@", (unsigned long)d.length, path);
-        } @catch (NSException *e) {
-            mfLog(@"[rcforge] build fail: %@", e.name);
-            if (orig_receiptURL) return ((NSURL *(*)(id, SEL))orig_receiptURL)(self, _cmd);
-            return nil;
+            g_forgePidCount = pc;
+            mfLog(@"[rcforge] receipt %lu bytes pids=%lu -> %@", (unsigned long)d.length, (unsigned long)pc, path);
         }
+        dispatch_semaphore_signal(sem);
+        return g_forgeURL;
+    } @catch (NSException *e) {
+        mfLog(@"[rcforge] build fail: %@", e.name);
+        if (orig_receiptURL) return ((NSURL *(*)(id, SEL))orig_receiptURL)(self, _cmd);
+        return nil;
     }
-    return g_forgeURL;
 }
 
 // 旧式 transactionReceipt (SwiftyStoreKit 旧版/老 app 用) — JSON 形状
@@ -440,11 +449,17 @@ void mfReceiptForgeDisable(void) {
     mfLog(@"[rcforge] OFF");
 }
 
+void mfReceiptForgeInvalidate(void) {
+    g_forgeURL = nil;
+    g_forgePidCount = NSUIntegerMax;
+}
+
 void mfReceiptForgeSwitchChanged(UISwitch *sw) {
     if (sw.on) { mfReceiptForgeEnable(); mfToast(@"🧾 收据伪造已开启"); }
     else { mfReceiptForgeDisable(); mfToast(@"⏹️ 收据伪造已关闭"); }
     [[NSUserDefaults standardUserDefaults] setBool:sw.on forKey:@"mfReceiptForgeEnabled"];
     [[NSUserDefaults standardUserDefaults] synchronize];
+    if (sw.on) g_forgeURL = nil, g_forgePidCount = NSUIntegerMax; // 开关即重建
 }
 
 void mfReceiptForgeAutoStart(void) {

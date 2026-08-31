@@ -176,6 +176,7 @@ void mfSubInjectAutoStart(void);
 NSArray *mfSubPids(void);                // 扫描列表商品 ID (MFSubInject.m, 收据层共用)
 void mfReceiptForgeSwitchChanged(UISwitch *sw); // 🧾 收据伪造开关 (MFReceiptForge.m)
 void mfReceiptForgeAutoStart(void);
+void mfReceiptForgeInvalidate(void);   // v2.11.1: 列表变化时强制重建
 long mfReceiptForgeHits(void);
 BOOL mfReceiptForgeIsOn(void);
 void mfShowKillAllLabPage(void);         // 🧪 通杀实验页 (MFKillAllLab.m)

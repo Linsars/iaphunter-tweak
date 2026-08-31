@@ -561,6 +561,8 @@ static void (*orig_sk1_updated)(id, SEL, id);
 //   原版只透传真实交易; fake 直接对 observers 调 paymentQueue:updatedTransactions: 回调
 static void mfSK1DispatchFakes(NSArray *fakes) {
     if (fakes.count == 0) return;
+    extern void mfReceiptForgeInvalidate(void); // v2.11.1: 列表变了 → 收据重建
+    mfReceiptForgeInvalidate();
     id q = [objc_getClass("SKPaymentQueue") performSelector:NSSelectorFromString(@"defaultQueue")];
     if (!q) return;
     id observers = ((id(*)(id,SEL))objc_msgSend)(q, NSSelectorFromString(@"transactionObservers"));

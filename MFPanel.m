@@ -876,6 +876,9 @@ static void mfProbeStoreKit2(void);  // v1.9.6 SK2 探针,定义在文件后部
 static void IAPRecord(NSString *pid) {
     if (pid.length == 0) return;
     @autoreleasepool {
+        // v2.11.1: 垃圾 ID 不入库(防 fake 反馈回路越滚越大)
+        extern BOOL mfPIDLooksReal(NSString *pid);
+        if (!mfPIDLooksReal(pid)) return;
         NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
         NSMutableArray *list = [NSMutableArray arrayWithArray:([d objectForKey:@"SavedIAPIDs"] ?: @[])];
         if (![list containsObject:pid]) { [list addObject:pid]; [d setObject:list forKey:@"SavedIAPIDs"]; [d synchronize]; }
