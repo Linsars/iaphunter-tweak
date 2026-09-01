@@ -2191,14 +2191,15 @@ static void mfObserveAppInstallNotifications(void) {
         Method m = class_getInstanceMethod(ws, sel);
         if (m) {
             IMP orig = method_getImplementation(m);
-            method_setImplementation(m, imp_implementationWithBlock(^(id self, NSDictionary *dict) {
+            method_setImplementation(m, imp_implementationWithBlock(^BOOL(id self, NSDictionary *dict) {
                 mfLog(@"autoApply: registerApplicationDictionary called");
                 if (mfPrefBool(@"mfIAPAutoApply", NO)) {
                     NSString *bid = dict[@"MCMMetadataIdentifier"] ?: dict[@"CFBundleIdentifier"];
                     mfLog(@"autoApply: registerApp bid=%@", bid ?: @"nil");
                     if (bid) mfAutoApplyAdd(bid);
                 }
-                ((void(*)(id, SEL, NSDictionary *))orig)(self, sel, dict);
+                // v2.17.2 修复: 原方法返回 BOOL, void block 会把返回值炸成垃圾 → 巨魔注册恒失败(181)
+                return ((BOOL(*)(id, SEL, NSDictionary *))orig)(self, sel, dict);
             }));
             mfLog(@"autoApply: registerApplicationDictionary hooked");
         }
