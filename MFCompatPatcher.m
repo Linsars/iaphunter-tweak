@@ -26,8 +26,11 @@
 #define MF_PREF_PATH "/var/jb/var/mobile/Library/Preferences/com.linsars.minisfix.plist"
 
 // ---- 诊断(双通道) ----
+// v2.17.3: root 进程(TrollStore 等)禁写——root 写会整文件变 root:0600,
+// SpringBoard/所有 app(mobile)从此读不到 prefs → FolderX 全静默失效实录
 static void mfCompatDiag(NSString *step, NSString *detail) {
     @autoreleasepool {
+        if (getuid() == 0) return;
         // 闸门1: 系统(com.apple.*)进程零接触 prefs
         NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
         if (!bid || [bid.lowercaseString hasPrefix:@"com.apple."]) return;
@@ -330,12 +333,13 @@ static BOOL mfCompatNeeded(void) {
 __attribute__((constructor)) static void CompatPatcherCtor(void) {
     @autoreleasepool {
         NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
-        mfCompatDiag(@"ctor", [NSString stringWithFormat:@"pid=%d bid=%@", getpid(), bid ?: @"NIL"]);
         // 系统进程守卫(与 IAPtools 同律): 只服务用户 app
         if (bid.length == 0 || [bid.lowercaseString hasPrefix:@"com.apple."]) return;
+        // v2.17.3: 非目标 app 直接走, 不写 diag(省一次 plist 全量重写, 写多必脏)
         BOOL needed = mfCompatNeeded();
-        mfCompatDiag(@"needed", needed ? @"YES" : @"NO");
         if (!needed) return;
+        mfCompatDiag(@"ctor", [NSString stringWithFormat:@"pid=%d bid=%@", getpid(), bid ?: @"NIL"]);
+        mfCompatDiag(@"needed", @"YES");
         mfCompatPatchMainBinary();
     }
 }
