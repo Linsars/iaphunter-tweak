@@ -120,8 +120,12 @@ static NSString *mfSubNowISO(void) {
 static BOOL mfSubIsTarget(NSURL *u) {
     if (!u.host) return NO;
     NSString *h = u.host.lowercaseString, *p = u.path ?: @"";
-    if ([h isEqualToString:@"api.revenuecat.com"] || [h isEqualToString:@"api.rc-backup.com"])
+    if ([h isEqualToString:@"api.revenuecat.com"] || [h isEqualToString:@"api.rc-backup.com"]) {
+        // v2.18.1: /offerings 是产品目录 + offline entitlements 映射(SDK5 SK2 模式靠它本地算 entitlements),
+        // 吞掉 = 目录加载报废 + 离线映射永不缓存 + 自家 mfprobe 扫描被打死(Reflix 实录), 只放行 subscribers GET 与 receipts POST
+        if ([p containsString:@"/offerings"]) return NO;
         return [p containsString:@"/subscribers"] || [p hasSuffix:@"/receipts"];
+    }
     if ([h isEqualToString:@"subscriptions-api.superwall.com"])
         return YES; // SW SDK 的 session/events 响应均携带 entitlement 数据
     if ([h isEqualToString:@"api.adapty.io"] || [h isEqualToString:@"api-backup.adapty.io"])
