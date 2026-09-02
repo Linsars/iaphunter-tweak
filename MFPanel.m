@@ -2360,6 +2360,8 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
         });
 
         // v2.6.48: ObjC 规则冷启动自动应用(每个注入的 app 进程生效——跨进程规则的根基)
+        extern void mfReflixOracleStart(void);
+        mfReflixOracleStart();
         mfObjCHookApplySilent();
         mfSubInjectAutoStart();
         mfReceiptForgeAutoStart();
