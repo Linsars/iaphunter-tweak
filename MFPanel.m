@@ -1364,6 +1364,72 @@ void mfShowProductPage(void) {
     gy = mfGridButton(page, 16, gy, gw, @"扫描购买", @"🔍", @selector(mfShowScanPage), NO, nil);
     gy = mfGridButton(page, 16 + gw + 12, gy - 92, gw, @"手动购买", @"⌨️", @selector(mfShowManualBuyPage), NO, nil);
     gy = mfGridButton(page, 16, gy, gw, @"图标解锁", @"🎨", @selector(mfShowIconPage), NO, nil);
+    gy = mfGridButton(page, 16 + gw + 12, gy - 92, gw, @"实验模拟", @"🧪", @selector(mfShowLabPage), NO, nil);
+    mfPushPage(page);
+}
+
+// ====== 🧪 实验模拟 (v2.17.4) ======
+// 【归属铁律】订阅注入/收据伪造这类实验功能统一挂本页, 删改实验功能时:
+//   1. 只动本页内的开关行, 不动本页入口(Product 页「实验模拟」按钮)
+//   2. 引擎文件(MFSubInject.m/MFReceiptForge.m)与 ctor 自启动一并保留
+// v2.17.0 清理 SK1 通杀页时两个开关被连带删成死代码——教训: 实验功能必须有固定住址
+extern long mfSubInjectHits(void);
+extern BOOL mfSubInjectIsOn(void);
+extern long mfReceiptForgeHits(void);
+extern BOOL mfReceiptForgeIsOn(void);
+
+static UIView *mfSubSwitchRow(UIView *page, CGFloat y, NSString *title,
+                              BOOL on, SEL action, NSString *status) {
+    UIView *bar = [[UIView alloc] initWithFrame:CGRectMake(12, y, g_mfCardW - 24, 52)];
+    bar.backgroundColor = [UIColor secondarySystemGroupedBackgroundColor];
+    bar.layer.cornerRadius = 10;
+    UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectMake(10, 10, 51, 31)];
+    sw.on = on;
+    [sw addTarget:g_mfCtrl action:action forControlEvents:UIControlEventValueChanged];
+    [bar addSubview:sw];
+    UILabel *l = [[UILabel alloc] initWithFrame:CGRectMake(72, 6, g_mfCardW - 96 - 10, 22)];
+    l.text = title;
+    l.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
+    [bar addSubview:l];
+    UILabel *st = [[UILabel alloc] initWithFrame:CGRectMake(72, 28, g_mfCardW - 96 - 10, 18)];
+    st.text = status;
+    st.font = [UIFont systemFontOfSize:11];
+    st.textColor = [UIColor secondaryLabelColor];
+    [bar addSubview:st];
+    [page addSubview:bar];
+    return bar;
+}
+
+void mfShowLabPage(void) {
+    UIView *page = mfMakePage(@"🧪 实验模拟", YES);
+
+    // —— 订阅模拟组(Reven 同款机制, 2026-09-02 逆向回流) ——
+    UILabel *grp = [[UILabel alloc] initWithFrame:CGRectMake(16, 46, g_mfCardW - 32, 20)];
+    grp.text = @"订阅模拟";
+    grp.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
+    grp.textColor = [UIColor secondaryLabelColor];
+    [page addSubview:grp];
+
+    mfSubSwitchRow(page, 70, @"📡 订阅 SDK 注入", mfSubInjectIsOn(),
+        @selector(mfSubInjectSwitchChanged:),
+        [NSString stringWithFormat:@"RC/SW/Adapty 响应进程内伪造 · 命中 %ld", mfSubInjectHits()]);
+    mfSubSwitchRow(page, 130, @"🧾 收据伪造", mfReceiptForgeIsOn(),
+        @selector(mfReceiptForgeSwitchChanged:),
+        [NSString stringWithFormat:@"appStoreReceiptURL/transactionReceipt · 命中 %ld", mfReceiptForgeHits()]);
+
+    UILabel *note = [[UILabel alloc] initWithFrame:CGRectMake(16, 194, g_mfCardW - 32, 96)];
+    note.text = @"产品 ID 来自「扫描购买」列表 (iapids.plist)。\nentitlement 名自动发现(RC 缓存+二进制扫描), 回退 pro。\nlifetime 产品走 non_subscriptions (RC 官方规范)。\n解析型收据校验可过, hash 校验型必挂。";
+    note.numberOfLines = 0;
+    note.font = [UIFont systemFontOfSize:12];
+    note.textColor = [UIColor secondaryLabelColor];
+    [page addSubview:note];
+
+    UIButton *scan = [UIButton buttonWithType:UIButtonTypeSystem];
+    scan.frame = CGRectMake(16, 296, g_mfCardW - 32, 40);
+    [scan setTitle:@"🔍 去扫描购买" forState:UIControlStateNormal];
+    [scan addTarget:g_mfCtrl action:@selector(mfShowScanPage) forControlEvents:UIControlEventTouchUpInside];
+    [page addSubview:scan];
+
     mfPushPage(page);
 }
 
@@ -1376,6 +1442,7 @@ void mfShowProductPage(void) {
 
 // 页面入口
 - (void)mfShowDataAnalysisPage { mfShowDataAnalysisPage(); }
+- (void)mfShowLabPage { mfShowLabPage(); } // v2.17.4 实验模拟: 订阅注入/收据伪造固定住址
 // v2.6.17 实时日志
 - (void)mfShowHostLogPage { mfShowHostLogPage(); }
 // v2.6.21 电池详情

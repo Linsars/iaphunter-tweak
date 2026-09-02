@@ -3,6 +3,11 @@
 // 与 SK1 通杀(本地交易伪造)互补——app 把订阅状态存云端时, SK1 假交易救不了, 这里救
 // 商品 ID 来自 SK1 扫描列表(SavedIAPIDs), 无 per-app 硬编码
 // schema 来源: Reven 网关实测(2026-08-31) + SatellaJailed ServerVerificationHooks
+// v2.18.0 (Reven 逆向回流, 2026-09-02 实测):
+//   1. entitlement 名自动发现——硬编码 "pro" 是盲区(Reflix 用 com.magicgroot.reflix.entitlements)
+//      来源①: RC SDK NSUserDefaults 缓存 com.revenuecat.userdefaults.productEntitlementMapping
+//      来源②: 主二进制字符串扫 *.entitlements 后缀标识符
+//   2. lifetime 型产品进 non_subscriptions(RC 官方规范, Reven auto 策略同款), 不带 expires_date
 
 #import "MFPanel.h"
 #import <Foundation/Foundation.h>
@@ -127,6 +132,68 @@ static BOOL mfSubIsTarget(NSURL *u) {
     return NO;
 }
 
+#pragma mark - v2.18.0: entitlement 名自动发现(Reven 逆向回流)
+
+// 来源①: RC SDK 自己把映射缓存在 NSUserDefaults(进程内直接读)
+static NSArray *mfEntsFromRCCache(void) {
+    NSMutableArray *out = [NSMutableArray array];
+    @try {
+        NSDictionary *m = [[NSUserDefaults standardUserDefaults]
+            dictionaryForKey:@"com.revenuecat.userdefaults.productEntitlementMapping"];
+        for (NSString *pid in m) {
+            id v = m[pid];
+            NSArray *ents = nil;
+            if ([v isKindOfClass:[NSString class]]) ents = @[v];
+            else if ([v isKindOfClass:[NSArray class]]) ents = v;
+            for (NSString *e in ents)
+                if ([e isKindOfClass:[NSString class]] && e.length && ![out containsObject:e]) [out addObject:e];
+        }
+    } @catch (NSException *e) {}
+    return out;
+}
+
+// 来源②: 主二进制扫 "...entitlements" 标识符(Reflix 实测: com.magicgroot.reflix.entitlements)
+static NSArray *mfEntsFromBinaryScan(void) {
+    NSMutableArray *out = [NSMutableArray array];
+    @try {
+        NSData *d = [NSData dataWithContentsOfFile:[[NSBundle mainBundle] executablePath]];
+        if (!d || d.length > 200 * 1024 * 1024) return out;
+        NSString *s = [[NSString alloc] initWithData:d encoding:NSASCIIStringEncoding];
+        if (!s) return out;
+        NSError *err = nil;
+        NSRegularExpression *re = [NSRegularExpression regularExpressionWithPattern:
+            @"[a-z0-9][a-z0-9.-]{2,80}\\.entitlements" options:0 error:&err];
+        for (NSTextCheckingResult *r in [re matchesInString:s options:0 range:NSMakeRange(0, s.length)]) {
+            NSString *e = [s substringWithRange:r.range];
+            if ([e hasPrefix:@"com.apple."]) continue;
+            if (![out containsObject:e]) [out addObject:e];
+            if (out.count >= 8) break;
+        }
+    } @catch (NSException *e) {}
+    return out;
+}
+
+static NSArray *mfDiscoveredEntitlements(void) {
+    static NSArray *cached = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSMutableArray *all = [NSMutableArray array];
+        for (NSString *e in mfEntsFromRCCache()) if (![all containsObject:e]) [all addObject:e];
+        for (NSString *e in mfEntsFromBinaryScan()) if (![all containsObject:e]) [all addObject:e];
+        cached = all;   // 可为空 → 调用方回退 "pro"
+        mfLog(@"[subinject] ents discovered: %@", cached);
+    });
+    return cached;
+}
+
+// lifetime 型产品判定(Reven auto 策略: lifetime 不进 subscriptions, 进 non_subscriptions)
+static BOOL mfPIDLooksLifetime(NSString *pid) {
+    NSString *p = pid.lowercaseString;
+    return [p containsString:@"lifetime"] || [p containsString:@"forever"]
+        || [p containsString:@"one_time"] || [p containsString:@"onetime"]
+        || [p containsString:@"one-time"] || [p containsString:@"perpetual"];
+}
+
 #pragma mark - 响应构造
 
 static NSString *mfSubJSON(NSURL *u) {
@@ -137,19 +204,43 @@ static NSString *mfSubJSON(NSURL *u) {
     NSString *far = @"2099-09-09T09:09:09Z";
 
     if ([h isEqualToString:@"api.revenuecat.com"] || [h isEqualToString:@"api.rc-backup.com"]) {
+        // v2.18.0: entitlement 名自动发现, 空则回退 "pro"
+        NSArray *ents = mfDiscoveredEntitlements();
+        if (!ents.count) ents = @[@"pro"];
+        NSString *ent0 = ents.firstObject;
+        // lifetime 与订阅型分流(Reven auto 规范)
+        NSMutableArray *lifeIDs = [NSMutableArray array], *subIDs = [NSMutableArray array];
+        for (NSString *pid in pids) ([mfPIDLooksLifetime(pid) ? lifeIDs : subIDs addObject:pid]);
+        if (!subIDs.count && !lifeIDs.count) [subIDs addObject:pid0];
+
         NSMutableString *subs = [NSMutableString string];
-        for (NSString *pid in pids)
+        for (NSString *pid in subIDs)
             [subs appendFormat:@"%@{\"%@\":{\"is_sandbox\":false,\"ownership_type\":\"PURCHASED\",\"store\":\"app_store\",\"original_purchase_date\":\"%@\",\"purchase_date\":\"%@\",\"expires_date\":\"%@\"}}",
              subs.length ? @"," : @"", pid, now, now, far];
-        NSString *ent = [NSString stringWithFormat:@"\"pro\":{\"is_sandbox\":false,\"ownership_type\":\"PURCHASED\",\"store\":\"app_store\",\"original_purchase_date\":\"%@\",\"purchase_date\":\"%@\",\"expires_date\":\"%@\",\"product_identifier\":\"%@\"}", now, now, far, pid0];
+        NSMutableString *nonSubs = [NSMutableString string];
+        for (NSString *pid in lifeIDs)
+            [nonSubs appendFormat:@"%@{\"%@\":{\"is_sandbox\":false,\"ownership_type\":\"PURCHASED\",\"store\":\"app_store\",\"original_purchase_date\":\"%@\",\"purchase_date\":\"%@\",\"price\":0}}",
+             nonSubs.length ? @"," : @"", pid, now, now];
+        // entitlements: 每个 ent 名绑定全部产品(订阅型给 expires, 无订阅型产品时 isLifetime 语义由 non_subscriptions 兜底)
+        NSMutableString *ent = [NSMutableString string];
+        for (NSString *e in ents) {
+            NSString *bind = subIDs.firstObject ?: lifeIDs.firstObject ?: pid0;
+            BOOL isLife = lifeIDs.count && !subIDs.count;
+            [ent appendFormat:@"%@{\"%@\":{\"is_sandbox\":false,\"ownership_type\":\"PURCHASED\",\"store\":\"app_store\",\"original_purchase_date\":\"%@\",\"purchase_date\":\"%@\",\"expires_date\":\"%@\",\"product_identifier\":\"%@\"}}",
+             ent.length ? @"," : @"", e, now, now, isLife ? (NSString *)nil : far, bind];
+            if (isLife) { // lifetime 型: RC 规范 expires_date 为 null
+                NSRange r = [ent rangeOfString:@"\"expires_date\":(null)"];
+                if (r.location != NSNotFound) [ent replaceCharactersInRange:r withString:@"\"expires_date\":null"];
+            }
+        }
         return [NSString stringWithFormat:
             @"{\"request_date\":\"%@\",\"request_date_ms\":%lld,\"subscriber\":{"
             @"\"entitlements\":{%@},"
             @"\"subscriptions\":{%@},"
-            @"\"non_subscriptions\":{},\"other_purchases\":{},"
+            @"\"non_subscriptions\":{%@},\"other_purchases\":{},"
             @"\"first_seen\":\"%@\",\"last_seen\":\"%@\","
             @"\"original_app_user_id\":\"mf-user\",\"management_url\":\"https://apps.apple.com\"}}",
-            now, (long long)([[NSDate date] timeIntervalSince1970] * 1000), ent, subs, now, now];
+            now, (long long)([[NSDate date] timeIntervalSince1970] * 1000), ent, subs, nonSubs, now, now];
     }
 
     if ([h isEqualToString:@"subscriptions-api.superwall.com"]) {

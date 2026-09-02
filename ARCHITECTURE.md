@@ -57,6 +57,7 @@ deb = 6 dylib + 1 设置 bundle
 3. ctor 首行系统进程守卫不可移除(IAPtools 全局注入,appstored 事故 .ips 实锤)
 4. Makefile 两处名单(FolderX filter-out + 各 dylib _FILES)必须同步
 5. 架构变更 → 同步更新本文件 + GLOBAL.md 锚
+6. **root 进程永不写共享 prefs**(v2.17.3 实录: TrollStore ctor 经 mfCompatDiag 写 com.linsars.minisfix.plist → 文件变 root:0600 → SB(mobile) 读 plist 得 nil → FolderX 全静默失效。写共享状态前必须 getuid()==0 闸门; diag 写只留给目标 app)
 
 ## 当前架构(v2.3.1,重组前,历史存档)
 

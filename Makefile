@@ -24,7 +24,7 @@ FolderX_INSTALL_PATH = /usr/lib/TweakInject
 IAPtools_FILES = MFPanel.m MFNetworkCapture.m MFDiagnosticCleaner.m MFKeychainManager.m MFClassDump.m MFDiagnostics.m MFNetAnalyzer.m MFCryptoToolbox.m MFCryptoHooks.m MFObjCHook.m MFHostLogCapture.m MFBatteryInfo.m MFSubInject.m MFReceiptForge.m fishhook.c
 IAPtools_FRAMEWORKS = UIKit Foundation Security
 IAPtools_LDFLAGS = -weak_framework UIKit -weak_framework StoreKit -weak_framework JavaScriptCore -lz
-IAPtools_CFLAGS = -fobjc-arc -Wno-everything -DMF_BUILD_VER_S='"2.17.3"'
+IAPtools_CFLAGS = -fobjc-arc -Wno-everything -DMF_BUILD_VER_S='"2.18.0"'
 IAPtools_ARCHS = arm64 arm64e
 IAPtools_INSTALL_PATH = /usr/lib/TweakInject
 
