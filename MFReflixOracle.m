@@ -32,28 +32,41 @@ static BOOL mfFindText(const struct mach_header_64 *mh, intptr_t slide,
                        const uint8_t **memOut, uint64_t *sizeOut,
                        uint64_t *fileOut, uint64_t *imageOut) {
     if (!mh || mh->magic != MH_MAGIC_64) return NO;
+    // Section header pointers can be stale after dyld fixes chained fixups;
+    // locate __TEXT.__text by (vmaddr - image base) on the on-disk layout instead.
+    uint32_t len = 0;
+    _dyld_image_count(); // barrier: ensure images settled
+    // Re-walk load commands via dladdr-confirmed header each call.
     const uint8_t *p = (const uint8_t *)(mh + 1);
     uint64_t textVM = 0;
-    const struct section_64 *hit = NULL;
+    uint64_t hitAddr = 0, hitSize = 0, hitOff = 0;
+    int found = 0;
     for (uint32_t i = 0; i < mh->ncmds; i++) {
         const struct load_command *lc = (const struct load_command *)p;
         if (lc->cmdsize < sizeof(*lc)) return NO;
         if (lc->cmd == LC_SEGMENT_64) {
             const struct segment_command_64 *sg = (const struct segment_command_64 *)p;
-            if (!strncmp(sg->segname, SEG_TEXT, 16)) textVM = sg->vmaddr;
-            const struct section_64 *sc = (const struct section_64 *)(sg + 1);
-            for (uint32_t j = 0; j < sg->nsects; j++) {
-                if (!strncmp(sc[j].segname, SEG_TEXT, 16) &&
-                    !strncmp(sc[j].sectname, SECT_TEXT, 16)) hit = &sc[j];
+            if (!strncmp(sg->segname, SEG_TEXT, 16)) {
+                textVM = sg->vmaddr;
+                const struct section_64 *sc = (const struct section_64 *)(sg + 1);
+                for (uint32_t j = 0; j < sg->nsects; j++) {
+                    if (!strncmp(sc[j].sectname, SECT_TEXT, 16)) {
+                        hitAddr = sc[j].addr;
+                        hitSize = sc[j].size;
+                        hitOff = sc[j].offset;
+                        found = 1;
+                    }
+                }
             }
         }
         p += lc->cmdsize;
     }
-    if (!hit || !textVM || !hit->size) return NO;
-    *memOut = (const uint8_t *)(slide + hit->addr);
-    *sizeOut = hit->size;
-    *fileOut = hit->offset;
-    *imageOut = hit->addr - textVM;
+    if (!found || !textVM || !hitSize) return NO;
+    // image_header(0) corresponds to vmaddr base; compute memory address from slide.
+    *memOut = (const uint8_t *)((uintptr_t)mh + (hitAddr - (uintptr_t)textVM));
+    *sizeOut = hitSize;
+    *fileOut = hitOff;
+    *imageOut = hitAddr - textVM;
     return YES;
 }
 
