@@ -30,20 +30,22 @@ static NSString *mfHex(const uint8_t *p, size_t n) {
 
 static BOOL mfFindText(const struct mach_header_64 *mh, intptr_t slide,
                        const uint8_t **memOut, uint64_t *sizeOut,
-                       uint64_t *fileOut, uint64_t *imageOut) {
-    if (!mh || mh->magic != MH_MAGIC_64) return NO;
-    // Section header pointers can be stale after dyld fixes chained fixups;
-    // locate __TEXT.__text by (vmaddr - image base) on the on-disk layout instead.
-    uint32_t len = 0;
-    _dyld_image_count(); // barrier: ensure images settled
-    // Re-walk load commands via dladdr-confirmed header each call.
+                       uint64_t *fileOut, uint64_t *imageOut,
+                       NSString **diagOut) {
+    if (!mh || mh->magic != MH_MAGIC_64) {
+        if (diagOut) *diagOut = [NSString stringWithFormat:@"bad mh: %p magic=0x%x", mh, mh ? mh->magic : 0];
+        return NO;
+    }
     const uint8_t *p = (const uint8_t *)(mh + 1);
     uint64_t textVM = 0;
     uint64_t hitAddr = 0, hitSize = 0, hitOff = 0;
     int found = 0;
     for (uint32_t i = 0; i < mh->ncmds; i++) {
         const struct load_command *lc = (const struct load_command *)p;
-        if (lc->cmdsize < sizeof(*lc)) return NO;
+        if (lc->cmdsize < sizeof(*lc)) {
+            if (diagOut) *diagOut = [NSString stringWithFormat:@"bad cmdsize %u at %u", lc->cmdsize, i];
+            return NO;
+        }
         if (lc->cmd == LC_SEGMENT_64) {
             const struct segment_command_64 *sg = (const struct segment_command_64 *)p;
             if (!strncmp(sg->segname, SEG_TEXT, 16)) {
@@ -61,8 +63,11 @@ static BOOL mfFindText(const struct mach_header_64 *mh, intptr_t slide,
         }
         p += lc->cmdsize;
     }
-    if (!found || !textVM || !hitSize) return NO;
-    // image_header(0) corresponds to vmaddr base; compute memory address from slide.
+    if (!found || !textVM || !hitSize) {
+        if (diagOut) *diagOut = [NSString stringWithFormat:@"not found: found=%d textVM=0x%llx hitSize=0x%llx ncmds=%u",
+                                 found, textVM, hitSize, mh->ncmds];
+        return NO;
+    }
     *memOut = (const uint8_t *)((uintptr_t)mh + (hitAddr - (uintptr_t)textVM));
     *sizeOut = hitSize;
     *fileOut = hitOff;
@@ -77,7 +82,9 @@ static void mfWriteOracleReport(NSDictionary *report) {
     if (![[NSFileManager defaultManager] createDirectoryAtPath:dir
                                   withIntermediateDirectories:YES
                                                    attributes:nil error:&e]) return;
-    NSData *d = [NSJSONSerialization dataWithJSONObject:report
+    NSMutableDictionary *mut = [report mutableCopy];
+    mut[@"timestamp"] = [NSDate date].description;
+    NSData *d = [NSJSONSerialization dataWithJSONObject:mut
                                                 options:NSJSONWritingPrettyPrinted error:&e];
     if (!d || e) return;
     [d writeToFile:[dir stringByAppendingPathComponent:@"reflix_oracle.json"] atomically:YES];
@@ -92,8 +99,12 @@ void mfReflixOracleStart(void) {
     intptr_t slide = _dyld_get_image_vmaddr_slide(0);
     const uint8_t *text = NULL;
     uint64_t textSize = 0, fileBase = 0, imageBase = 0;
-    if (!mfFindText(mh, slide, &text, &textSize, &fileBase, &imageBase)) {
-        mfWriteOracleReport(@{@"ok": @NO, @"error": @"main __text not found"});
+    NSString *diag = nil;
+    if (!mfFindText(mh, slide, &text, &textSize, &fileBase, &imageBase, &diag)) {
+        mfWriteOracleReport(@{
+            @"ok": @NO,
+            @"error": [NSString stringWithFormat:@"main __text not found: %@", diag ?: @"unknown"]
+        });
         return;
     }
     if (textSize > 96ULL * 1024 * 1024) {
@@ -118,7 +129,7 @@ void mfReflixOracleStart(void) {
     }
 
     // Some patchers dispatch from image callbacks/worker threads.
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC),
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC),
                    dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSMutableArray *ranges = [NSMutableArray array];
         uint64_t changed = 0;
@@ -131,8 +142,8 @@ void mfReflixOracleStart(void) {
             // Preserve full short patches; cap only pathological blocks.
             uint64_t keep = MIN(len, 256ULL);
             [ranges addObject:@{
-                @"file_offset": @(fileBase + start),
-                @"image_offset": @(imageBase + start),
+                @"file_offset": [NSString stringWithFormat:@"0x%llx", fileBase + start],
+                @"image_offset": [NSString stringWithFormat:@"0x%llx", imageBase + start],
                 @"length": @(len),
                 @"before": mfHex(before + start, (size_t)keep) ?: @"",
                 @"after": mfHex(text + start, (size_t)keep) ?: @""
@@ -143,7 +154,7 @@ void mfReflixOracleStart(void) {
             @"ok": @YES,
             @"bundle_id": bid,
             @"version": ver,
-            @"text_size": @(textSize),
+            @"text_size": [NSString stringWithFormat:@"0x%llx", textSize],
             @"changed_bytes": @(changed),
             @"ranges": ranges
         };
