@@ -63,15 +63,17 @@ static BOOL mfFindText(const struct mach_header_64 *mh, intptr_t slide,
         }
         p += lc->cmdsize;
     }
-    if (!found || !textVM || !hitSize) {
+    if (!found || !hitSize) {
         if (diagOut) *diagOut = [NSString stringWithFormat:@"not found: found=%d textVM=0x%llx hitSize=0x%llx ncmds=%u",
                                  found, textVM, hitSize, mh->ncmds];
         return NO;
     }
-    *memOut = (const uint8_t *)((uintptr_t)mh + (hitAddr - (uintptr_t)textVM));
+    // Note: in ASLR/pie Mach-O, textVM is usually 0x100000000.
+    // Memory address is (uintptr_t)mh + (hitAddr - textVM).
+    *memOut = (const uint8_t *)((uintptr_t)mh + (hitAddr >= textVM ? (hitAddr - textVM) : hitAddr));
     *sizeOut = hitSize;
     *fileOut = hitOff;
-    *imageOut = hitAddr - textVM;
+    *imageOut = hitAddr >= textVM ? (hitAddr - textVM) : hitAddr;
     return YES;
 }
 
@@ -95,8 +97,23 @@ void mfReflixOracleStart(void) {
     NSString *ver = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
     if (![bid isEqualToString:kOracleBID] || ![ver isEqualToString:kOracleVersion]) return;
 
-    const struct mach_header_64 *mh = (const struct mach_header_64 *)_dyld_get_image_header(0);
-    intptr_t slide = _dyld_get_image_vmaddr_slide(0);
+    // Locate the actual MH_EXECUTE main binary image
+    const struct mach_header_64 *mh = NULL;
+    intptr_t slide = 0;
+    uint32_t count = _dyld_image_count();
+    for (uint32_t i = 0; i < count; i++) {
+        const struct mach_header *h = _dyld_get_image_header(i);
+        if (h && h->magic == MH_MAGIC_64 && h->filetype == MH_EXECUTE) {
+            mh = (const struct mach_header_64 *)h;
+            slide = _dyld_get_image_vmaddr_slide(i);
+            break;
+        }
+    }
+    if (!mh) {
+        mh = (const struct mach_header_64 *)_dyld_get_image_header(0);
+        slide = _dyld_get_image_vmaddr_slide(0);
+    }
+
     const uint8_t *text = NULL;
     uint64_t textSize = 0, fileBase = 0, imageBase = 0;
     NSString *diag = nil;
