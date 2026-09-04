@@ -172,6 +172,11 @@ void mfRPTrigFire(NSString *mode) {
     });
 }
 
+static NSArray *rtLogCopy(void) {
+    if (!g_rtLock) return @[];
+    @synchronized (g_rtLog) { return [g_rtLog copy] ?: @[]; }
+}
+
 void mfRPTrigShowLog(void) {
     NSArray *lines = rtLogCopy();
     NSMutableString *s = [NSMutableString string];
