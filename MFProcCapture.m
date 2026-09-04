@@ -80,7 +80,7 @@ static mach_msg_return_t mf_machMsgHook(mach_msg_header_t *msg, mach_msg_option_
         mach_msg_size_t send_size, mach_msg_header_t *rcv_msg, mach_msg_size_t rcv_limit,
         mach_port_t notify, mach_msg_timeout_t timeout) {
     mach_msg_return_t kr = g_origMachMsg(msg, option, send_size, rcv_msg, rcv_limit, notify, timeout);
-    if (g_capOn) mf_machMaybeCap(msg, rcv_msg, kr);
+    mf_machMaybeCap(msg, rcv_msg, kr);
     return kr;
 }
 
