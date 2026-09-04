@@ -144,7 +144,7 @@ static void mfCapLocateDylib(void) {
                     p += lc->cmdsize;
                 }
                 g_capDylibBase = (uint8_t *)h;
-                g_capDylibSize = end ? end - h->vmaddr : 0x1e4000;
+                g_capDylibSize = end ?: 0x1e4000;   // dylib 段 vmaddr 从 0 起, 镜像内偏移即范围
                 mfLog(@"[capture] dylib in-proc @%p size=0x%llx (imp sweep armed)", g_capDylibBase, (unsigned long long)g_capDylibSize);
             }
             return;
