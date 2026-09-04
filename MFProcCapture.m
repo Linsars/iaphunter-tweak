@@ -15,6 +15,7 @@
 #import <os/object.h>
 #import <os/lock.h>
 #import <mach/mach.h>
+#import <mach/mach_vm.h>
 #import "fishhook.h"
 
 static NSString *mfCapHex(const uint8_t *p, size_t n);
@@ -839,9 +840,21 @@ void mfProcCaptureStart(void) {
                     BOOL isDC = !strncmp(sgp->segname, "__DATA_CONST", 16);
                     if ((isT || isDC) && sgp->vmsize > 0 && sgp->vmsize <= 12ULL*1024*1024
                         && totalSnap + sgp->vmsize <= 144ULL * 1024 * 1024) {
-                        uint8_t *abs = (uint8_t *)((uintptr_t)fh + sgp->vmaddr);   // dylib __TEXT vmaddr=0 → header=slide
+                        // 标准公式: abs = slide + vmaddr (v2.34.1, fh+vmaddr 在 __TEXT.vmaddr≠0 的框架上读飞)
+                        intptr_t fslide = _dyld_get_image_vmaddr_slide(i);
+                        uint8_t *abs = (uint8_t *)((uintptr_t)fslide + (uintptr_t)sgp->vmaddr);
                         uint8_t *snap = malloc((size_t)sgp->vmsize);
                         if (snap) {
+                            // 内核预检: 不可读段直接跳过(v2.34.0 在 0x3519a0000 SIGSEGV 的教训)
+                            mach_vm_size_t br = 0;
+                            kern_return_t krr = mach_vm_read_overwrite(mach_task_self(),
+                                (mach_vm_address_t)abs, sgp->vmsize, (mach_vm_address_t)snap, &br);
+                            if (krr != KERN_SUCCESS || br != sgp->vmsize) {
+                                free(snap);
+                                mfLog(@"[capture] fw seg unreadable %s.%s @%p kr=%d — skip",
+                                      bn ? bn : "?", sgp->segname, abs, krr);
+                                fp += lc->cmdsize; continue;
+                            }
                             mfCapSeg *sg = &g_capSegs[g_capNSeg];
                             memset(sg, 0, sizeof(*sg));
                             snprintf(sg->name, 19, "fw%s.%s", bn ? bn : "?", sgp->segname);
