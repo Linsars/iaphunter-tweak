@@ -12,6 +12,8 @@
 #import <objc/runtime.h>
 #import <dlfcn.h>
 #import <string.h>
+#import <os/object.h>
+#import <os/lock.h>
 
 static NSString *const kCapBID = @"com.magicgroot.gooby";
 static NSString *const kCapVersion = @"3.0.5";
