@@ -13,7 +13,7 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME = FolderX AppHooks IAPtools CompatPatcher
 
 # FolderX(SpringBoard: 文件夹变色 + 系统增强[充电限制/Wi-Fi永连])
-FolderX_FILES = $(filter-out MFPanel.m MFNetworkCapture.m MFAppStoreSpoof.m MFTestFlightHooks.m MFKeychainManager.m MFClassDump.m MFDiagnostics.m MFNetAnalyzer.m MFCryptoToolbox.m MFCryptoHooks.m MFObjCHook.m MFHostLogCapture.m MFBatteryInfo.m MFDiagnosticCleaner.m MFSubInject.m MFReceiptForge.m MFReflixOracle.m, $(wildcard *.xm *.m *.mm))
+FolderX_FILES = $(filter-out MFPanel.m MFNetworkCapture.m MFAppStoreSpoof.m MFTestFlightHooks.m MFKeychainManager.m MFClassDump.m MFDiagnostics.m MFNetAnalyzer.m MFCryptoToolbox.m MFCryptoHooks.m MFObjCHook.m MFHostLogCapture.m MFBatteryInfo.m MFDiagnosticCleaner.m MFSubInject.m MFReceiptForge.m MFReflixOracle.m MFAppPatch.m, $(wildcard *.xm *.m *.mm))
 FolderX_FRAMEWORKS = UIKit Foundation SpringBoardServices
 FolderX_CFLAGS = -fno-objc-arc -fmodules
 MFSystemEnhance.m_CFLAGS = -fobjc-arc
