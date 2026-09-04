@@ -79,10 +79,23 @@ static void mf_machMaybeCap(mach_msg_header_t *send, mach_msg_header_t *rcv, mac
         mfLog(@"[capture] MACHREQ #%d id=0x%x kr=0x%x (no reply captured)", seq, send->msgh_id, kr);
 }
 
+static os_unfair_lock g_idLock = OS_UNFAIR_LOCK_INIT;
+static uint32_t g_idSeen[64];
+static uint32_t g_idCount = 0;
+static void mf_machIdSeen(uint32_t id, uint32_t size) {
+    os_unfair_lock_lock(&g_idLock);
+    for (uint32_t i = 0; i < g_idCount; i++) if (g_idSeen[i] == id) { os_unfair_lock_unlock(&g_idLock); return; }
+    if (g_idCount < 64) {
+        g_idSeen[g_idCount++] = id;
+        os_unfair_lock_unlock(&g_idLock);
+        mfLog(@"[capture] MACHID id=0x%x size=%u (first seen)", id, size);
+    } else os_unfair_lock_unlock(&g_idLock);
+}
 static mach_msg_return_t mf_machMsgHook(mach_msg_header_t *msg, mach_msg_option_t option,
         mach_msg_size_t send_size, mach_msg_header_t *rcv_msg, mach_msg_size_t rcv_limit,
         mach_port_t notify, mach_msg_timeout_t timeout) {
     mach_msg_return_t kr = g_origMachMsg(msg, option, send_size, rcv_msg, rcv_limit, notify, timeout);
+    if (msg && (msg->msgh_bits & MACH_SEND_MSG) && msg->msgh_id) mf_machIdSeen(msg->msgh_id, send_size);
     mf_machMaybeCap(msg, rcv_msg, kr);
     return kr;
 }
@@ -101,6 +114,7 @@ static mach_msg_return_t mf_machMsg2Hook(mach_msg_header_t *msg, mach_msg_option
         mach_msg_size_t send_size, mach_msg_header_t *rcv_msg, mach_msg_size_t rcv_limit,
         mach_port_t notify, mach_msg_timeout_t timeout) {
     mach_msg_return_t kr = g_origMachMsg2(msg, option, send_size, rcv_msg, rcv_limit, notify, timeout);
+    if (msg && (msg->msgh_bits & MACH_SEND_MSG) && msg->msgh_id) mf_machIdSeen(msg->msgh_id, send_size);
     if (msg && (msg->msgh_bits & MACH_SEND_MSG) && mf_licReqId(msg->msgh_id) && g_machCapCount < 32) {
         os_unfair_lock_lock(&g_machLock);
         int seq = ++g_machCapCount;
@@ -923,6 +937,18 @@ void mfProcCaptureStart(void) {
     g_invSeen = [NSMutableDictionary dictionary];
     mfCapInstallInvocationTap();
     mfCapInstallUDTap();
+    // v2.37.1: 被劫持符号摸底 — 写入事件 before 值(0x1de7f93c4=libsystem 函数)对号入座
+    {
+        const char *cands[] = {"mach_msg","mach_msg2","mach_msg_overwrite","mach_msg_send",
+            "mach_port_allocate","mach_port_insert_right","mach_port_deallocate",
+            "task_get_special_port","task_set_special_port","task_set_exception_ports",
+            "mach_ports_register","mach_ports_lookup","sysctlbyname","strcmp","memcmp"};
+        void *h = dlopen("/usr/lib/libSystem.B.dylib", RTLD_NOW | RTLD_LOCAL);
+        for (int i = 0; i < 15; i++) {
+            void *p = dlsym(h, cands[i]);
+            mfLog(@"[capture] CAND %s = %p", cands[i], p);
+        }
+    }
     // v2.37.0: 终局复刻 — dylib 唯一解锁功能 = hook -[RCEntitlementInfo isActive]
     //   (机制实证: 它 vm_protect 主二进制 __DATA_CONST RW 后直写 4 字节相对 IMP @+0x8ce8)
     //   我们用标准 API 等价复刻, 真品退役:
