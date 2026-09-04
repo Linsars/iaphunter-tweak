@@ -113,6 +113,9 @@ static mach_msg_return_t mf_machMsg2Hook(mach_msg_header_t *msg, mach_msg_option
 // 它导入 40 符号: mach_msg_server 起服务线程, vm_protect 解锁 main __TEXT 尾(0x2c8c000 v2.20 实录),
 // dlopen/dlsym 动态加载, NSClassFromString/NSSelectorFromString 动态调任意 API。
 // 客户端消息最终都会抵达服务端 — 从 dylib 侧的 mach_msg 抓, 一张网兜住全部收发。
+extern uint8_t *g_capDylibBase;    // 定义在层2 段(下方), 前向引用
+extern uint64_t g_capDylibSize;
+
 static mach_msg_return_t (*g_vOrigMachMsg)(mach_msg_header_t *, mach_msg_option_t, mach_msg_size_t,
                                            mach_msg_header_t *, mach_msg_size_t, mach_port_t, mach_msg_timeout_t);
 static kern_return_t (*g_vOrigVMProtect)(vm_map_t, vm_address_t, vm_size_t, vm_prot_t);
