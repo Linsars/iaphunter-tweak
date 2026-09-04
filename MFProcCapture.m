@@ -60,25 +60,40 @@ static double g_capT0 = 0;
 static NSMutableDictionary *g_impSnap;
 
 // ===== 层3: NSInvocation 窃听 — dylib 唯一明文手法面(13 个 selector 全是 invocation 链) =====
+// v2.29.1 安全化: 2.29.0 在 XPC reply 路径崩(SIGSEGV@NSStringFromSelector strlen 野 selector)
+//   铁律: 目标类非主二进制 → 直接放行不碰 selector; 字典操作上锁; selector 先过指针门
 static IMP g_origInvoke = NULL, g_origInvokeWTH = NULL;
 static NSMutableDictionary *g_invSeen;
+static os_unfair_lock g_invLock = OS_UNFAIR_LOCK_INIT;
 static uint32_t g_invCount = 0;
 
+
 static void mfCapLogInv(NSInvocation *inv, const char *via) {
-    if (g_invCount >= 200) return;
     @try {
+        static NSString *g_mainExecStr = nil;
+        static dispatch_once_t onceT;
+        dispatch_once(&onceT, ^{ g_mainExecStr = [[[NSBundle mainBundle] executablePath] copy]; });
+        if (!g_mainExecStr) return;
         id t = [inv target];
-        SEL s = [inv selector];
         if (!t) return;
-        NSString *cls = NSStringFromClass([t class]);
-        NSString *sel = s ? NSStringFromSelector(s) : @"?";
-        NSString *key = [NSString stringWithFormat:@"%@|%@|%s", cls, sel, via];
-        if (g_invSeen[key]) return;
-        g_invSeen[key] = @YES;
-        g_invCount++;
-        const char *img = class_getImageName([t class]);
-        const char *b = img ? strrchr(img, '/') : NULL;
-        mfLog(@"[capture] INVOKE[%s] %@ -> %@ (img=%s)", via, cls, sel, b ? b + 1 : (img ?: "?"));
+        Class c = object_getClass(t);           // 目标有效则类指针安全
+        if (!c) return;
+        const char *img = class_getImageName(c);
+        // 只解析"目标类在主二进制里"的 invocation — 系统/XPC/框架 invocation 全部放行
+        if (!img || !strstr(img, g_mainExecStr.fileSystemRepresentation)) return;
+        SEL s = [inv selector];
+        if (!s || (uintptr_t)s < 0x1000) return; // 野 selector 指针门
+        NSString *selName = NSStringFromSelector(s);
+        if (!selName.length) return;
+        NSString *key = [NSString stringWithFormat:@"%@|%@|%s", NSStringFromClass(c), selName, via];
+        os_unfair_lock_lock(&g_invLock);
+        @try {
+            if (g_invSeen[key] || g_invCount >= 200) { os_unfair_lock_unlock(&g_invLock); return; }
+            g_invSeen[key] = @YES;
+            g_invCount++;
+        } @catch (NSException *e) { os_unfair_lock_unlock(&g_invLock); return; }
+        os_unfair_lock_unlock(&g_invLock);
+        mfLog(@"[capture] INVOKE[%s] %@ -> %@", via, NSStringFromClass(c), selName);
     } @catch (NSException *e) {}
 }
 static void mf_invHook(id self, SEL _cmd) {
