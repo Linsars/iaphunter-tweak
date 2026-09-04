@@ -1377,10 +1377,7 @@ extern long mfSubInjectHits(void);
 extern BOOL mfSubInjectIsOn(void);
 extern long mfReceiptForgeHits(void);
 extern BOOL mfReceiptForgeIsOn(void);
-// v2.23.0 ReflixPatch mach 触发器 (MFReflixTrigger.m)
-extern void mfRPTrigSectionInLabPage(UIView *page, CGFloat *yio);
-extern long mfRPTrigPings(void);
-extern long mfRPTrigPongs(void);
+
 
 static UIView *mfSubSwitchRow(UIView *page, CGFloat y, NSString *title,
                               BOOL on, SEL action, NSString *status) {
@@ -1434,9 +1431,6 @@ void mfShowLabPage(void) {
     [scan addTarget:g_mfCtrl action:@selector(mfShowScanPage) forControlEvents:UIControlEventTouchUpInside];
     [page addSubview:scan];
 
-    // —— ReflixPatch mach 触发器 (v2.23.0) ——
-    CGFloat apy = 344;
-    mfRPTrigSectionInLabPage(page, &apy);
 
     mfPushPage(page);
 }
@@ -1447,17 +1441,7 @@ void mfShowLabPage(void) {
 @implementation MFPanelCtrl
 - (void)mfPopPage { mfPopPage(); }
 - (void)mfClosePanel { mfClosePanel(); }
-// v2.23.0 ReflixPatch mach 触发器
-- (void)mfRPTrigFireTapped {
-    extern void mfRPTrigFire(NSString *mode);
-    mfRPTrigFire(@"ping+cmd");
-    mfToast(@"🔥 已发触发序列");
-}
-- (void)mfRPTrigShowLogTapped {
-    extern void mfRPTrigShowLog(void);
-    mfRPTrigShowLog();
-    mfToast(@"📋 触发日志已落盘");
-}
+
 
 // 页面入口
 - (void)mfShowDataAnalysisPage { mfShowDataAnalysisPage(); }
