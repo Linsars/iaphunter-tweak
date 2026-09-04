@@ -401,7 +401,17 @@ void apInstallCollectors(void) {
 NSString *mfAppPatchRulesJSON(void) {
     id v = mfReadPrefObj(@"mfAppPatchRules");
     if ([v isKindOfClass:[NSString class]]) return v;
-    return @"[\n  {\n    \"bid\": \"com.magicgroot.gooby\",\n    \"ver\": \"3.0.5\",\n    \"patches\": [\n      {\"kind\":\"method\",\"cls\":\"ClassHere\",\"sel\":\"isPro\",\"ret\":true},\n      {\"kind\":\"text\",\"off\":\"0x12345678\",\"old\":\"1f2003d5\",\"new\":\"20008052c0035fd6\"}\n    ]\n  }\n]";
+    // v2.22.1: 预置 Reflix 首条规则 (0x7c06f4 tbz→tbnz, 强制走 proAccessOverride 注入路径)
+    return @"[\n"
+           @"  {\n"
+           @"    \"bid\": \"com.magicgroot.gooby\",\n"
+           @"    \"ver\": \"3.0.5\",\n"
+           @"    \"note\": \"ProGate debug override 强制注入 (tbz→tbnz)\",\n"
+           @"    \"patches\": [\n"
+           @"      {\"kind\":\"text\",\"off\":\"0x7c06f4\",\"old\":\"94020036\",\"new\":\"94020037\"}\n"
+           @"    ]\n"
+           @"  }\n"
+           @"]";
 }
 void mfAppPatchSetRulesJSON(NSString *json) {
     NSData *d = [json dataUsingEncoding:NSUTF8StringEncoding];
