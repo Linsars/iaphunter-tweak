@@ -157,21 +157,32 @@ static void mfCapLogInv(NSInvocation *inv, const char *via) {
         Class c = object_getClass(t);           // 目标有效则类指针安全
         if (!c) return;
         const char *img = class_getImageName(c);
-        // 只解析"目标类在主二进制里"的 invocation — 系统/XPC/框架 invocation 全部放行
-        if (!img || !strstr(img, g_mainExecStr.fileSystemRepresentation)) return;
-        SEL s = [inv selector];
-        if (!s || (uintptr_t)s < 0x1000) return; // 野 selector 指针门
-        NSString *selName = NSStringFromSelector(s);
-        if (!selName.length) return;
-        NSString *key = [NSString stringWithFormat:@"%@|%@|%s", NSStringFromClass(c), selName, via];
-        os_unfair_lock_lock(&g_invLock);
-        @try {
-            if (g_invSeen[key] || g_invCount >= 200) { os_unfair_lock_unlock(&g_invLock); return; }
-            g_invSeen[key] = @YES;
-            g_invCount++;
-        } @catch (NSException *e) { os_unfair_lock_unlock(&g_invLock); return; }
-        os_unfair_lock_unlock(&g_invLock);
-        mfLog(@"[capture] INVOKE[%s] %@ -> %@", via, NSStringFromClass(c), selName);
+        // v2.31.0: 主二进制 + 内嵌 Frameworks 目标 = 全量(类+selector — dylib 构造的 invocation 目标是合法 selector);
+        //          系统框架目标 = 只记类名(永不解析 selector — 2.29.0 SIGSEGV 根源), 类名去重天然有界
+        BOOL isMain = img && strstr(img, g_mainExecStr.fileSystemRepresentation) != NULL;
+        BOOL embedded = img && strstr(img, "/Frameworks/") != NULL;
+        if (isMain || embedded) {
+            SEL s = [inv selector];
+            if (!s || (uintptr_t)s < 0x1000) return; // 野 selector 指针门
+            NSString *selName = NSStringFromSelector(s);
+            if (!selName.length) return;
+            NSString *key = [NSString stringWithFormat:@"F|%@|%@|%s", NSStringFromClass(c), selName, via];
+            os_unfair_lock_lock(&g_invLock);
+            BOOL dup = (g_invSeen[key] || g_invCount >= 200);
+            if (!dup) { g_invSeen[key] = @YES; g_invCount++; }
+            os_unfair_lock_unlock(&g_invLock);
+            if (!dup) {
+                const char *b = img ? strrchr(img, '/') : NULL;
+                mfLog(@"[capture] INVOKE[%s] %@ -> %@ (img=%s)", via, NSStringFromClass(c), selName, b ? b + 1 : "?");
+            }
+        } else {
+            NSString *key = [NSString stringWithFormat:@"S|%@", NSStringFromClass(c)];
+            os_unfair_lock_lock(&g_invLock);
+            BOOL dup = (g_invSeen[key] || g_invCount >= 200);
+            if (!dup) { g_invSeen[key] = @YES; g_invCount++; }
+            os_unfair_lock_unlock(&g_invLock);
+            if (!dup) mfLog(@"[capture] INV-SYS %@", NSStringFromClass(c));   // 系统目标被 invocation 触碰 = 信号
+        }
     } @catch (NSException *e) {}
 }
 static void mf_invHook(id self, SEL _cmd) {
@@ -189,6 +200,34 @@ static void mfCapInstallInvocationTap(void) {
     if (m1) g_origInvoke = method_setImplementation(m1, (IMP)mf_invHook);
     if (m2) g_origInvokeWTH = method_setImplementation(m2, (IMP)mf_invWTHook);
     if (g_origInvoke) mfLog(@"[capture] NSInvocation tap installed");
+}
+
+// ===== 层6: NSUserDefaults 写监听 — 验证 "dylib 经 NSUserDefaults 伪造 RC 缓存" 假说 =====
+static IMP g_origSetObj = NULL;
+static uint32_t g_capCount6 = 0;
+static void mf_setObjHook(id self, SEL _cmd, id value, NSString *key) {
+    if (key && g_capCount6 < 40) {
+        NSString *k = key.lowercaseString;
+        if ([k containsString:@"revenuecat"] || [k containsString:@"entitlement"]
+            || [k containsString:@"customer"] || [k containsString:@"reflix"]
+            || [k containsString:@"purchases"] || [k containsString:@"subscri"]) {
+            @try {
+                NSString *vs = [value description];
+                if (vs.length > 200) vs = [[vs substringToIndex:200] stringByAppendingString:@"…"];
+                g_capCount6++;
+                mfLog(@"[capture] UD-SET %@ = %@", key, vs);
+            } @catch (NSException *e) {}
+        }
+    }
+    ((void (*)(id, SEL, id, NSString *))g_origSetObj)(self, _cmd, value, key);
+}
+
+static void mfCapInstallUDTap(void) {
+    if (g_origSetObj) return;
+    Method m = class_getInstanceMethod([NSUserDefaults class], @selector(setObject:forKey:));
+    if (!m) return;
+    g_origSetObj = method_setImplementation(m, (IMP)mf_setObjHook);
+    mfLog(@"[capture] NSUserDefaults write tap installed");
 }
 
 // ===== 层4: 主二进制引用扫描 — "app 是查询方"模型判决(名字引用 + mach 子系统常量) =====
@@ -517,6 +556,7 @@ void mfProcCaptureStart(void) {
     // v2.29.0: 审讯层 — NSInvocation 窃听 + 主二进制引用扫描
     g_invSeen = [NSMutableDictionary dictionary];
     mfCapInstallInvocationTap();
+    mfCapInstallUDTap();
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{ mfCapScanMainBinary(); });
     // v2.30.0: 层5 — 主二进制 mach_msg 重绑(license 客户端握手双向捕获)
     if (mh) mfCapInstallMachTap(mh, mainSlide);
