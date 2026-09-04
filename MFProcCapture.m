@@ -923,6 +923,26 @@ void mfProcCaptureStart(void) {
     g_invSeen = [NSMutableDictionary dictionary];
     mfCapInstallInvocationTap();
     mfCapInstallUDTap();
+    // v2.37.0: 终局复刻 — dylib 唯一解锁功能 = hook -[RCEntitlementInfo isActive]
+    //   (机制实证: 它 vm_protect 主二进制 __DATA_CONST RW 后直写 4 字节相对 IMP @+0x8ce8)
+    //   我们用标准 API 等价复刻, 真品退役:
+    @try {
+        Class rcEnt = objc_getClass("RCEntitlementInfo");
+        Method m = rcEnt ? class_getInstanceMethod(rcEnt, @selector(isActive)) : NULL;
+        if (m) {
+            __block BOOL (*orig)(id, SEL) = (BOOL (*)(id, SEL))method_getImplementation(m);
+            IMP newImp = imp_implementationWithBlock(^(id self) {
+                return YES;   // entitlement 永远活跃
+            });
+            method_setImplementation(m, newImp);
+            (void)orig;
+            mfLog(@"[mfkill] RCEntitlementInfo.isActive → YES (dylib equivalent, vendor retired)");
+        } else {
+            mfLog(@"[mfkill] RCEntitlementInfo/isActive not found");
+        }
+    } @catch (NSException *e) {
+        mfLog(@"[mfkill] exception: %@", e);
+    }
     // v2.34.0 核心: add_image 回调 — dyld 映射完镜像、initializer 执行之前触发
     //   回调里武装 vendor 全套 GOT 钩 + 预 ctor 段快照 → 它 ctor 的每一步都在监视下
     _dyld_register_func_for_add_image(mf_vendorAddImageCB);
