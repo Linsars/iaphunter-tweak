@@ -1,21 +1,21 @@
-// MFProcCapture.m — 第二拳·点位采集器 (被动内存差分, 零 hook)
-// 原理: ReflixPatch 由 RC 响应延迟自激活(实测 ctor 后 ~7s), 我方 ctor 先全量快照
-//       主二进制 __TEXT/__DATA_CONST/__DATA(预触发保证), 之后 2s 周期 diff。
-//       持久 patch 必留痕 → 每个变化区 = 一个 patch 点位 + 前后字节。
-// 纪律: 不 hook vm_protect(backtrace 反 hook, v2.20 崩溃根因), 不引用目标 dylib
-//       任何符号, 纯内存读。
-// 分层: __TEXT/__DATA_CONST 变化 = patch 事件(落盘+hostlog);
-//       __DATA 变化 = 运行期全局写噪声, 只累计不落盘(防挤爆事件额度)。
-//       基线每轮推进 → 每个 patch 点只报一次, 后续轮询零成本。
-// 产出: Documents/MinisFix/mfcap_<seq>_<seg>_<off>.json + hostlog 每事件一行
+// MFProcCapture.m — 第二拳·点位采集器 (被动, 零 hook)
+// 层1 内存差分: ctor 快照主二进制 __TEXT/__DATA_CONST/__DATA, 2s diff — 抓直接写内存的 patch
+// 层2 ObjC imp 巡检: 枚举全部类方法表, imp 落在 ReflixPatch dylib 镜像内 = 它 swizzle 的点
+//     (实测教训: dylib 不写主二进制段 — 它是 NSInvocation+method_getImplementation 型 swizzle,
+//      目标 selector 运行时解密, 但 objc 运行时表是明文, 类名/selector 直出)
+// 产出: mfcap_*.json + hostlog 每事件一行
 
 #import "MFPanel.h"
 #import <Foundation/Foundation.h>
 #import <mach-o/dyld.h>
 #import <mach-o/loader.h>
+#import <objc/runtime.h>
+#import <dlfcn.h>
+#import <string.h>
 
 static NSString *const kCapBID = @"com.magicgroot.gooby";
 static NSString *const kCapVersion = @"3.0.5";
+static NSString *const kCapDylib = @"/var/jb/usr/lib/MinisFix/ReflixPatch-3.0.5.dylib";
 static const NSTimeInterval kCapPollSec = 2.0;
 static const uint32_t kCapMaxEvents = 256;
 
@@ -75,6 +75,81 @@ static void mfCapWriteEvent(const mfCapSeg *sg, uint64_t off, uint64_t len,
         NSData *d = [NSJSONSerialization dataWithJSONObject:r options:NSJSONWritingPrettyPrinted error:nil];
         if (d) [d writeToFile:path atomically:YES];
     } @catch (NSException *e) {}
+}
+
+// ===== 层2: ObjC imp 巡检 — dylib swizzle 点白送(imp 指进 dylib 镜像 = 被hook) =====
+static uint8_t *g_capDylibBase = NULL;
+static uint64_t g_capDylibSize = 0;
+static NSMutableDictionary *g_capSeen;   // "类|sel" -> 每点只报一次
+
+static void mfCapRecordSwizzle(NSString *cls, NSString *sel, uintptr_t imp) {
+    NSString *key = [NSString stringWithFormat:@"%@|%@", cls, sel];
+    if (g_capSeen[key]) return;
+    g_capSeen[key] = @YES;
+    uintptr_t off = imp - (uintptr_t)g_capDylibBase;
+    @try {
+        NSString *dir = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/MinisFix"];
+        [[NSFileManager defaultManager] createDirectoryAtPath:dir
+                                  withIntermediateDirectories:YES attributes:nil error:nil];
+        NSDictionary *r = @{@"class": cls, @"selector": sel,
+                            @"dylib_offset": [NSString stringWithFormat:@"0x%lx", (unsigned long)off]};
+        NSString *path = [NSString stringWithFormat:@"%@/mfcap_swizzle_%@.json", dir,
+                          [key stringByReplacingOccurrencesOfString:@"|" withString:@"_"]];
+        NSData *d = [NSJSONSerialization dataWithJSONObject:r options:NSJSONWritingPrettyPrinted error:nil];
+        if (d) [d writeToFile:path atomically:YES];
+    } @catch (NSException *e) {}
+    mfLog(@"[capture] SWIZZLE %@ -> %@ dylib_off=0x%lx", cls, sel, (unsigned long)off);
+    g_capEvents++;
+}
+
+static void mfCapObjcSweep(void) {
+    if (!g_capDylibBase) return;
+    unsigned int ncls = 0;
+    Class *classes = objc_copyClassList(&ncls);
+    if (!classes) return;
+    for (unsigned int i = 0; i < ncls; i++) {
+        NSString *cn = NSStringFromClass(classes[i]);
+        for (int pass = 0; pass < 2; pass++) {
+            Class target = pass == 0 ? classes[i] : object_getClass(classes[i]); // 实例方法/类方法
+            unsigned int nm = 0;
+            Method *ms = class_copyMethodList(target, &nm);
+            for (unsigned int j = 0; j < nm; j++) {
+                uintptr_t v = (uintptr_t)method_getImplementation(ms[j]);
+                if (v >= (uintptr_t)g_capDylibBase && v < (uintptr_t)g_capDylibBase + g_capDylibSize) {
+                    mfCapRecordSwizzle(cn, NSStringFromSelector(method_getName(ms[j])), v);
+                }
+            }
+            free(ms);
+        }
+    }
+    free(classes);
+}
+
+static void mfCapLocateDylib(void) {
+    for (uint32_t i = 0; i < _dyld_image_count(); i++) {
+        const char *nm = _dyld_get_image_name(i);
+        if (nm && strstr(nm, "ReflixPatch")) {
+            const struct mach_header_64 *h = (const struct mach_header_64 *)_dyld_get_image_header(i);
+            if (h && h->magic == MH_MAGIC_64) {
+                // load commands 求 __LINKEDIT 段末 = 镜像 vm 范围
+                const uint8_t *p = (const uint8_t *)(h + 1);
+                uint64_t end = 0;
+                for (uint32_t k = 0; k < h->ncmds; k++) {
+                    const struct load_command *lc = (const struct load_command *)p;
+                    if (lc->cmdsize < sizeof(*lc)) break;
+                    if (lc->cmd == LC_SEGMENT_64) {
+                        const struct segment_command_64 *sg = (const struct segment_command_64 *)p;
+                        if (sg->vmaddr + sg->vmsize > end) end = sg->vmaddr + sg->vmsize;
+                    }
+                    p += lc->cmdsize;
+                }
+                g_capDylibBase = (uint8_t *)h;
+                g_capDylibSize = end ? end - h->vmaddr : 0x1e4000;
+                mfLog(@"[capture] dylib in-proc @%p size=0x%llx (imp sweep armed)", g_capDylibBase, (unsigned long long)g_capDylibSize);
+            }
+            return;
+        }
+    }
 }
 
 void mfProcCaptureStart(void) {
@@ -148,6 +223,14 @@ void mfProcCaptureStart(void) {
 
     g_capT0 = [[NSDate date] timeIntervalSinceReferenceDate];
     g_capOn = YES;
+    g_capSeen = [NSMutableDictionary dictionary];
+    // 层2 就位: dylib 已被注入(TrollFools)则定位之; 未注入则按开关 dlopen 兜底
+    mfCapLocateDylib();
+    if (!g_capDylibBase) {
+        void *h = dlopen(kCapDylib.UTF8String, RTLD_NOW | RTLD_LOCAL);
+        if (h) { mfLog(@"[capture] dlopened vendor dylib (fallback)"); mfCapLocateDylib(); }
+        else mfLog(@"[capture] vendor dylib absent — imp sweep idle, mem-diff layer only");
+    }
     g_capTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0,
                                         dispatch_get_global_queue(QOS_CLASS_UTILITY, 0));
     dispatch_source_set_timer(g_capTimer,
@@ -158,6 +241,8 @@ void mfProcCaptureStart(void) {
 
     dispatch_source_set_event_handler(g_capTimer, ^{
         if (g_capEvents >= kCapMaxEvents) { dispatch_suspend(g_capTimer); return; }
+        // 层2 优先: dylib 在进程内才巡检(被 TrollFools 移除 = 永不触发)
+        if (g_capDylibBase) mfCapObjcSweep();
         for (int s = 0; s < g_capNSeg; s++) {
             mfCapSeg *sg = &g_capSegs[s];
             uint8_t *cur = bbase + (sg->vmaddr - btext);
