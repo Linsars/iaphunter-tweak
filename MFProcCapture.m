@@ -17,6 +17,8 @@
 #import <mach/mach.h>
 #import "fishhook.h"
 
+static NSString *mfCapHex(const uint8_t *p, size_t n);
+
 // ===== 层5: 主二进制 mach_msg 观察 — app=license 客户端(六个子系统 id 全在主二进制, 2.29.1 实测) =====
 // 只重绑 main image 的 mach_msg 导入(vendor dylib 自身调用不受影响, 绕开 backtrace 反 hook)
 // MIG send+rcv 一体: 同次调用 rcv 缓冲区 = 服务端应答 → 一次 hook 抓全双向握手
@@ -837,7 +839,7 @@ void mfProcCaptureStart(void) {
                     BOOL isDC = !strncmp(sgp->segname, "__DATA_CONST", 16);
                     if ((isT || isDC) && sgp->vmsize > 0 && sgp->vmsize <= 12ULL*1024*1024
                         && totalSnap + sgp->vmsize <= 144ULL * 1024 * 1024) {
-                        uint8_t *abs = (uint8_t *)((uintptr_t)fh + (sgp->vmaddr - fh->vmaddr));
+                        uint8_t *abs = (uint8_t *)((uintptr_t)fh + sgp->vmaddr);   // dylib __TEXT vmaddr=0 → header=slide
                         uint8_t *snap = malloc((size_t)sgp->vmsize);
                         if (snap) {
                             mfCapSeg *sg = &g_capSegs[g_capNSeg];
