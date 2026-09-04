@@ -153,10 +153,17 @@ static NSString *mfSubNowISO(void) {
 
 #pragma mark - 目标匹配(host 白名单制, 不做关键词 shotgun)
 
+static BOOL mfSubIsRCHost(NSString *h) {
+    if ([h isEqualToString:@"api.revenuecat.com"] || [h isEqualToString:@"api.rc-backup.com"]) return YES;
+    // v2.23.2: RC 反代盲区 — rc.*/revenue.* 前缀的自建反代同协议
+    if ([h hasPrefix:@"rc."] || [h hasPrefix:@"revenue."]) return YES;
+    return NO;
+}
+
 static BOOL mfSubIsTarget(NSURL *u) {
     if (!u.host) return NO;
     NSString *h = u.host.lowercaseString, *p = u.path ?: @"";
-    if ([h isEqualToString:@"api.revenuecat.com"] || [h isEqualToString:@"api.rc-backup.com"]) {
+    if (mfSubIsRCHost(h)) {
         // v2.18.1: /offerings 是产品目录 + offline entitlements 映射(SDK5 SK2 模式靠它本地算 entitlements),
         // 吞掉 = 目录加载报废 + 离线映射永不缓存 + 自家 mfprobe 扫描被打死(Reflix 实录), 只放行 subscribers GET 与 receipts POST
         if ([p containsString:@"/offerings"]) return NO;
@@ -243,7 +250,7 @@ static NSString *mfSubJSON(NSURL *u) {
     NSString *now = mfSubNowISO();
     NSString *far = @"2099-09-09T09:09:09Z";
 
-    if ([h isEqualToString:@"api.revenuecat.com"] || [h isEqualToString:@"api.rc-backup.com"]) {
+    if (mfSubIsRCHost(h)) {
         // v2.18.0: entitlement 名自动发现, 空则回退 "pro"
         NSArray *ents = mfDiscoveredEntitlements();
         if (!ents.count) ents = @[@"pro"];
