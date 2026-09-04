@@ -182,12 +182,12 @@ static mach_msg_return_t mf_vMachMsgHook(mach_msg_header_t *msg, mach_msg_option
 
 static void *mf_vDlopenHook(const char *path, int mode) {
     void *h = g_vOrigDlopen(path, mode);
-    mfLog(@"[capture] vDLOPEN %s -> %p", path ?: @"(null)", h);
+    mfLog(@"[capture] vDLOPEN %s -> %p", path ?: "(null)", h);
     return h;
 }
 static void *mf_vDlsymHook(void *h, const char *name) {
     void *p = g_vOrigDlsym(h, name);
-    mfLog(@"[capture] vDLSYM %s -> %p", name ?: @"(null)", p);
+    mfLog(@"[capture] vDLSYM %s -> %p", name ?: "(null)", p);
     return p;
 }
 
@@ -404,8 +404,8 @@ static void mfCapWriteEvent(const mfCapSeg *sg, uint64_t off, uint64_t len,
 }
 
 // ===== 层2: ObjC imp 巡检 — dylib swizzle 点白送(imp 指进 dylib 镜像 = 被hook) =====
-static uint8_t *g_capDylibBase = NULL;
-static uint64_t g_capDylibSize = 0;
+uint8_t *g_capDylibBase = NULL;
+uint64_t g_capDylibSize = 0;
 static NSMutableDictionary *g_capSeen;   // "类|sel" -> 每点只报一次
 
 static void mfCapRecordSwizzle(NSString *cls, NSString *sel, uintptr_t imp) {
