@@ -14,6 +14,82 @@
 #import <string.h>
 #import <os/object.h>
 #import <os/lock.h>
+#import <mach/mach.h>
+#import "fishhook.h"
+
+// ===== 层5: 主二进制 mach_msg 观察 — app=license 客户端(六个子系统 id 全在主二进制, 2.29.1 实测) =====
+// 只重绑 main image 的 mach_msg 导入(vendor dylib 自身调用不受影响, 绕开 backtrace 反 hook)
+// MIG send+rcv 一体: 同次调用 rcv 缓冲区 = 服务端应答 → 一次 hook 抓全双向握手
+static mach_msg_return_t (*g_origMachMsg)(mach_msg_header_t *, mach_msg_option_t, mach_msg_size_t,
+                                          mach_msg_header_t *, mach_msg_size_t, mach_port_t, mach_msg_timeout_t);
+static os_unfair_lock g_machLock = OS_UNFAIR_LOCK_INIT;
+static int g_machCapCount = 0;
+
+static inline BOOL mf_licReqId(uint32_t id) { return id == 0x965 || id == 0x966 || id == 0x967; }
+static inline BOOL mf_licRepId(uint32_t id) { return id == 0x9c9 || id == 0x9ca || id == 0x9cb; }
+
+static void mf_machDump(const char *kind, int seq, mach_msg_header_t *h) {
+    if (!h) return;
+    uint32_t size = h->msgh_size;
+    if (size > 5276 || size < 24) return;
+    @try {
+        NSString *dir = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/MinisFix"];
+        [[NSFileManager defaultManager] createDirectoryAtPath:dir
+                                  withIntermediateDirectories:YES attributes:nil error:nil];
+        NSMutableString *body = [NSMutableString string];
+        const uint8_t *b = (const uint8_t *)h;
+        for (uint32_t i = 0; i < MIN(size, 512u); i++)
+            [body appendFormat:@"%02x", b[i]];
+        NSDictionary *r = @{@"kind": [NSString stringWithUTF8String:kind],
+                            @"id": [NSString stringWithFormat:@"0x%x", h->msgh_id],
+                            @"bits": [NSString stringWithFormat:@"0x%x", h->msgh_bits],
+                            @"size": @(size),
+                            @"retcode_0x20": size > 0x24 ? [NSString stringWithFormat:@"0x%08x",
+                                *(const uint32_t *)(b + 0x20)] : @"n/a",
+                            @"hex": body};
+        NSString *path = [NSString stringWithFormat:@"%@/mfcap_mach_%s_%d_0x%x.json", dir, kind, seq, h->msgh_id];
+        NSData *d = [NSJSONSerialization dataWithJSONObject:r options:NSJSONWritingPrettyPrinted error:nil];
+        if (d) [d writeToFile:path atomically:YES];
+        // hostlog 摘要: 前 48 字节
+        NSString *head = [body substringToIndex:MIN(96, body.length)];
+        mfLog(@"[capture] MACH%s #%d id=0x%x size=%u rc@0x20=%s hex=%@",
+              kind, seq, h->msgh_id, size,
+              (size > 0x24 ? [[NSString stringWithFormat:@"0x%08x", *(const uint32_t *)(b + 0x20)] UTF8String] : "n/a"),
+              head);
+    } @catch (NSException *e) {}
+}
+
+static void mf_machMaybeCap(mach_msg_header_t *send, mach_msg_header_t *rcv, mach_msg_return_t kr) {
+    if (g_machCapCount >= 32) return;
+    if (!send || !(send->msgh_bits & MACH_SEND_MSG)) return;
+    if (!mf_licReqId(send->msgh_id)) return;
+    os_unfair_lock_lock(&g_machLock);
+    int seq = ++g_machCapCount;
+    os_unfair_lock_unlock(&g_machLock);
+    mf_machDump("REQ", seq, send);
+    // rcv 缓冲区 = 同次调用收到的应答(MIG 风格 send+rcv)
+    if ((kr == MACH_MSG_SUCCESS || kr == 0) && rcv && mf_licRepId(rcv->msgh_id))
+        mf_machDump("REP", seq, rcv);
+    else if (rcv && rcv->msgh_id)
+        mfLog(@"[capture] MACHREQ #%d kr=0x%x rcv_id=0x%x (non-lic)", seq, kr, rcv->msgh_id);
+    else
+        mfLog(@"[capture] MACHREQ #%d id=0x%x kr=0x%x (no reply captured)", seq, send->msgh_id, kr);
+}
+
+static mach_msg_return_t mf_machMsgHook(mach_msg_header_t *msg, mach_msg_option_t option,
+        mach_msg_size_t send_size, mach_msg_header_t *rcv_msg, mach_msg_size_t rcv_limit,
+        mach_port_t notify, mach_msg_timeout_t timeout) {
+    mach_msg_return_t kr = g_origMachMsg(msg, option, send_size, rcv_msg, rcv_limit, notify, timeout);
+    if (g_capOn) mf_machMaybeCap(msg, rcv_msg, kr);
+    return kr;
+}
+
+static void mfCapInstallMachTap(const struct mach_header_64 *mh, intptr_t slide) {
+    if (g_origMachMsg) return;
+    struct rebinding rb = {"mach_msg", (void *)mf_machMsgHook, (void **)&g_origMachMsg};
+    int r = rebind_symbols_image((void *)mh, slide, &rb, 1);
+    mfLog(@"[capture] main-image mach_msg rebind: %d (hook=%p)", r, g_origMachMsg);
+}
 
 static NSString *const kCapBID = @"com.magicgroot.gooby";
 static NSString *const kCapVersion = @"3.0.5";
@@ -322,10 +398,12 @@ void mfProcCaptureStart(void) {
     }
 
     const struct mach_header_64 *mh = NULL;
+    intptr_t mainSlide = 0;
     for (uint32_t i = 0; i < _dyld_image_count(); i++) {
         const struct mach_header *h = _dyld_get_image_header(i);
         if (h && h->magic == MH_MAGIC_64 && h->filetype == MH_EXECUTE) {
             mh = (const struct mach_header_64 *)h;
+            mainSlide = _dyld_get_image_vmaddr_slide(i);
             break;
         }
     }
@@ -440,6 +518,8 @@ void mfProcCaptureStart(void) {
     g_invSeen = [NSMutableDictionary dictionary];
     mfCapInstallInvocationTap();
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{ mfCapScanMainBinary(); });
+    // v2.30.0: 层5 — 主二进制 mach_msg 重绑(license 客户端握手双向捕获)
+    if (mh) mfCapInstallMachTap(mh, mainSlide);
     g_capTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0,
                                         dispatch_get_global_queue(QOS_CLASS_UTILITY, 0));
     dispatch_source_set_timer(g_capTimer,
