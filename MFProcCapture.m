@@ -146,7 +146,9 @@ __asm__(
   "  br x16\n"
 );
 // 只有 dylib 镜像的 msgSend 会进蹦床(IAPtools 自己的调用不在重绑范围, 无递归)
-void mf_msgSendLogger(id rcv, SEL sel) {
+// v2.35.0: logger 加 x2 实参 — performSelector: 的目标 selector / isEqualToString: 的比较串
+//   (蹦床里 x2 未被破坏, 直接作第三参; 这些参数就是 MBA 解密后的明文)
+void mf_msgSendLogger(id rcv, SEL sel, void *a0) {
     static NSMutableDictionary *seen = nil;
     static os_unfair_lock lk = OS_UNFAIR_LOCK_INIT;
     static uint32_t cnt = 0;
@@ -155,13 +157,25 @@ void mf_msgSendLogger(id rcv, SEL sel) {
     if (!c) return;
     const char *cn = class_getName(c);
     const char *sn = sel ? sel_getName(sel) : "?";
+    NSString *extra = @"";
+    if (sel && !strcmp(sn, "performSelector:") && (uintptr_t)a0 >= 0x1000) {
+        extra = [NSString stringWithFormat:@" (arg=%s)", sel_getName((SEL)a0)];
+    } else if (sel && (!strcmp(sn, "isEqualToString:") || !strcmp(sn, "hasPrefix:")) && a0) {
+        @try {
+            if ([(__id)a0 isKindOfClass:[NSString class]]) {
+                NSString *t = (NSString *)a0;
+                if (t.length > 64) t = [t substringToIndex:64];
+                extra = [NSString stringWithFormat:@" (arg=%@)", t];
+            }
+        } @catch (NSException *e) {}
+    }
     os_unfair_lock_lock(&lk);
     if (!seen) seen = [NSMutableDictionary dictionary];
-    NSString *k = [NSString stringWithFormat:@"%s|%s", cn, sn];
+    NSString *k = [NSString stringWithFormat:@"%s|%s|%@", cn, sn, extra];
     BOOL dup = (seen[k] != nil);
     if (!dup) { seen[k] = @YES; cnt++; }
     os_unfair_lock_unlock(&lk);
-    if (!dup) mfLog(@"[capture] MSGSEND %s -> %s", cn, sn);
+    if (!dup) mfLog(@"[capture] MSGSEND %s -> %s%@", cn, sn, extra);
 }
 
 // ===== v2.33.0: 动态解析明文钩 — 它解密后的类名/selector 名在此现形 =====
@@ -390,6 +404,7 @@ static uint32_t g_capEvents = 0;
 static uint64_t g_capNoiseBytes = 0;
 static uint64_t g_capNoiseTotal = 0;
 static uint32_t g_capSweeps = 0;
+static BOOL g_capCapLogged = NO;
 static BOOL g_capOn = NO;
 static dispatch_source_t g_capTimer;
 static double g_capT0 = 0;
@@ -739,6 +754,8 @@ static void mf_vendorAddImageCB(const struct mach_header *h, intptr_t slide) {
     }
 }
 
+static void mfCapDoSweep(void);
+
 void mfProcCaptureStart(void) {
     if (g_capOn) return;
     NSString *bid = [NSBundle mainBundle].bundleIdentifier;
@@ -838,7 +855,12 @@ void mfProcCaptureStart(void) {
                     const struct segment_command_64 *sgp = (const struct segment_command_64 *)fp;
                     BOOL isT = !strncmp(sgp->segname, "__TEXT", 16);
                     BOOL isDC = !strncmp(sgp->segname, "__DATA_CONST", 16);
-                    if ((isT || isDC) && sgp->vmsize > 0 && sgp->vmsize <= 12ULL*1024*1024
+                    // v2.35.0: RevenueCat 框架 __DATA 也收(ctor 直接写 RW 区栽指针的头号目标)
+                    char lw[256]; snprintf(lw, sizeof lw, "%s", nm);
+                    for (char *q = lw; *q; q++) if (*q >= 'A' && *q <= 'Z') *q += 32;
+                    BOOL isRC = strstr(lw, "revenuecat") != NULL;
+                    BOOL isD = !strncmp(sgp->segname, "__DATA", 16) && !isDC;
+                    if (((isT || isDC || (isD && isRC))) && sgp->vmsize > 0 && sgp->vmsize <= 12ULL*1024*1024
                         && totalSnap + sgp->vmsize <= 144ULL * 1024 * 1024) {
                         // 标准公式: abs = slide + vmaddr (v2.34.1, fh+vmaddr 在 __TEXT.vmaddr≠0 的框架上读飞)
                         intptr_t fslide = _dyld_get_image_vmaddr_slide(i);
@@ -897,9 +919,11 @@ void mfProcCaptureStart(void) {
             || [[NSUserDefaults standardUserDefaults] boolForKey:@"mfCaptureDlopen"]) {
             void *h = dlopen(kCapDylib.UTF8String, RTLD_NOW | RTLD_LOCAL);
             if (h) { mfLog(@"[capture] dlopened vendor dylib (fallback)"); mfCapLocateDylib();
-                     if (g_capDylibBase) mfCapObjcSweep();  // dlopen 后立即扫一轮: 逮 ctor 期 swizzle
+                     mfCapObjcSweep();      // ctor 期 swizzle
+                     mfCapDoSweep();        // v2.35.0: ctor 期写入现场 — 全段立即 diff(含 RC 框架 __DATA)
             }
-            else mfLog(@"[capture] vendor dylib absent (fallback ON but load failed)");
+            else { const char *de = dlerror();
+                   mfLog(@"[capture] vendor dylib dlopen FAILED: %s", de ?: "unknown"); }
         } else {
             mfLog(@"[capture] vendor dylib absent (dlopen fallback OFF) — clean-run mode");
         }
@@ -955,7 +979,16 @@ void mfProcCaptureStart(void) {
                               (uint64_t)(kCapPollSec * NSEC_PER_SEC), (uint64_t)(0.5 * NSEC_PER_SEC));
 
     dispatch_source_set_event_handler(g_capTimer, ^{
-        if (g_capEvents >= kCapMaxEvents) { dispatch_suspend(g_capTimer); return; }
+        mfCapDoSweep();
+    });
+    mfLog(@"[capture] ON segs=%d snap=%.1fMB poll=%.1fs (passive, no hooks)",
+          g_capNSeg, totalSnap / 1048576.0, kCapPollSec);
+}
+
+// v2.35.0: sweep 抽函数 — 定时器与 dlopen 后立即扫描共用
+static void mfCapDoSweep(void) {
+    {
+        if (g_capEvents >= kCapMaxEvents) return;
         g_capSweeps++;
         // 层2 优先: dylib 在进程内才巡检(被 TrollFools 移除 = 永不触发)
         if (g_capDylibBase) mfCapObjcSweep();
@@ -991,11 +1024,9 @@ void mfProcCaptureStart(void) {
                 mfLog(@"[capture] __DATA noise +0x%llx this window, total 0x%llu bytes",
                       (unsigned long long)noiseNow, (unsigned long long)g_capNoiseTotal);
         }
-        if (g_capEvents >= kCapMaxEvents) {
+        if (g_capEvents >= kCapMaxEvents && !g_capCapLogged) {
+            g_capCapLogged = YES;
             mfLog(@"[capture] event cap reached (%u), sweep stops", g_capEvents);
-            dispatch_suspend(g_capTimer);
         }
-    });
-    mfLog(@"[capture] ON segs=%d snap=%.1fMB poll=%.1fs (passive, no hooks)",
-          g_capNSeg, totalSnap / 1048576.0, kCapPollSec);
+    }
 }
