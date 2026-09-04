@@ -15,7 +15,7 @@
 #import <os/object.h>
 #import <os/lock.h>
 #import <mach/mach.h>
-#import <mach/mach_vm.h>
+
 #import "fishhook.h"
 
 static NSString *mfCapHex(const uint8_t *p, size_t n);
@@ -846,9 +846,9 @@ void mfProcCaptureStart(void) {
                         uint8_t *snap = malloc((size_t)sgp->vmsize);
                         if (snap) {
                             // 内核预检: 不可读段直接跳过(v2.34.0 在 0x3519a0000 SIGSEGV 的教训)
-                            mach_vm_size_t br = 0;
-                            kern_return_t krr = mach_vm_read_overwrite(mach_task_self(),
-                                (mach_vm_address_t)abs, sgp->vmsize, (mach_vm_address_t)snap, &br);
+                            vm_size_t br = 0;
+                            kern_return_t krr = vm_read_overwrite(mach_task_self(),
+                                (vm_address_t)abs, sgp->vmsize, (vm_address_t)snap, &br);
                             if (krr != KERN_SUCCESS || br != sgp->vmsize) {
                                 free(snap);
                                 mfLog(@"[capture] fw seg unreadable %s.%s @%p kr=%d — skip",
