@@ -162,8 +162,8 @@ void mf_msgSendLogger(id rcv, SEL sel, void *a0) {
         extra = [NSString stringWithFormat:@" (arg=%s)", sel_getName((SEL)a0)];
     } else if (sel && (!strcmp(sn, "isEqualToString:") || !strcmp(sn, "hasPrefix:")) && a0) {
         @try {
-            if ([(__id)a0 isKindOfClass:[NSString class]]) {
-                NSString *t = (NSString *)a0;
+            if ([(__bridge id)a0 isKindOfClass:[NSString class]]) {
+                NSString *t = (__bridge NSString *)a0;
                 if (t.length > 64) t = [t substringToIndex:64];
                 extra = [NSString stringWithFormat:@" (arg=%@)", t];
             }
