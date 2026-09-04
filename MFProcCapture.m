@@ -217,6 +217,22 @@ void mfProcCaptureStart(void) {
     NSString *ver = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
     if (![bid isEqualToString:kCapBID] || ![ver isEqualToString:kCapVersion]) return;
 
+    // v2.28.0: Reflix 内建 debug 通道(0x7c06f4 消费点): proAccessOverride=="active"
+    //   → TCA 依赖重建注入 UnrestrictedProGateChecking(永真), 路径无 Noop 拦截。
+    //   进程内写 = 沙盒容器域(正确域; 以前 CLI defaults write 全局域=无效根因)。
+    //   TCA 初始化前落笔 → ReflixPatch dylib 不再需要。
+    {
+        NSString *dbg = @"com.reflix.debug.proAccessOverride";
+        id cur = [[NSUserDefaults standardUserDefaults] objectForKey:dbg];
+        if (![cur isKindOfClass:[NSString class]] || ![cur isEqualToString:@"active"]) {
+            [[NSUserDefaults standardUserDefaults] setObject:@"active" forKey:dbg];
+            [[NSUserDefaults standardUserDefaults] synchronize];
+            mfLog(@"[mfdbg] proAccessOverride -> active (was %@)", cur ?: @"nil");
+        } else {
+            mfLog(@"[mfdbg] proAccessOverride already active");
+        }
+    }
+
     const struct mach_header_64 *mh = NULL;
     for (uint32_t i = 0; i < _dyld_image_count(); i++) {
         const struct mach_header *h = _dyld_get_image_header(i);
@@ -283,12 +299,20 @@ void mfProcCaptureStart(void) {
     g_capT0 = [[NSDate date] timeIntervalSinceReferenceDate];
     g_capOn = YES;
     g_capSeen = [NSMutableDictionary dictionary];
-    // 层2 就位: dylib 已被注入(TrollFools)则定位之; 未注入则按开关 dlopen 兜底
+    // 层2 就位: 先拍 imp 基线(必须在 dlopen 之前! 否则 dylib ctor 期 swizzle 被基线吃掉, IMPCHG 失明)
+    mfCapBuildImpBaseline();
     mfCapLocateDylib();
     if (!g_capDylibBase) {
-        void *h = dlopen(kCapDylib.UTF8String, RTLD_NOW | RTLD_LOCAL);
-        if (h) { mfLog(@"[capture] dlopened vendor dylib (fallback)"); mfCapLocateDylib(); }
-        else mfLog(@"[capture] vendor dylib absent — imp sweep idle, mem-diff layer only");
+        // v2.28.0: dlopen 兜底默认 OFF(干净对照模式) — 开 mfCaptureDlopen 才拉尸
+        if ([[NSUserDefaults standardUserDefaults] boolForKey:@"mfCaptureDlopen"]) {
+            void *h = dlopen(kCapDylib.UTF8String, RTLD_NOW | RTLD_LOCAL);
+            if (h) { mfLog(@"[capture] dlopened vendor dylib (fallback)"); mfCapLocateDylib();
+                     if (g_capDylibBase) mfCapObjcSweep();  // dlopen 后立即扫一轮: 逮 ctor 期 swizzle
+            }
+            else mfLog(@"[capture] vendor dylib absent (fallback ON but load failed)");
+        } else {
+            mfLog(@"[capture] vendor dylib absent (dlopen fallback OFF) — clean-run mode");
+        }
     }
     // v2.27.1: dylib 自身 __DATA/__bss 状态区快照(激活证据层)
     if (g_capDylibBase) {
@@ -300,7 +324,9 @@ void mfProcCaptureStart(void) {
             if (lc->cmdsize < sizeof(*lc)) break;
             if (lc->cmd == LC_SEGMENT_64) {
                 const struct segment_command_64 *sgp = (const struct segment_command_64 *)dp;
-                if (!strncmp(sgp->segname, "__DATA", 16) && strncmp(sgp->segname, "__DATA_CONST", 16)) {
+                BOOL isD = !strncmp(sgp->segname, "__DATA", 16);
+                BOOL isDC = !strncmp(sgp->segname, "__DATA_CONST", 16);
+                if ((isD && !isDC) || isDC) {   // v2.28.0: __DATA_CONST 也盯(__got 自体 fishhook 隐身点)
                     mfCapSeg *sg = &g_capSegs[g_capNSeg];
                     memset(sg, 0, sizeof(*sg));
                     snprintf(sg->name, 19, "dylib.%s", sgp->segname);
@@ -319,7 +345,7 @@ void mfProcCaptureStart(void) {
             }
             dp += lc->cmdsize;
         }
-        mfCapBuildImpBaseline();   // dlopen 后立即拍 imp 基线(激活前)
+        // imp 基线已在 dlopen 之前拍完(见上) — 这里不再重复
     }
     g_capTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0,
                                         dispatch_get_global_queue(QOS_CLASS_UTILITY, 0));
