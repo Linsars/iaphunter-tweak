@@ -100,7 +100,7 @@ static kern_return_t rtPing(mach_port_t sendRight, uint32_t *replyIdOut) {
     req.ndr                  = NDR_record;
     req.arg                  = 0;
 
-    kern_return_t kr = rtSendRecv(selfTask, &req, sizeof(req), &rep, sizeof(rep), 800);
+    kern_return_t kr = rtSendRecv(mach_task_self_, &req, sizeof(req), &rep, sizeof(rep), 800);
     g_rtPings++;
     if (kr != KERN_SUCCESS) return kr;
     if (replyIdOut) *replyIdOut = rep.hdr.msgh_id;
@@ -154,8 +154,8 @@ static mach_port_t rtFindServerPort(void) {
     rtLog(@"dylib @ %p slide=0x%lx", mh, (long)slide);
 
     // 2) 解析 __DATA: 用段头 (vmaddr 相对) → 运行时地址
-    const segment_command_64 *seg = NULL;
-    const mach_header_64 *h64 = (const mach_header_64 *)mh;
+    const struct segment_command_64 *seg = NULL;
+    const struct mach_header_64 *h64 = (const struct mach_header_64 *)mh;
     uint8_t *cmd = (uint8_t *)mh + sizeof(mach_header_64);
     for (uint32_t i = 0; i < h64->ncmds; i++) {
         struct load_command *lc = (struct load_command *)cmd;
@@ -177,8 +177,8 @@ static mach_port_t rtFindServerPort(void) {
     for (uint64_t off = 0; off + 4 <= dataSize && tried < 4096; off += 4) {
         uint32_t cand = *(volatile uint32_t *)(dataBase + off);
         if (cand < 0x1000 || cand > 0x0fffffff) continue;   // port 名合理范围
-        // 任务名空间快速校验: mach_port_kernel_object 确认是 PORT
-        mach_port_kobject_type_t kotype = 0;
+        // 任务名空间快速校验: mach_port_kobject 确认是 PORT
+        unsigned int kotype = 0;
         mach_vm_address_t kaddr = 0;
         if (mach_port_kobject(mach_task_self_, cand, &kotype, &kaddr) != KERN_SUCCESS) continue;
         tried++;
