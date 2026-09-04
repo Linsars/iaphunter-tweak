@@ -75,16 +75,24 @@ static void apLog(NSString *fmt, ...) {
 }
 long mfAppPatchHits(void) { return g_apHits; }
 
-// ====== 工具: hex string <-> bytes ======
+// ====== 工具: hex string <-> bytes (纯 C 解析, 避开 SDK selector 可见性怪问题) ======
 static NSMutableData *apHexToBytes(NSString *hex) {
     NSMutableData *d = [NSMutableData data];
-    NSString *h = [[hex stringByReplacingOccurrencesOfString:@" "] lowercaseString];
-    if (h.length % 2) return d;
-    for (NSUInteger i = 0; i + 1 < h.length; i += 2) {
-        unsigned byte;
-        if (![[NSScanner scannerWithString:[h substringWithRange:NSMakeRange(i, 2)]] scanHexInt:&byte]) return [NSMutableData data];
-        [d appendBytes:&byte length:1];
+    if (![hex isKindOfClass:[NSString class]]) return d;
+    const unsigned char *s = (const unsigned char*)hex.UTF8String;
+    if (!s) return d;
+    int hi = -1; // -1 = 待高半字节
+    for (const unsigned char *p = s; *p; p++) {
+        unsigned char c = *p; int v;
+        if (c >= '0' && c <= '9') v = c - '0';
+        else if (c >= 'a' && c <= 'f') v = c - 'a' + 10;
+        else if (c >= 'A' && c <= 'F') v = c - 'A' + 10;
+        else if (c == ' ' || c == '\t' || c == '\n') continue;
+        else return [NSMutableData data]; // 非法字符
+        if (hi < 0) { hi = v; }
+        else { unsigned char b = (unsigned char)((hi << 4) | v); [d appendBytes:&b length:1]; hi = -1; }
     }
+    if (hi >= 0) return [NSMutableData data]; // 奇数长度
     return d;
 }
 static NSString *apBytesToHex(const void *bytes, NSUInteger len) {
