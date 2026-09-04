@@ -35,6 +35,7 @@ ReflixStub_FRAMEWORKS = Foundation
 ReflixStub_CFLAGS = -fobjc-arc
 ReflixStub_ARCHS = arm64 arm64e
 ReflixStub_INSTALL_PATH = /usr/local/lib
+ReflixStub_FRAMEWORKS = Foundation
 
 # AppHooks v2.4.0(原 AppStoreSpoof 扩编——指定进程注入: appstored/installd/TestFlight)
 AppHooks_FILES = MFAppStoreSpoof.m MFTestFlightHooks.m
