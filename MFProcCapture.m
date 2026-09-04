@@ -160,6 +160,18 @@ void mf_msgSendLogger(id rcv, SEL sel, void *a0) {
     NSString *extra = @"";
     if (sel && !strcmp(sn, "performSelector:") && (uintptr_t)a0 >= 0x1000) {
         extra = [NSString stringWithFormat:@" (arg=%s)", sel_getName((SEL)a0)];
+    } else if (sel && !strcmp(sn, "setSelector:") && (uintptr_t)a0 >= 0x1000) {
+        // v2.36.1: NSInvocation setSelector: 的实参 = 真正被调用的 selector(解锁调用名)
+        extra = [NSString stringWithFormat:@" (SEL=%s)", sel_getName((SEL)a0)];
+    } else if (sel && !strcmp(sn, "setTarget:") && (uintptr_t)a0 >= 0x1000) {
+        // v2.36.1: setTarget: 实参 = 解锁调用的目标对象(类名)
+        @try {
+            id t = (__bridge id)a0;
+            const char *n = object_isClass(t) ? class_getName((Class)t)
+                                              : class_getName(object_getClass(t));
+            extra = [NSString stringWithFormat:@" (target=%s%s)", n,
+                     object_isClass(t) ? " [CLASS]" : ""];
+        } @catch (NSException *e) { extra = @" (target=?)"; }
     } else if (sel && (!strcmp(sn, "isEqualToString:") || !strcmp(sn, "hasPrefix:")) && a0) {
         @try {
             if ([(__bridge id)a0 isKindOfClass:[NSString class]]) {
@@ -218,7 +230,7 @@ static Method mf_vGetInstMHook(Class c, SEL s) {
 
 static mach_msg_return_t (*g_vOrigMachMsg)(mach_msg_header_t *, mach_msg_option_t, mach_msg_size_t,
                                            mach_msg_header_t *, mach_msg_size_t, mach_port_t, mach_msg_timeout_t);
-static kern_return_t (*g_vOrigVMProtect)(vm_map_t, vm_address_t, vm_size_t, vm_prot_t);
+static kern_return_t (*g_vOrigVMProtect)(vm_map_t, vm_address_t, vm_size_t, boolean_t, vm_prot_t);
 static void *(*g_vOrigDlopen)(const char *, int);
 static void *(*g_vOrigDlsym)(void *, const char *);
 static uint32_t g_vMachCount = 0;
@@ -256,7 +268,9 @@ static void mf_vmpWatchReport(mfVMPWatch *w) {
     } @catch (NSException *e) {}
     mfLog(@"[capture] TRANSIENT-DONE %u regions changed", changes);
 }
-static kern_return_t mf_vVMProtectHook(vm_map_t map, vm_address_t addr, vm_size_t sz, vm_prot_t prot) {
+static kern_return_t mf_vVMProtectHook(vm_map_t map, vm_address_t addr, vm_size_t sz,
+                                       boolean_t set_max, vm_prot_t prot) {
+    // v2.36.1: 真实签名 5 参 — x4=set_maximum(bool), x5=new_prot(此前误把 bool 当 prot 打了 0)
     // 拍 before: 本 dylib 申请写权限且目标未在监视 → 快照
     if ((prot & VM_PROT_WRITE) && sz > 0 && sz <= (1<<20)) {
         int slot = -1;
@@ -268,8 +282,8 @@ static kern_return_t mf_vVMProtectHook(vm_map_t map, vm_address_t addr, vm_size_
             uint8_t *pre = malloc((size_t)sz);
             if (pre) { memcpy(pre, (const void *)addr, (size_t)sz);
                        g_vmpWatch[slot] = (mfVMPWatch){addr, sz, pre, 1};
-                       mfLog(@"[capture] VMPROT-WATCH armed 0x%llx size=0x%lx (pre snapshot)",
-                             (unsigned long long)addr, (unsigned long)sz); }
+                       mfLog(@"[capture] VMPROT-WATCH armed 0x%llx size=0x%lx prot=%d (pre snapshot)",
+                             (unsigned long long)addr, (unsigned long)sz, prot); }
         }
     }
     kern_return_t kr = g_vOrigVMProtect(map, addr, sz, prot);
@@ -295,8 +309,9 @@ static kern_return_t mf_vVMProtectHook(vm_map_t map, vm_address_t addr, vm_size_
         } else if (a >= 0x100000000ULL && a < 0x103000000ULL) {
             zone = "main"; off = a - 0x100000000ULL;
         }
-        mfLog(@"[capture] VMPROT #%u %s+0x%lx size=0x%lx prot=%d kr=%d",
-              seq, zone, off, (unsigned long)sz, prot, kr);
+        mfLog(@"[capture] VMPROT #%u %s+0x%lx size=0x%lx prot=%d kr=%d (raw=0x%llx setmax=%d)",
+              seq, zone, off, (unsigned long)sz, prot, kr,
+              (unsigned long long)addr, set_max);
         if (zone == (const char *)"main") {
             @try {
                 NSString *dir = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/MinisFix"];

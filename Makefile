@@ -24,13 +24,11 @@ FolderX_INSTALL_PATH = /usr/lib/TweakInject
 IAPtools_FILES = MFPanel.m MFNetworkCapture.m MFDiagnosticCleaner.m MFKeychainManager.m MFClassDump.m MFDiagnostics.m MFNetAnalyzer.m MFCryptoToolbox.m MFCryptoHooks.m MFObjCHook.m MFHostLogCapture.m MFBatteryInfo.m MFSubInject.m MFReceiptForge.m MFReflixOracle.m MFProcCapture.m fishhook.c
 IAPtools_FRAMEWORKS = UIKit Foundation Security
 IAPtools_LDFLAGS = -weak_framework UIKit -weak_framework StoreKit -weak_framework JavaScriptCore -lz
-IAPtools_CFLAGS = -fobjc-arc -Wno-everything -DMF_BUILD_VER_S='"2.36.0"'
+IAPtools_CFLAGS = -fobjc-arc -Wno-everything -DMF_BUILD_VER_S='"2.36.1"'
 IAPtools_ARCHS = arm64 arm64e
 IAPtools_INSTALL_PATH = /usr/lib/TweakInject
 
-# v2.36.0: stub 永久顶替 — app 只验伴侣存在性(2.34.1/2.35.0 实测), 真品退役(归档 reven-recon/*.archive)
-after-stage::
-	$(ECHO_NOTHING)cp -f $(THEOS_STAGING_DIR)/usr/local/lib/ReflixStub.dylib $(THEOS_STAGING_DIR)/usr/lib/MinisFix/ReflixPatch-3.0.5.dylib$(ECHO_END)
+# v2.36.1: 捕获模式 — 真品回场(add_image 预武装抓 ctor 调用实参), stub 判决已由 16:52/2.36.0 两轮完成
 
 # v2.34.0: 假说 B 判决件 — 空 stub dylib(存在性检查假说的永久替代候选)
 LIBRARY_NAME = ReflixStub
