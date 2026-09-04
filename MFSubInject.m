@@ -8,6 +8,7 @@
 //      来源①: RC SDK NSUserDefaults 缓存 com.revenuecat.userdefaults.productEntitlementMapping
 //      来源②: 主二进制字符串扫 *.entitlements 后缀标识符
 //   2. lifetime 型产品进 non_subscriptions(RC 官方规范, Reven auto 策略同款), 不带 expires_date
+//   2b. v2.25.0 策略化: prefs "mfSubStrategy" = auto(缺省)/lifetime_sub/year/month, 订阅产品给滚动 expires_date 进 subscriptions
 
 #import "MFPanel.h"
 #import <Foundation/Foundation.h>
