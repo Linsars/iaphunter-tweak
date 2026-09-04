@@ -156,7 +156,7 @@ static BOOL apMethodPatch(NSString *clsName, NSString *selName, BOOL ret, NSStri
     if (!m) m = class_getClassMethod(cls, sel);
     if (!m) { *err = [NSString stringWithFormat:@"method %@/%@ not found", clsName, selName]; return NO; }
     // 判断原方法是否有返回值 (粗判: 类型编码首字符)
-    char retType = method_getReturnType(m)[0];
+    char retType = method_copyReturnType(m)[0];
     IMP newImp;
     if (retType == 'B' || retType == 'c') newImp = ret ? (IMP)apStubTrueB : (IMP)apStubFalseB;
     else newImp = ret ? (IMP)apStubTrue : (IMP)apStubFalse;
@@ -227,12 +227,12 @@ void mfAppPatchBoot(void) {
 // ====== 采集器: hook vm_protect, 抓外部补丁器的写入 ======
 // 原理: ReflixPatch 等外部补丁器写 __text 前必调 vm_protect(task, addr, len, 0, 0x13)
 // 我们截下 (addr,size), 在写入前后 diff 主程序内存 → 点位落盘
-static kern_return_t (*g_orig_vm_protect)(vm_map_t, vm_address_t, vm_size_t, BOOL, vm_protect_t);
+static kern_return_t (*g_orig_vm_protect)(vm_map_t, vm_address_t, vm_size_t, BOOL, vm_prot_t);
 static NSMutableData *g_collSnap = nil;   // 抓到的区域前快照
 static vm_address_t g_collAddr = 0;
 static vm_size_t g_collSize = 0;
 
-static kern_return_t my_vm_protect(vm_map_t task, vm_address_t addr, vm_size_t size, BOOL set_max, vm_protect_t prot) {
+static kern_return_t my_vm_protect(vm_map_t task, vm_address_t addr, vm_size_t size, BOOL set_max, vm_prot_t prot) {
     kern_return_t r = g_orig_vm_protect(task, addr, size, set_max, prot);
     if (task == mach_task_self() && (prot & VM_PROT_WRITE) && !g_collSnap) {
         uintptr_t base = apMainImageBase();
@@ -288,7 +288,7 @@ void apInstallCollectors(void) {
     if (g_apCollInstalled) return;
     if (!mfAppPatchCollIsOn()) return;
     // fishhook 全局 rebind (项目自带 fishhook.h/fishhook.c)
-    g_orig_vm_protect = (kern_return_t (*)(vm_map_t, vm_address_t, vm_size_t, BOOL, vm_protect_t))dlsym(RTLD_DEFAULT, "vm_protect");
+    g_orig_vm_protect = (kern_return_t (*)(vm_map_t, vm_address_t, vm_size_t, BOOL, vm_prot_t))dlsym(RTLD_DEFAULT, "vm_protect");
     if (!g_orig_vm_protect) return;
     struct rebinding rb = { "vm_protect", (void*)my_vm_protect, (void**)&g_orig_vm_protect };
     rebind_symbols(&rb, 1);
@@ -318,6 +318,8 @@ NSArray *mfAppPatchLogLines(void) {
 long mfAppPatchCollHits(void) { return g_apCollHits; }
 
 // ====== 页面 UI: 实验模拟 → AppPatch 子页 ======
+// MFPanelCtrl 定义在 MFPanel.m — 此处最小前向声明让 category 可编译, 运行时指向真类
+@interface MFPanelCtrl : NSObject @end
 @interface MFPanelCtrl (AppPatch)
 - (void)mfAPSwitchChanged:(UISwitch *)sw;
 - (void)mfAPCollSwitchChanged:(UISwitch *)sw;
