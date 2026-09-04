@@ -97,6 +97,9 @@ void mfReflixOracleStart(void) {
     NSString *ver = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
     if (![bid isEqualToString:kOracleBID] || ![ver isEqualToString:kOracleVersion]) return;
 
+    // v2.26.1: A/B 实测 dylib 已退役(mock 独立亮) — oracle dlopen 退役, 默认不再拉尸入膛
+    if (![[NSUserDefaults standardUserDefaults] boolForKey:@"mfOracleEnabled"]) return;
+
     // Locate the actual MH_EXECUTE main binary image
     const struct mach_header_64 *mh = NULL;
     intptr_t slide = 0;
