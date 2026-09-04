@@ -156,7 +156,7 @@ void mfProcCaptureStart(void) {
     __block uint8_t *bbase = (uint8_t *)mh;
     __block uint64_t btext = textVM;
 
-    dispatch_source_set_event_handler(^{
+    dispatch_source_set_event_handler(g_capTimer, ^{
         if (g_capEvents >= kCapMaxEvents) { dispatch_suspend(g_capTimer); return; }
         for (int s = 0; s < g_capNSeg; s++) {
             mfCapSeg *sg = &g_capSegs[s];
