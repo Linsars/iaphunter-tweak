@@ -217,11 +217,8 @@ void mfProcCaptureStart(void) {
     NSString *ver = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
     if (![bid isEqualToString:kCapBID] || ![ver isEqualToString:kCapVersion]) return;
 
-    // v2.28.0: Reflix 内建 debug 通道(0x7c06f4 消费点): proAccessOverride=="active"
-    //   → TCA 依赖重建注入 UnrestrictedProGateChecking(永真), 路径无 Noop 拦截。
-    //   进程内写 = 沙盒容器域(正确域; 以前 CLI defaults write 全局域=无效根因)。
-    //   TCA 初始化前落笔 → ReflixPatch dylib 不再需要。
-    {
+    // v2.28.1: debug 通道已证伪(2.28.0 实测写入正确域仍不亮) — 默认关, 别污染采集对照
+    if ([[NSUserDefaults standardUserDefaults] boolForKey:@"mfDebugOverride"]) {
         NSString *dbg = @"com.reflix.debug.proAccessOverride";
         id cur = [[NSUserDefaults standardUserDefaults] objectForKey:dbg];
         if (![cur isKindOfClass:[NSString class]] || ![cur isEqualToString:@"active"]) {
@@ -303,8 +300,9 @@ void mfProcCaptureStart(void) {
     mfCapBuildImpBaseline();
     mfCapLocateDylib();
     if (!g_capDylibBase) {
-        // v2.28.0: dlopen 兜底默认 OFF(干净对照模式) — 开 mfCaptureDlopen 才拉尸
-        if ([[NSUserDefaults standardUserDefaults] boolForKey:@"mfCaptureDlopen"]) {
+        // v2.28.1: dlopen 兜底默认 ON(采集工作模式 — 增强采集需要 dylib 在场被逮)
+        if ([[NSUserDefaults standardUserDefaults] objectForKey:@"mfCaptureDlopen"] == nil
+            || [[NSUserDefaults standardUserDefaults] boolForKey:@"mfCaptureDlopen"]) {
             void *h = dlopen(kCapDylib.UTF8String, RTLD_NOW | RTLD_LOCAL);
             if (h) { mfLog(@"[capture] dlopened vendor dylib (fallback)"); mfCapLocateDylib();
                      if (g_capDylibBase) mfCapObjcSweep();  // dlopen 后立即扫一轮: 逮 ctor 期 swizzle
