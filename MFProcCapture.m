@@ -91,6 +91,117 @@ static void mfCapInstallMachTap(const struct mach_header_64 *mh, intptr_t slide)
     mfLog(@"[capture] main-image mach_msg rebind: %d (hook=%p)", r, g_origMachMsg);
 }
 
+// v2.32.0: mach_msg2 — iOS 16+ 新 ABI, 独立符号(v2.31.0 实测主二进制 mach_msg 零流量后的补网)
+static mach_msg_return_t (*g_origMachMsg2)(mach_msg_header_t *, mach_msg_option_t, mach_msg_size_t,
+                                           mach_msg_header_t *, mach_msg_size_t, mach_port_t, mach_msg_timeout_t);
+static mach_msg_return_t mf_machMsg2Hook(mach_msg_header_t *msg, mach_msg_option_t option,
+        mach_msg_size_t send_size, mach_msg_header_t *rcv_msg, mach_msg_size_t rcv_limit,
+        mach_port_t notify, mach_msg_timeout_t timeout) {
+    mach_msg_return_t kr = g_origMachMsg2(msg, option, send_size, rcv_msg, rcv_limit, notify, timeout);
+    if (msg && (msg->msgh_bits & MACH_SEND_MSG) && mf_licReqId(msg->msgh_id) && g_machCapCount < 32) {
+        os_unfair_lock_lock(&g_machLock);
+        int seq = ++g_machCapCount;
+        os_unfair_lock_unlock(&g_machLock);
+        mf_machDump("REQ2", seq, msg);
+        if (rcv_msg && (kr == MACH_MSG_SUCCESS || kr == 0)) mf_machDump("REP2", seq, rcv_msg);
+        else mfLog(@"[capture] MACH2REQ #%d id=0x%x kr=0x%x (no reply)", seq, msg->msgh_id, kr);
+    }
+    return kr;
+}
+
+// ===== 层7: vendor dylib 自身 syscall 窃听 — 服务端循环/页权限/动态加载全上报 =====
+// 它导入 40 符号: mach_msg_server 起服务线程, vm_protect 解锁 main __TEXT 尾(0x2c8c000 v2.20 实录),
+// dlopen/dlsym 动态加载, NSClassFromString/NSSelectorFromString 动态调任意 API。
+// 客户端消息最终都会抵达服务端 — 从 dylib 侧的 mach_msg 抓, 一张网兜住全部收发。
+static mach_msg_return_t (*g_vOrigMachMsg)(mach_msg_header_t *, mach_msg_option_t, mach_msg_size_t,
+                                           mach_msg_header_t *, mach_msg_size_t, mach_port_t, mach_msg_timeout_t);
+static kern_return_t (*g_vOrigVMProtect)(vm_map_t, vm_address_t, vm_size_t, vm_prot_t);
+static void *(*g_vOrigDlopen)(const char *, int);
+static void *(*g_vOrigDlsym)(void *, const char *);
+static uint32_t g_vMachCount = 0;
+static uint32_t g_vVMCount = 0;
+static os_unfair_lock g_vLock = OS_UNFAIR_LOCK_INIT;
+
+static kern_return_t mf_vVMProtectHook(vm_map_t map, vm_address_t addr, vm_size_t sz, vm_prot_t prot) {
+    kern_return_t kr = g_vOrigVMProtect(map, addr, sz, prot);
+    os_unfair_lock_lock(&g_vLock);
+    uint32_t seq = ++g_vVMCount;
+    os_unfair_lock_unlock(&g_vLock);
+    if (seq <= 24 && sz <= (1<<20)) {
+        // 目标在主二进制内? 换算镜像偏移(主 __TEXT vm 0x100000000 起)
+        uintptr_t a = (uintptr_t)addr;
+        const char *zone = "ext";
+        unsigned long off = 0;
+        if (g_capDylibBase && a >= (uintptr_t)g_capDylibBase && a < (uintptr_t)g_capDylibBase + g_capDylibSize) {
+            zone = "dylib"; off = a - (uintptr_t)g_capDylibBase;
+        } else if (a >= 0x100000000ULL && a < 0x103000000ULL) {
+            zone = "main"; off = a - 0x100000000ULL;
+        }
+        mfLog(@"[capture] VMPROT #%u %s+0x%lx size=0x%lx prot=%d kr=%d",
+              seq, zone, off, (unsigned long)sz, prot, kr);
+        if (zone == (const char *)"main") {
+            @try {
+                NSString *dir = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/MinisFix"];
+                NSDictionary *r = @{@"zone":@"main", @"addr":[NSString stringWithFormat:@"0x%lx", off],
+                                    @"size":[NSString stringWithFormat:@"0x%lx", (unsigned long)sz],
+                                    @"prot":@(prot), @"kr":@(kr), @"seq":@(seq)};
+                NSData *d = [NSJSONSerialization dataWithJSONObject:r options:NSJSONWritingPrettyPrinted error:nil];
+                if (d) [d writeToFile:[NSString stringWithFormat:@"%@/mfcap_vmprot_%u.json", dir, seq]
+                            atomically:YES];
+            } @catch (NSException *e) {}
+        }
+    }
+    return kr;
+}
+
+static mach_msg_return_t mf_vMachMsgHook(mach_msg_header_t *msg, mach_msg_option_t option,
+        mach_msg_size_t send_size, mach_msg_header_t *rcv_msg, mach_msg_size_t rcv_limit,
+        mach_port_t notify, mach_msg_timeout_t timeout) {
+    mach_msg_return_t kr = g_vOrigMachMsg(msg, option, send_size, rcv_msg, rcv_limit, notify, timeout);
+    // 服务端视角: 收到的(req)和发出的(rep)都可能是 license 流量 — 全记, id 白名单外只记摘要
+    os_unfair_lock_lock(&g_vLock);
+    uint32_t seq = ++g_vMachCount;
+    os_unfair_lock_unlock(&g_vLock);
+    if (seq <= 48) {
+        BOOL lic = msg && (mf_licReqId(msg->msgh_id) || mf_licRepId(msg->msgh_id));
+        BOOL rcvLic = rcv_msg && (mf_licReqId(rcv_msg->msgh_id) || mf_licRepId(rcv_msg->msgh_id));
+        if (lic || rcvLic) {
+            if (msg && (option & MACH_SEND_MSG)) mf_machDump("vREQ", seq, msg);
+            if (rcv_msg && (kr == MACH_MSG_SUCCESS || kr == 0)) mf_machDump("vREP", seq, rcv_msg);
+        } else {
+            uint32_t sid = msg ? msg->msgh_id : 0, rid = rcv_msg ? rcv_msg->msgh_id : 0;
+            if (sid || rid) mfLog(@"[capture] vMACH #%u opt=0x%x send_id=0x%x rcv_id=0x%x kr=0x%x",
+                                  seq, option, sid, rid, kr);
+        }
+    }
+    return kr;
+}
+
+static void *mf_vDlopenHook(const char *path, int mode) {
+    void *h = g_vOrigDlopen(path, mode);
+    mfLog(@"[capture] vDLOPEN %s -> %p", path ?: @"(null)", h);
+    return h;
+}
+static void *mf_vDlsymHook(void *h, const char *name) {
+    void *p = g_vOrigDlsym(h, name);
+    mfLog(@"[capture] vDLSYM %s -> %p", name ?: @"(null)", p);
+    return p;
+}
+
+static void mfCapTapVendorDylib(void) {
+    if (!g_capDylibBase || g_vOrigMachMsg) return;
+    // dylib 镜像 slide: 段 vmaddr 从 0 起 → slide = 实际加载地址
+    struct rebinding rbs[] = {
+        {"mach_msg",   (void *)mf_vMachMsgHook,   (void **)&g_vOrigMachMsg},
+        {"vm_protect", (void *)mf_vVMProtectHook, (void **)&g_vOrigVMProtect},
+        {"dlopen",     (void *)mf_vDlopenHook,    (void **)&g_vOrigDlopen},
+        {"dlsym",      (void *)mf_vDlsymHook,     (void **)&g_vOrigDlsym},
+    };
+    int r = rebind_symbols_image((void *)g_capDylibBase, (intptr_t)g_capDylibBase, rbs, 4);
+    mfLog(@"[capture] vendor-dylib syscall tap: %d (mach_msg=%p vm_protect=%p)",
+          r, g_vOrigMachMsg, g_vOrigVMProtect);
+}
+
 static NSString *const kCapBID = @"com.magicgroot.gooby";
 static NSString *const kCapVersion = @"3.0.5";
 static NSString *const kCapDylib = @"/var/jb/usr/lib/MinisFix/ReflixPatch-3.0.5.dylib";
@@ -558,8 +669,15 @@ void mfProcCaptureStart(void) {
     mfCapInstallInvocationTap();
     mfCapInstallUDTap();
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{ mfCapScanMainBinary(); });
-    // v2.30.0: 层5 — 主二进制 mach_msg 重绑(license 客户端握手双向捕获)
-    if (mh) mfCapInstallMachTap(mh, mainSlide);
+    // v2.30.0: 层5 — 主二进制 mach_msg/mach_msg2 重绑(license 客户端握手双向捕获)
+    if (mh) {
+        mfCapInstallMachTap(mh, mainSlide);
+        struct rebinding rb2 = {"mach_msg2", (void *)mf_machMsg2Hook, (void **)&g_origMachMsg2};
+        int r2 = rebind_symbols_image((void *)mh, mainSlide, &rb2, 1);
+        mfLog(@"[capture] main-image mach_msg2 rebind: %d (hook=%p)", r2, g_origMachMsg2);
+    }
+    // v2.32.0: 层7 — vendor dylib 自身 syscall 窃听(服务端循环视角)
+    mfCapTapVendorDylib();
     g_capTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0,
                                         dispatch_get_global_queue(QOS_CLASS_UTILITY, 0));
     dispatch_source_set_timer(g_capTimer,
