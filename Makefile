@@ -10,7 +10,7 @@ export SYSROOT = $(THEOS)/sdks/iPhoneOS14.5.sdk
 include $(THEOS)/makefiles/common.mk
 
 # v2.5.0 按「注入目标」分类(真相源: ARCHITECTURE.md,架构变动必须同步更新它)
-TWEAK_NAME = FolderX AppHooks IAPtools CompatPatcher
+TWEAK_NAME = FolderX AppHooks IAPtools CompatPatcher ReflixStub
 
 # FolderX(SpringBoard: 文件夹变色 + 系统增强[充电限制/Wi-Fi永连])
 FolderX_FILES = $(filter-out MFPanel.m MFNetworkCapture.m MFAppStoreSpoof.m MFTestFlightHooks.m MFKeychainManager.m MFClassDump.m MFDiagnostics.m MFNetAnalyzer.m MFCryptoToolbox.m MFCryptoHooks.m MFObjCHook.m MFHostLogCapture.m MFBatteryInfo.m MFDiagnosticCleaner.m MFSubInject.m MFReceiptForge.m MFReflixOracle.m MFAppPatch.m MFProcCapture.m, $(wildcard *.xm *.m *.mm))
@@ -24,9 +24,17 @@ FolderX_INSTALL_PATH = /usr/lib/TweakInject
 IAPtools_FILES = MFPanel.m MFNetworkCapture.m MFDiagnosticCleaner.m MFKeychainManager.m MFClassDump.m MFDiagnostics.m MFNetAnalyzer.m MFCryptoToolbox.m MFCryptoHooks.m MFObjCHook.m MFHostLogCapture.m MFBatteryInfo.m MFSubInject.m MFReceiptForge.m MFReflixOracle.m MFProcCapture.m fishhook.c
 IAPtools_FRAMEWORKS = UIKit Foundation Security
 IAPtools_LDFLAGS = -weak_framework UIKit -weak_framework StoreKit -weak_framework JavaScriptCore -lz
-IAPtools_CFLAGS = -fobjc-arc -Wno-everything -DMF_BUILD_VER_S='"2.33.0"'
+IAPtools_CFLAGS = -fobjc-arc -Wno-everything -DMF_BUILD_VER_S='"2.34.0"'
 IAPtools_ARCHS = arm64 arm64e
 IAPtools_INSTALL_PATH = /usr/lib/TweakInject
+
+# v2.34.0: 假说 B 判决件 — 空 stub dylib(存在性检查假说的永久替代候选)
+LIBRARY_NAME = ReflixStub
+ReflixStub_FILES = ReflixStub.m
+ReflixStub_FRAMEWORKS = Foundation
+ReflixStub_CFLAGS = -fobjc-arc
+ReflixStub_ARCHS = arm64 arm64e
+ReflixStub_INSTALL_PATH = /usr/local/lib
 
 # AppHooks v2.4.0(原 AppStoreSpoof 扩编——指定进程注入: appstored/installd/TestFlight)
 AppHooks_FILES = MFAppStoreSpoof.m MFTestFlightHooks.m

@@ -208,8 +208,63 @@ static uint32_t g_vMachCount = 0;
 static uint32_t g_vVMCount = 0;
 static os_unfair_lock g_vLock = OS_UNFAIR_LOCK_INIT;
 
+// v2.34.0: 瞬时补丁抓取 — 授权 RW 时拍 before, 收回写权限时拍 after, diff = 瞬时 patch 字节
+typedef struct { vm_address_t addr; vm_size_t size; uint8_t *pre; int active; } mfVMPWatch;
+static mfVMPWatch g_vmpWatch[8];
+static void mf_vmpWatchReport(mfVMPWatch *w) {
+    uint32_t changes = 0;
+    @try {
+        for (uint64_t i = 0; i < w->size;) {
+            if (w->pre[i] == ((const uint8_t *)w->addr)[i]) { i++; continue; }
+            uint64_t st = i;
+            while (i < w->size && w->pre[i] != ((const uint8_t *)w->addr)[i]) i++;
+            if (changes < 16) {
+                mfLog(@"[capture] TRANSIENT @0x%llx+0x%llx len=%llu %s→%s",
+                      (unsigned long long)w->addr + st, (unsigned long long)st,
+                      (unsigned long long)(i - st),
+                      mfCapHex(w->pre + st, 16), mfCapHex((const uint8_t *)w->addr + st, 16));
+                @try {
+                    NSString *dir = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/MinisFix"];
+                    NSDictionary *r = @{@"addr":[NSString stringWithFormat:@"0x%llx", w->addr + st],
+                                        @"len":@(i - st),
+                                        @"before":mfCapHex(w->pre + st, 64),
+                                        @"after":mfCapHex((const uint8_t *)w->addr + st, 64)};
+                    NSData *d = [NSJSONSerialization dataWithJSONObject:r options:NSJSONWritingPrettyPrinted error:nil];
+                    if (d) [d writeToFile:[NSString stringWithFormat:@"%@/mfcap_transient_%u_%llu.json",
+                                dir, g_vVMCount, (unsigned long long)st] atomically:YES];
+                } @catch (NSException *e) {}
+            }
+            changes++;
+        }
+    } @catch (NSException *e) {}
+    mfLog(@"[capture] TRANSIENT-DONE %u regions changed", changes);
+}
 static kern_return_t mf_vVMProtectHook(vm_map_t map, vm_address_t addr, vm_size_t sz, vm_prot_t prot) {
+    // 拍 before: 本 dylib 申请写权限且目标未在监视 → 快照
+    if ((prot & VM_PROT_WRITE) && sz > 0 && sz <= (1<<20)) {
+        int slot = -1;
+        for (int i = 0; i < 8; i++) {
+            if (g_vmpWatch[i].active && g_vmpWatch[i].addr == addr && g_vmpWatch[i].size == sz) { slot = -2; break; }
+            if (!g_vmpWatch[i].active && slot < 0) slot = i;
+        }
+        if (slot >= 0) {
+            uint8_t *pre = malloc((size_t)sz);
+            if (pre) { memcpy(pre, (const void *)addr, (size_t)sz);
+                       g_vmpWatch[slot] = (mfVMPWatch){addr, sz, pre, 1};
+                       mfLog(@"[capture] VMPROT-WATCH armed 0x%llx size=0x%lx (pre snapshot)",
+                             (unsigned long long)addr, (unsigned long)sz); }
+        }
+    }
     kern_return_t kr = g_vOrigVMProtect(map, addr, sz, prot);
+    // 拍 after: 同区域收回写权限 → diff 上报
+    if (!(prot & VM_PROT_WRITE)) {
+        for (int i = 0; i < 8; i++) {
+            if (g_vmpWatch[i].active && g_vmpWatch[i].addr == addr && g_vmpWatch[i].size == sz) {
+                mf_vmpWatchReport(&g_vmpWatch[i]);
+                free(g_vmpWatch[i].pre); g_vmpWatch[i] = (mfVMPWatch){0};
+            }
+        }
+    }
     os_unfair_lock_lock(&g_vLock);
     uint32_t seq = ++g_vVMCount;
     os_unfair_lock_unlock(&g_vLock);
@@ -326,7 +381,7 @@ typedef struct {
     char name[20];
 } mfCapSeg;
 
-static mfCapSeg g_capSegs[8];
+static mfCapSeg g_capSegs[32];
 static int g_capNSeg = 0;
 static uint32_t g_capEvents = 0;
 static uint64_t g_capNoiseBytes = 0;
@@ -619,6 +674,68 @@ static void mfCapLocateDylib(void) {
     }
 }
 
+// v2.34.0: add_image 回调 — dyld 在映射+bind 完、initializer 之前触发本回调
+// 这里武装 vendor 全套 GOT 钩(msgSend 蹦床/vm_protect/mach/解析明文) + 预 ctor 段快照
+// → 它 ctor 的每一步都从我们的钩子里过(此前 380ms 暗窗的补丁)
+static void mf_vendorAddImageCB(const struct mach_header *h, intptr_t slide) {
+    @try {
+        if (g_capDylibBase) return;   // 已定位(仅一次)
+        const char *nm = NULL;
+        for (uint32_t i = 0; i < _dyld_image_count(); i++) {
+            if ((const void *)_dyld_get_image_header(i) == (const void *)h) { nm = _dyld_get_image_name(i); break; }
+        }
+        if (!nm || !strstr(nm, "ReflixPatch")) return;
+        const struct mach_header_64 *mh = (const struct mach_header_64 *)h;
+        if (mh->magic != MH_MAGIC_64) return;
+        g_capDylibBase = (uint8_t *)h;
+        const uint8_t *p = (const uint8_t *)(mh + 1);
+        uint64_t end = 0;
+        for (uint32_t k = 0; k < mh->ncmds; k++) {
+            const struct load_command *lc = (const struct load_command *)p;
+            if (lc->cmdsize < sizeof(*lc)) break;
+            if (lc->cmd == LC_SEGMENT_64) {
+                const struct segment_command_64 *sg = (const struct segment_command_64 *)p;
+                if (sg->vmaddr + sg->vmsize > end) end = sg->vmaddr + sg->vmsize;
+            }
+            p += lc->cmdsize;
+        }
+        g_capDylibSize = end ?: 0x1e4000;
+        // 预 ctor 段快照(此后它 ctor 写自身状态 = 可见)
+        const uint8_t *dp = (const uint8_t *)(mh + 1);
+        for (uint32_t k = 0; k < mh->ncmds && g_capNSeg < 32; k++) {
+            const struct load_command *lc = (const struct load_command *)dp;
+            if (lc->cmdsize < sizeof(*lc)) break;
+            if (lc->cmd == LC_SEGMENT_64) {
+                const struct segment_command_64 *sgp = (const struct segment_command_64 *)dp;
+                BOOL isD = !strncmp(sgp->segname, "__DATA", 16);
+                BOOL isDC = !strncmp(sgp->segname, "__DATA_CONST", 16);
+                if (((isD && !isDC) || isDC) && sgp->vmsize > 0 && sgp->vmsize <= 2ULL*1024*1024 && g_capNSeg < 30) {
+                    mfCapSeg *sg = &g_capSegs[g_capNSeg];
+                    memset(sg, 0, sizeof(*sg));
+                    snprintf(sg->name, 19, "dylib.%s", sgp->segname);
+                    sg->base = sg->absBase = (uint8_t *)h + sgp->vmaddr;
+                    sg->vmaddr = sgp->vmaddr;
+                    sg->fileoff = sgp->fileoff;
+                    sg->size = sgp->vmsize;
+                    sg->noisy = NO;
+                    sg->baseline = malloc((size_t)sgp->vmsize);
+                    if (sg->baseline) {
+                        memcpy(sg->baseline, sg->absBase, (size_t)sgp->vmsize);
+                        g_capNSeg++;
+                    }
+                }
+            }
+            dp += lc->cmdsize;
+        }
+        // 武装全部 GOT 钩 — 此刻它的 initializer 还没跑
+        mfCapTapVendorDylib();
+        mfLog(@"[capture] ★ VENDOR PRE-ARMED @%p size=0x%llx (pre-ctor, initializer not yet run)",
+              h, (unsigned long long)g_capDylibSize);
+    } @catch (NSException *e) {
+        mfLog(@"[capture] add_image cb exception: %@", e);
+    }
+}
+
 void mfProcCaptureStart(void) {
     if (g_capOn) return;
     NSString *bid = [NSBundle mainBundle].bundleIdentifier;
@@ -669,7 +786,7 @@ void mfProcCaptureStart(void) {
 
     const uint8_t *p = (const uint8_t *)(mh + 1);
     uint64_t totalSnap = 0;
-    for (uint32_t i = 0; i < mh->ncmds && g_capNSeg < 8; i++) {
+    for (uint32_t i = 0; i < mh->ncmds && g_capNSeg < 32; i++) {
         const struct load_command *lc = (const struct load_command *)p;
         if (lc->cmdsize < sizeof(*lc)) break;
         if (lc->cmd == LC_SEGMENT_64) {
@@ -678,7 +795,7 @@ void mfProcCaptureStart(void) {
             BOOL isDC   = !strncmp(sgp->segname, "__DATA_CONST", 16);
             BOOL isData = !strncmp(sgp->segname, "__DATA", 16) && !isDC;
             if ((isText || isDC || isData) && sgp->vmsize > 0 &&
-                totalSnap + sgp->vmsize <= 96ULL * 1024 * 1024) {
+                totalSnap + sgp->vmsize <= 144ULL * 1024 * 1024) {
                 uint8_t *abs = (uint8_t *)((uintptr_t)mh + (sgp->vmaddr - textVM));
                 uint8_t *snap = malloc((size_t)sgp->vmsize);
                 if (snap) {
@@ -701,6 +818,48 @@ void mfProcCaptureStart(void) {
         }
         p += lc->cmdsize;
     }
+    // v2.34.0: 内嵌框架段快照 — patch 可能打在 RC/TCA 框架(此前从未监视)
+    {
+        uint32_t fwCount = 0;
+        for (uint32_t i = 0; i < _dyld_image_count() && g_capNSeg < 32; i++) {
+            const char *nm = _dyld_get_image_name(i);
+            if (!nm || !strstr(nm, "/Frameworks/")) continue;
+            const struct mach_header_64 *fh = (const struct mach_header_64 *)_dyld_get_image_header(i);
+            if (!fh || fh->magic != MH_MAGIC_64) continue;
+            const uint8_t *fp = (const uint8_t *)(fh + 1);
+            const char *bn = strrchr(nm, '/');
+            for (uint32_t k = 0; k < fh->ncmds && g_capNSeg < 32; k++) {
+                const struct load_command *lc = (const struct load_command *)fp;
+                if (lc->cmdsize < sizeof(*lc)) break;
+                if (lc->cmd == LC_SEGMENT_64) {
+                    const struct segment_command_64 *sgp = (const struct segment_command_64 *)fp;
+                    BOOL isT = !strncmp(sgp->segname, "__TEXT", 16);
+                    BOOL isDC = !strncmp(sgp->segname, "__DATA_CONST", 16);
+                    if ((isT || isDC) && sgp->vmsize > 0 && sgp->vmsize <= 12ULL*1024*1024
+                        && totalSnap + sgp->vmsize <= 144ULL * 1024 * 1024) {
+                        uint8_t *abs = (uint8_t *)((uintptr_t)fh + (sgp->vmaddr - fh->vmaddr));
+                        uint8_t *snap = malloc((size_t)sgp->vmsize);
+                        if (snap) {
+                            mfCapSeg *sg = &g_capSegs[g_capNSeg];
+                            memset(sg, 0, sizeof(*sg));
+                            snprintf(sg->name, 19, "fw%s.%s", bn ? bn : "?", sgp->segname);
+                            sg->base = sg->absBase = abs;
+                            sg->baseline = snap;
+                            sg->size = sgp->vmsize;
+                            sg->vmaddr = sgp->vmaddr;
+                            sg->fileoff = sgp->fileoff;
+                            sg->noisy = NO;
+                            memcpy(snap, abs, (size_t)sgp->vmsize);
+                            totalSnap += sgp->vmsize;
+                            g_capNSeg++; fwCount++;
+                        }
+                    }
+                }
+                fp += lc->cmdsize;
+            }
+        }
+        mfLog(@"[capture] framework segments snapshotted: %u", fwCount);
+    }
     if (!g_capNSeg) { mfLog(@"[capture] no segments snapshotted"); return; }
 
     g_capT0 = [[NSDate date] timeIntervalSinceReferenceDate];
@@ -708,6 +867,14 @@ void mfProcCaptureStart(void) {
     g_capSeen = [NSMutableDictionary dictionary];
     // 层2 就位: 先拍 imp 基线(必须在 dlopen 之前! 否则 dylib ctor 期 swizzle 被基线吃掉, IMPCHG 失明)
     mfCapBuildImpBaseline();
+    // v2.34.0: 窃听链整体提前 — invocation/UD tap 必须先于 vendor ctor 就位
+    g_invSeen = [NSMutableDictionary dictionary];
+    mfCapInstallInvocationTap();
+    mfCapInstallUDTap();
+    // v2.34.0 核心: add_image 回调 — dyld 映射完镜像、initializer 执行之前触发
+    //   回调里武装 vendor 全套 GOT 钩 + 预 ctor 段快照 → 它 ctor 的每一步都在监视下
+    _dyld_register_func_for_add_image(mf_vendorAddImageCB);
+    mfLog(@"[capture] add_image callback registered (pre-dlopen)");
     mfCapLocateDylib();
     if (!g_capDylibBase) {
         // v2.28.1: dlopen 兜底默认 ON(采集工作模式 — 增强采集需要 dylib 在场被逮)
@@ -727,7 +894,7 @@ void mfProcCaptureStart(void) {
         const uint8_t *dp = (const uint8_t *)g_capDylibBase;
         const struct mach_header_64 *dh = (const struct mach_header_64 *)g_capDylibBase;
         dp = (const uint8_t *)(dh + 1);
-        for (uint32_t k = 0; k < dh->ncmds && g_capNSeg < 8; k++) {
+        for (uint32_t k = 0; k < dh->ncmds && g_capNSeg < 32; k++) {
             const struct load_command *lc = (const struct load_command *)dp;
             if (lc->cmdsize < sizeof(*lc)) break;
             if (lc->cmd == LC_SEGMENT_64) {
@@ -755,10 +922,7 @@ void mfProcCaptureStart(void) {
         }
         // imp 基线已在 dlopen 之前拍完(见上) — 这里不再重复
     }
-    // v2.29.0: 审讯层 — NSInvocation 窃听 + 主二进制引用扫描
-    g_invSeen = [NSMutableDictionary dictionary];
-    mfCapInstallInvocationTap();
-    mfCapInstallUDTap();
+    // v2.29.0: 审讯层 — 主二进制引用扫描(invocation/UD 窃听已提前到 dlopen 之前, v2.34.0)
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{ mfCapScanMainBinary(); });
     // v2.30.0: 层5 — 主二进制 mach_msg/mach_msg2 重绑(license 客户端握手双向捕获)
     if (mh) {
