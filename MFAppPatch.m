@@ -228,79 +228,168 @@ void mfAppPatchBoot(void) {
 }
 
 // ==================================================================
-// 采集器 v2.21: 纯被动周期快照 diff
-// v2.20 教训: fishhook rebind vm_protect 会把自己的帧塞进外部补丁器的
-// backtrace → ReflixPatch 反 hook 检测命中 → abort (2026-09-04 实测崩溃)
-// 改法: 不碰任何函数, 只周期性快照主程序可写段 + 与首拍比对, 有变化即记录
+// 采集器 v2.22: 磁盘文件基线 + 内存对照 (被动, 零 hook)
+// v2.21 教训: 内存首拍在 ctor 才拍, 而 TrollFools 注入的补丁 dylib
+// 初始化更早 — patch 在基线之前就打完了, 内存 diff 永远是 0 (假阴性)
+// 破法: ReflixiOS 二进制文件 = 原始字节 (主程序 vmaddr偏移==文件偏移),
+// 文件区段 vs 内存同偏移对照, 何时打的 patch 都能现形
 // ==================================================================
 BOOL mfAppPatchCollIsOn(void) { return mfPrefBool(@"mfAppPatchCollector", NO); }
 
 static dispatch_source_t g_collTimer = nil;
-static NSData *g_collBase = nil;      // 首拍 (__TEXT 全量)
+static NSData *g_collBase = nil;      // 内存首拍 (__TEXT 全量, 第二层)
 static uintptr_t g_collBaseAddr = 0;
 static NSUInteger g_collBaseLen = 0;
+
+// 磁盘基线区: {off(文件/vm偏移), len, fileBytes}
+typedef struct { uint64_t off; uint64_t len; NSData *fileBytes; } ApWatchRegion;
+static ApWatchRegion g_watch[8];
+static int g_watchN = 0;
+
+static NSData *apReadFileRange(NSString *path, uint64_t off, uint64_t len) {
+    NSFileHandle *fh = [NSFileHandle fileHandleForReadingAtPath:path];
+    if (!fh) return nil;
+    NSData *d = nil;
+    @try {
+        [fh seekToFileOffset:(unsigned long long)off];
+        NSData *raw = [fh readDataOfLength:(NSUInteger)len];
+        if (raw.length == len) d = raw;
+    } @catch (NSException *e) { d = nil; }
+    @finally { [fh closeFile]; }
+    return d;
+}
+
+static NSData *apReadMemRange(uintptr_t addr, NSUInteger len) {
+    vm_offset_t data = 0; mach_msg_type_number_t size = 0;
+    kern_return_t kr = vm_read(mach_task_self(), addr, len, &data, &size);
+    if (kr != KERN_SUCCESS || size != len) { if (data) vm_deallocate(mach_task_self(), data, size); return nil; }
+    NSData *d = [NSData dataWithBytes:(void*)data length:size];
+    vm_deallocate(mach_task_self(), data, size);
+    return d;
+}
+
+static void apCaptureToJSON(NSArray *diffs, NSString *source) {
+    if (!diffs.count) return;
+    g_apCollHits += diffs.count;
+    NSMutableDictionary *rec = [NSMutableDictionary new];
+    rec[@"bid"] = apCurBundleID(); rec[@"ver"] = apCurVersion();
+    rec[@"captured"] = [NSDate date]; rec[@"source"] = source;
+    rec[@"patches"] = diffs;
+    NSString *path = @"/var/mobile/Documents/mf_patch_capture.json";
+    NSArray *old = [NSJSONSerialization JSONObjectWithData:[[NSFileManager defaultManager] contentsAtPath:path] options:0 error:nil] ?: @[];
+    NSMutableArray *all = [old mutableCopy] ?: [NSMutableArray new];
+    [all addObject:rec];
+    NSData *out = [NSJSONSerialization dataWithJSONObject:all options:NSJSONWritingPrettyPrinted error:nil];
+    [out writeToFile:path atomically:YES];
+    NSString *firstOff = diffs[0][@"off"] ?: @"?";
+    apLog(@"[采集] ✓ %lu 处 (%@, 首址 %@) → mf_patch_capture.json", (unsigned long)diffs.count, source, firstOff);
+}
+
+static NSArray *apDiffBytes(const unsigned char *a, const unsigned char *b, NSUInteger len) {
+    NSMutableArray *diffs = [NSMutableArray new];
+    NSUInteger i = 0;
+    while (i < len) {
+        if (a[i] != b[i]) {
+            NSUInteger s = i;
+            while (i < len && a[i] != b[i]) i++;
+            if (diffs.count < 64) {
+                [diffs addObject:@{@"off": [NSString stringWithFormat:@"0x%lx", (unsigned long)s],
+                                   @"old": apBytesToHex(a + s, i - s),
+                                   @"new": apBytesToHex(b + s, i - s)}];
+            }
+        } else i++;
+    }
+    return diffs;
+}
 
 void apInstallCollectors(void) {
     if (g_apCollInstalled) return;
     if (!mfAppPatchCollIsOn()) return;
     g_collBaseAddr = apMainImageBase();
     if (!g_collBaseAddr) return;
-    // 快照 __TEXT 整段 (主程序第一个 LC_SEGMENT_64, filesize 内)
+
+    // 主程序磁盘路径
     const struct mach_header_64 *mh = (const struct mach_header_64*)g_collBaseAddr;
-    uint64_t textFileSize = 0;
+    NSString *diskPath = nil;
+    uint64_t textFileLen = 0;
     uint8_t *p = (uint8_t*)mh + sizeof(struct mach_header_64);
     for (uint32_t i = 0; i < mh->ncmds; i++) {
         struct load_command *lc = (struct load_command*)p;
         if (lc->cmd == LC_SEGMENT_64) {
             struct segment_command_64 *seg = (struct segment_command_64*)p;
-            if (strncmp(seg->segname, "__TEXT", 16) == 0) { textFileSize = seg->filesize; break; }
+            if (strncmp(seg->segname, "__TEXT", 16) == 0) textFileLen = seg->filesize;
         }
         p += lc->cmdsize;
     }
-    if (!textFileSize || textFileSize > 96ull*1024*1024) return;
-    g_collBaseLen = (NSUInteger)textFileSize;
-    @try {
-        g_collBase = [NSData dataWithBytes:(void*)g_collBaseAddr length:g_collBaseLen];
-    } @catch (NSException *e) { return; }
-    apLog(@"[采集] 首拍 __TEXT 0x%lx (%lu B) — 周期 2s diff", (unsigned long)g_collBaseAddr, (unsigned long)g_collBaseLen);
+    uint32_t icount = _dyld_image_count();
+    for (uint32_t i = 0; i < icount; i++) {
+        if ((uintptr_t)_dyld_get_image_header(i) == g_collBaseAddr) {
+            const char *nm = _dyld_get_image_name(i);
+            if (nm) diskPath = [NSString stringWithUTF8String:nm];
+            break;
+        }
+    }
+    apLog(@"[采集] main=0x%lx disk=%@ __TEXT.filelen=0x%llx", (unsigned long)g_collBaseAddr, diskPath ?: @"?", textFileLen);
+
+    // 观察区: prefs mfAppPatchWatch 覆盖, 默认 = v2.20 实测抓到的 vm_protect 目标
+    NSString *watch = mfReadPrefObj(@"mfAppPatchWatch") ?: @"0x2c8c000:0x108";
+    if (![watch isKindOfClass:[NSString class]]) watch = @"0x2c8c000:0x108";
+    NSArray *parts = [watch componentsSeparatedByString:@","];
+    for (NSString *part in parts) {
+        if (g_watchN >= 8) break;
+        NSArray *kv = [part componentsSeparatedByString:@":"];
+        if (kv.count != 2) continue;
+        unsigned long long off = strtoull([kv[0] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]].UTF8String, NULL, 16);
+        unsigned long long len = strtoull([kv[1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]].UTF8String, NULL, 16);
+        if (!len || len > 0x100000 || off >= textFileLen || off + len > textFileLen) continue;
+        NSData *fb = diskPath ? apReadFileRange(diskPath, off, len) : nil;
+        if (!fb) { apLog(@"[采集] 区间 0x%llx 读盘失败, 跳过", off); continue; }
+        g_watch[g_watchN].off = off; g_watch[g_watchN].len = len; g_watch[g_watchN].fileBytes = fb;
+        g_watchN++;
+        // 装载即对照: patch 若在基线前已打, 此刻现形
+        NSData *mem = apReadMemRange(g_collBaseAddr + off, (NSUInteger)len);
+        if (!mem) { apLog(@"[采集] 区间 0x%llx 内存读失败", off); continue; }
+        if (![mem isEqualToData:fb]) {
+            NSArray *diffs = apDiffBytes(fb.bytes, mem.bytes, (NSUInteger)len);
+            apLog(@"[采集] 区间 0x%llx 装载即有差异 (patch 先于基线)!", off);
+            apCaptureToJSON(diffs, @"file-baseline@install");
+        } else {
+            apLog(@"[采集] 区间 0x%llx 当前与磁盘一致, 持续监视", off);
+        }
+    }
+
+    // 第二层: __TEXT 全量内存首拍 (捕捉基线后的任何写入)
+    if (textFileLen && textFileLen <= 96ull*1024*1024) {
+        g_collBaseLen = (NSUInteger)textFileLen;
+        @try { g_collBase = [NSData dataWithBytes:(void*)g_collBaseAddr length:g_collBaseLen]; }
+        @catch (NSException *e) { g_collBase = nil; }
+        if (g_collBase) apLog(@"[采集] 内存首拍 __TEXT (%lu B) — 2s 周期", (unsigned long)g_collBaseLen);
+    }
 
     g_collTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0));
     dispatch_source_set_timer(g_collTimer, dispatch_walltime(NULL, 0), 2.0 * NSEC_PER_SEC, 0.5 * NSEC_PER_SEC);
     dispatch_source_set_event_handler(g_collTimer, ^{
-        if (!g_collBase) return;
         @autoreleasepool {
-            NSData *now = nil;
-            @try { now = [NSData dataWithBytes:(void*)g_collBaseAddr length:g_collBaseLen]; }
-            @catch (NSException *e) { return; }
-            if ([now isEqualToData:g_collBase]) return;
-            const unsigned char *b = g_collBase.bytes;
-            const unsigned char *n = now.bytes;
-            NSMutableArray *diffs = [NSMutableArray new];
-            NSUInteger i = 0;
-            while (i < g_collBaseLen) {
-                if (b[i] != n[i]) {
-                    NSUInteger s = i;
-                    while (i < g_collBaseLen && b[i] != n[i]) i++;
-                    if (diffs.count < 64) {
-                        [diffs addObject:@{@"off": [NSString stringWithFormat:@"0x%lx", (unsigned long)s],
-                                           @"old": apBytesToHex(b + s, i - s),
-                                           @"new": apBytesToHex(n + s, i - s)}];
-                    }
-                } else i++;
+            // 层1: 观察区 (文件基线)
+            for (int i = 0; i < g_watchN; i++) {
+                NSData *mem = apReadMemRange(g_collBaseAddr + (NSUInteger)g_watch[i].off, (NSUInteger)g_watch[i].len);
+                if (!mem) continue;
+                if (![mem isEqualToData:g_watch[i].fileBytes]) {
+                    NSArray *diffs = apDiffBytes(g_watch[i].fileBytes.bytes, mem.bytes, (NSUInteger)g_watch[i].len);
+                    apCaptureToJSON(diffs, @"file-baseline@poll");
+                    g_watch[i].fileBytes = mem; // 更新为当前, 避免重复报
+                }
             }
-            if (diffs.count) {
-                g_apCollHits += diffs.count;
-                NSMutableDictionary *rec = [NSMutableDictionary new];
-                rec[@"bid"] = apCurBundleID(); rec[@"ver"] = apCurVersion();
-                rec[@"captured"] = [NSDate date]; rec[@"patches"] = diffs;
-                NSString *path = @"/var/mobile/Documents/mf_patch_capture.json";
-                NSArray *old = [NSJSONSerialization JSONObjectWithData:[[NSFileManager defaultManager] contentsAtPath:path] options:0 error:nil] ?: @[];
-                NSMutableArray *all = [old mutableCopy] ?: [NSMutableArray new];
-                [all addObject:rec];
-                NSData *out = [NSJSONSerialization dataWithJSONObject:all options:NSJSONWritingPrettyPrinted error:nil];
-                [out writeToFile:path atomically:YES];
-                apLog(@"[采集] ✓ %lu 处变化 → mf_patch_capture.json (首址 0x%lx)", (unsigned long)diffs.count, (unsigned long)[[diffs[0] objectForKey:@"off"] longLongValue]);
-                g_collBase = now; // 更新基线, 后续 diff 相对当前
+            // 层2: __TEXT 全量 (内存基线)
+            if (g_collBase) {
+                NSData *now = nil;
+                @try { now = [NSData dataWithBytes:(void*)g_collBaseAddr length:g_collBaseLen]; }
+                @catch (NSException *e) { return; }
+                if (![now isEqualToData:g_collBase]) {
+                    NSArray *diffs = apDiffBytes(g_collBase.bytes, now.bytes, g_collBaseLen);
+                    apCaptureToJSON(diffs, @"mem-baseline@poll");
+                    g_collBase = now;
+                }
             }
         }
     });
