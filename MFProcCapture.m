@@ -59,6 +59,80 @@ static double g_capT0 = 0;
 // imp 基线快照: "cls|sel" -> imp(主二进制类, ctor 时拍) — diff 出任意 imp 变化
 static NSMutableDictionary *g_impSnap;
 
+// ===== 层3: NSInvocation 窃听 — dylib 唯一明文手法面(13 个 selector 全是 invocation 链) =====
+static IMP g_origInvoke = NULL, g_origInvokeWTH = NULL;
+static NSMutableDictionary *g_invSeen;
+static uint32_t g_invCount = 0;
+
+static void mfCapLogInv(NSInvocation *inv, const char *via) {
+    if (g_invCount >= 200) return;
+    @try {
+        id t = [inv target];
+        SEL s = [inv selector];
+        if (!t) return;
+        NSString *cls = NSStringFromClass([t class]);
+        NSString *sel = s ? NSStringFromSelector(s) : @"?";
+        NSString *key = [NSString stringWithFormat:@"%@|%@|%s", cls, sel, via];
+        if (g_invSeen[key]) return;
+        g_invSeen[key] = @YES;
+        g_invCount++;
+        const char *img = class_getImageName([t class]);
+        const char *b = img ? strrchr(img, '/') : NULL;
+        mfLog(@"[capture] INVOKE[%s] %@ -> %@ (img=%s)", via, cls, sel, b ? b + 1 : (img ?: "?"));
+    } @catch (NSException *e) {}
+}
+static void mf_invHook(id self, SEL _cmd) {
+    mfCapLogInv((NSInvocation *)self, "invoke");
+    ((void (*)(id, SEL))g_origInvoke)(self, _cmd);
+}
+static void mf_invWTHook(id self, SEL _cmd, id target) {
+    mfCapLogInv((NSInvocation *)self, "withTarget");
+    ((void (*)(id, SEL, id))g_origInvokeWTH)(self, _cmd, target);
+}
+static void mfCapInstallInvocationTap(void) {
+    if (g_origInvoke) return;
+    Method m1 = class_getInstanceMethod([NSInvocation class], @selector(invoke));
+    Method m2 = class_getInstanceMethod([NSInvocation class], @selector(invokeWithTarget:));
+    if (m1) g_origInvoke = method_setImplementation(m1, (IMP)mf_invHook);
+    if (m2) g_origInvokeWTH = method_setImplementation(m2, (IMP)mf_invWTHook);
+    if (g_origInvoke) mfLog(@"[capture] NSInvocation tap installed");
+}
+
+// ===== 层4: 主二进制引用扫描 — "app 是查询方"模型判决(名字引用 + mach 子系统常量) =====
+static void mfCapScanMainBinary(void) {
+    @try {
+        NSString *path = [[NSBundle mainBundle] executablePath];
+        NSData *d = [NSData dataWithContentsOfFile:path];
+        if (!d) return;
+        const uint8_t *p = d.bytes;
+        NSUInteger n = d.length;
+        const char *pats[] = {"ReflixPatch", "MinisFix", "/var/jb", "proAccessOverride"};
+        for (int i = 0; i < 4; i++) {
+            size_t pl = strlen(pats[i]);
+            const uint8_t *hit = NULL;
+            for (NSUInteger off = 0; off + pl <= n; off++)
+                if (p[off] == pats[i][0] && memcmp(p + off, pats[i], pl) == 0) { hit = p + off; break; }
+            if (hit) {
+                char ctx[96] = {0};
+                NSUInteger cs = (NSUInteger)(hit - p);
+                memcpy(ctx, p + (cs > 24 ? cs - 24 : 0), MIN((NSUInteger)95, n - (cs > 24 ? cs - 24 : 0)));
+                mfLog(@"[capture] MAINBIN '%s' @0x%lx ctx=%.95s", pats[i], cs, ctx);
+            } else {
+                mfLog(@"[capture] MAINBIN '%s' absent", pats[i]);
+            }
+        }
+        // mach 子系统客户端特征: 0x965..0x967(请求) / 0x9c9..0x9cb(应答) u32 出现计数
+        const uint32_t *u = (const uint32_t *)p;
+        NSUInteger nu = n / 4;
+        uint32_t want[6] = {0x965, 0x966, 0x967, 0x9c9, 0x9ca, 0x9cb};
+        for (int i = 0; i < 6; i++) {
+            uint32_t c = 0;
+            for (NSUInteger j = 0; j < nu; j++) if (u[j] == want[i]) c++;
+            mfLog(@"[capture] MAINBIN u32 0x%x count=%u", want[i], c);
+        }
+    } @catch (NSException *e) {}
+}
+
 static void mfCapWriteEvent(const mfCapSeg *sg, uint64_t off, uint64_t len,
                             const uint8_t *cur) {
     @try {
@@ -345,6 +419,10 @@ void mfProcCaptureStart(void) {
         }
         // imp 基线已在 dlopen 之前拍完(见上) — 这里不再重复
     }
+    // v2.29.0: 审讯层 — NSInvocation 窃听 + 主二进制引用扫描
+    g_invSeen = [NSMutableDictionary dictionary];
+    mfCapInstallInvocationTap();
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{ mfCapScanMainBinary(); });
     g_capTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0,
                                         dispatch_get_global_queue(QOS_CLASS_UTILITY, 0));
     dispatch_source_set_timer(g_capTimer,
