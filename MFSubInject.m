@@ -281,20 +281,19 @@ static NSString *mfSubJSON(NSURL *u) {
             [ent appendFormat:@"%@\"%@\":{\"is_sandbox\":false,\"ownership_type\":\"PURCHASED\",\"store\":\"app_store\",\"original_purchase_date\":\"2021-11-21T17:32:12Z\",\"purchase_date\":\"2021-11-21T17:32:12Z\",\"expires_date\":null,\"product_identifier\":\"%@\"}",
              ent.length ? @"," : @"", e, lifePID];
         }
-        // v2.24.4 Round B: v2.24.0 数据体(实测亮) − 品牌两件(水印字段+management_url, Round A 证不充分)
-        // 头部也不带 x-author/x-channel (v2.24.0 亮轮本来就没有) — 数据组与品牌的干净二分
+        // v2.24.5 Round C: Round B(实测亮) − 低嫌疑组 {request_date_ms, last_seen, subscriptions{}, other_purchases{}}
+        //   保留高嫌疑组: non_subscriptions(lifetime 交易) + entitlement 购买日期
+        //   亮 = 此即最终最小集; 不亮 = 低嫌疑组藏标记 → 回退 Round B 为定版
         NSString *nonSubs = [NSString stringWithFormat:
             @"\"%@\":[{\"id\":\"lifetime_%@\",\"is_sandbox\":false,\"original_purchase_date\":\"2021-11-21T17:32:12Z\",\"purchase_date\":\"2021-11-21T17:32:12Z\",\"store\":\"app_store\",\"store_transaction_id\":\"lifetime_%@\"}]",
             lifePID, lifePID, lifePID];
         return [NSString stringWithFormat:
-            @"{\"request_date\":\"%@\",\"request_date_ms\":%lld,\"subscriber\":{"
+            @"{\"request_date\":\"%@\",\"subscriber\":{"
             @"\"entitlements\":{%@},"
-            @"\"subscriptions\":{},"
-            @"\"non_subscriptions\":{%@},\"other_purchases\":{},"
-            @"\"first_seen\":\"2024-06-10T11:12:09Z\",\"last_seen\":\"%@\","
+            @"\"non_subscriptions\":{%@},"
+            @"\"first_seen\":\"2024-06-10T11:12:09Z\","
             @"\"original_app_user_id\":\"%@\"}}",
-            nowMs, (long long)([[NSDate date] timeIntervalSince1970] * 1000),
-            ent, nonSubs, nowMs, uid];
+            nowMs, ent, nonSubs, uid];
     }
 
     if ([h isEqualToString:@"subscriptions-api.superwall.com"]) {
