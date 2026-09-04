@@ -1377,6 +1377,10 @@ extern long mfSubInjectHits(void);
 extern BOOL mfSubInjectIsOn(void);
 extern long mfReceiptForgeHits(void);
 extern BOOL mfReceiptForgeIsOn(void);
+// v2.20.0 AppPatch 进程层引擎 (MFAppPatch.m)
+extern void mfAppPatchSectionInLabPage(UIView *page, CGFloat *yio);
+extern long mfAppPatchHits(void);
+extern long mfAppPatchCollHits(void);
 
 static UIView *mfSubSwitchRow(UIView *page, CGFloat y, NSString *title,
                               BOOL on, SEL action, NSString *status) {
@@ -1429,6 +1433,10 @@ void mfShowLabPage(void) {
     [scan setTitle:@"🔍 去扫描购买" forState:UIControlStateNormal];
     [scan addTarget:g_mfCtrl action:@selector(mfShowScanPage) forControlEvents:UIControlEventTouchUpInside];
     [page addSubview:scan];
+
+    // —— AppPatch 进程层引擎 (v2.20.0, ReflixPatch 逆向回流) ——
+    CGFloat apy = 344;
+    mfAppPatchSectionInLabPage(page, &apy);
 
     mfPushPage(page);
 }
@@ -2365,6 +2373,9 @@ __attribute__((constructor)) static void MinisFixCtor(void) {
         mfObjCHookApplySilent();
         mfSubInjectAutoStart();
         mfReceiptForgeAutoStart();
+        // v2.20.0: AppPatch 进程层引擎 (ReflixPatch 逆向回流, 实验模拟页开关控制)
+        extern void mfAppPatchBoot(void);
+        mfAppPatchBoot();
 
         // 手势注册
         Class vcCls = NSClassFromString(@"UIViewController");

@@ -11,10 +11,46 @@
 
 #import "MFPanel.h"
 #import <Foundation/Foundation.h>
+#import "fishhook.h"
+#import <Security/Security.h>
 
 static BOOL g_subOn = NO;
 static IMP orig_dtReq = NULL, orig_dtURL = NULL;
 static long g_subHits = 0;
+
+#pragma mark - Trusted Entitlements / 客户端验签通杀绕过
+
+// 1. SecKeyRawVerify / SecKeyVerifySignature: 当 SDK 调用底层 Security.framework 验签时恒真放行
+static OSStatus (*orig_SecKeyRawVerify)(SecKeyRef, SecPadding, const uint8_t *, size_t, const uint8_t *, size_t) = NULL;
+static OSStatus my_SecKeyRawVerify(SecKeyRef key, SecPadding padding, const uint8_t *signedData, size_t signedDataLen, const uint8_t *sig, size_t sigLen) {
+    if (g_subOn) {
+        mfLog(@"[subinject] SecKeyRawVerify bypassed");
+        return errSecSuccess;
+    }
+    return orig_SecKeyRawVerify ? orig_SecKeyRawVerify(key, padding, signedData, signedDataLen, sig, sigLen) : errSecSuccess;
+}
+
+static Boolean (*orig_SecKeyVerifySignature)(SecKeyRef, SecKeyAlgorithm, CFDataRef, CFDataRef, CFErrorRef *) = NULL;
+static Boolean my_SecKeyVerifySignature(SecKeyRef key, SecKeyAlgorithm algorithm, CFDataRef signedData, CFDataRef signature, CFErrorRef *error) {
+    if (g_subOn) {
+        mfLog(@"[subinject] SecKeyVerifySignature bypassed");
+        if (error) *error = NULL;
+        return true;
+    }
+    return orig_SecKeyVerifySignature ? orig_SecKeyVerifySignature(key, algorithm, signedData, signature, error) : true;
+}
+
+static void mfInstallSecurityBypass(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        struct rebinding rebs[] = {
+            {"SecKeyRawVerify", (void *)my_SecKeyRawVerify, (void **)&orig_SecKeyRawVerify},
+            {"SecKeyVerifySignature", (void *)my_SecKeyVerifySignature, (void **)&orig_SecKeyVerifySignature}
+        };
+        rebind_symbols(rebs, sizeof(rebs) / sizeof(rebs[0]));
+        mfLog(@"[subinject] Security framework signature verification rebound");
+    });
+}
 
 #pragma mark - 商品 ID 源(SK1 扫描列表)
 
@@ -218,24 +254,22 @@ static NSString *mfSubJSON(NSURL *u) {
         if (!subIDs.count && !lifeIDs.count) [subIDs addObject:pid0];
 
         NSMutableString *subs = [NSMutableString string];
-        for (NSString *pid in subIDs)
-            [subs appendFormat:@"%@{\"%@\":{\"is_sandbox\":false,\"ownership_type\":\"PURCHASED\",\"store\":\"app_store\",\"original_purchase_date\":\"%@\",\"purchase_date\":\"%@\",\"expires_date\":\"%@\"}}",
+        for (NSString *pid in subIDs) {
+            [subs appendFormat:@"%@\"%@\":{\"is_sandbox\":false,\"ownership_type\":\"PURCHASED\",\"store\":\"app_store\",\"original_purchase_date\":\"%@\",\"purchase_date\":\"%@\",\"expires_date\":\"%@\"}",
              subs.length ? @"," : @"", pid, now, now, far];
+        }
         NSMutableString *nonSubs = [NSMutableString string];
-        for (NSString *pid in lifeIDs)
-            [nonSubs appendFormat:@"%@{\"%@\":{\"is_sandbox\":false,\"ownership_type\":\"PURCHASED\",\"store\":\"app_store\",\"original_purchase_date\":\"%@\",\"purchase_date\":\"%@\",\"price\":0}}",
-             nonSubs.length ? @"," : @"", pid, now, now];
-        // entitlements: 每个 ent 名绑定全部产品(订阅型给 expires, 无订阅型产品时 isLifetime 语义由 non_subscriptions 兜底)
+        for (NSString *pid in lifeIDs) {
+            [nonSubs appendFormat:@"%@\"%@\":[{\"is_sandbox\":false,\"ownership_type\":\"PURCHASED\",\"store\":\"app_store\",\"original_purchase_date\":\"%@\",\"purchase_date\":\"%@\",\"id\":\"mf0001\",\"product_id\":\"%@\",\"price\":0}]",
+             nonSubs.length ? @"," : @"", pid, now, now, pid];
+        }
+        // entitlements: 每个 ent 名绑定全部产品
         NSMutableString *ent = [NSMutableString string];
         for (NSString *e in ents) {
             NSString *bind = subIDs.firstObject ?: lifeIDs.firstObject ?: pid0;
             BOOL isLife = lifeIDs.count && !subIDs.count;
-            [ent appendFormat:@"%@{\"%@\":{\"is_sandbox\":false,\"ownership_type\":\"PURCHASED\",\"store\":\"app_store\",\"original_purchase_date\":\"%@\",\"purchase_date\":\"%@\",\"expires_date\":\"%@\",\"product_identifier\":\"%@\"}}",
-             ent.length ? @"," : @"", e, now, now, isLife ? (NSString *)nil : far, bind];
-            if (isLife) { // lifetime 型: RC 规范 expires_date 为 null
-                NSRange r = [ent rangeOfString:@"\"expires_date\":(null)"];
-                if (r.location != NSNotFound) [ent replaceCharactersInRange:r withString:@"\"expires_date\":null"];
-            }
+            [ent appendFormat:@"%@\"%@\":{\"is_sandbox\":false,\"ownership_type\":\"PURCHASED\",\"store\":\"app_store\",\"original_purchase_date\":\"%@\",\"purchase_date\":\"%@\",\"expires_date\":%@,\"product_identifier\":\"%@\"}",
+             ent.length ? @"," : @"", e, now, now, isLife ? @"null" : [NSString stringWithFormat:@"\"%@\"", far], bind];
         }
         return [NSString stringWithFormat:
             @"{\"request_date\":\"%@\",\"request_date_ms\":%lld,\"subscriber\":{"
@@ -304,9 +338,14 @@ static void mfSubDeliver(NSURL *u, void (^h)(NSData *, NSURLResponse *, NSError 
     g_subHits++;
     NSString *json = mfSubJSON(u);
     NSData *d = [json dataUsingEncoding:NSUTF8StringEncoding];
+    NSDictionary *headers = @{
+        @"Content-Type": @"application/json",
+        @"X-RevenueCat-ETag": @"\"mf-etag-2099\"",
+        @"X-Platform": @"iOS"
+    };
     NSHTTPURLResponse *r = [[NSHTTPURLResponse alloc] initWithURL:u statusCode:200
                                                      HTTPVersion:@"HTTP/1.1"
-                                                 headerFields:@{@"Content-Type": @"application/json"}];
+                                                 headerFields:headers];
     mfLog(@"[subinject] #%ld mock %@%@", g_subHits, u.host, u.path);
     h(d, r, nil);
 }
@@ -332,6 +371,7 @@ static id mf_dtURL(id self, SEL _cmd, NSURL *u, void (^handler)(NSData *, NSURLR
 
 void mfSubInjectEnable(void) {
     if (g_subOn) return;
+    mfInstallSecurityBypass();
     Class c = [NSURLSession class];
     Method m1 = class_getInstanceMethod(c, @selector(dataTaskWithRequest:completionHandler:));
     Method m2 = class_getInstanceMethod(c, @selector(dataTaskWithURL:completionHandler:));
