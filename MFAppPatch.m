@@ -21,7 +21,6 @@
 #import <UIKit/UIKit.h>
 #import <mach/mach.h>
 #import <mach/vm_map.h>
-#import <mach/vm_protect.h>
 #import <mach-o/dyld.h>
 #import <dlfcn.h>
 #import <objc/runtime.h>
