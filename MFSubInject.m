@@ -281,12 +281,16 @@ static NSString *mfSubJSON(NSURL *u) {
             [ent appendFormat:@"%@\"%@\":{\"expires_date\":null,\"product_identifier\":\"%@\"}",
              ent.length ? @"," : @"", e, lifePID];
         }
+        // v2.24.3 Round A: 最小骨架 + 品牌水印组 (二分定位 RP 认的标记)
+        //   body: 水印字段 + management_url=t.me; header: x-author/x-channel (Reven 抓包全带)
         return [NSString stringWithFormat:
             @"{\"request_date\":\"%@\","
             @"\"subscriber\":{"
             @"\"entitlements\":{%@},"
             @"\"first_seen\":\"2024-06-10T11:12:09Z\","
-            @"\"original_app_user_id\":\"%@\"}}",
+            @"\"original_app_user_id\":\"%@\","
+            @"\"management_url\":\"https://t.me/Jsforbaby\"},"
+            @"\"加入作者频道\":\"https://t.me/Jsforbaby\"}",
             nowMs, ent, uid];
     }
 
@@ -348,9 +352,12 @@ static void mfSubDeliver(NSURL *u, void (^h)(NSData *, NSURLResponse *, NSError 
     NSString *json = mfSubJSON(u);
     NSData *d = [json dataUsingEncoding:NSUTF8StringEncoding];
     NSDictionary *headers = @{
+        // v2.24.3: RC host 响应头镜像 Reven (x-author/x-channel) — 品牌标记二分 Round A
         @"Content-Type": @"application/json",
         @"X-RevenueCat-ETag": @"\"mf-etag-2099\"",
-        @"X-Platform": @"iOS"
+        @"X-Platform": @"iOS",
+        @"x-author": @"@ios151",
+        @"x-channel": @"https://t.me/Jsforbaby"
     };
     NSHTTPURLResponse *r = [[NSHTTPURLResponse alloc] initWithURL:u statusCode:200
                                                      HTTPVersion:@"HTTP/1.1"
