@@ -16,7 +16,7 @@
 static NSString *const kCapBID = @"com.magicgroot.gooby";
 static NSString *const kCapVersion = @"3.0.5";
 static NSString *const kCapDylib = @"/var/jb/usr/lib/MinisFix/ReflixPatch-3.0.5.dylib";
-static const NSTimeInterval kCapPollSec = 2.0;
+static const NSTimeInterval kCapPollSec = 0.5;   // v2.27.1: 2s→0.5s 逮瞬时 swizzle
 static const uint32_t kCapMaxEvents = 256;
 
 static NSString *mfCapHex(const uint8_t *p, size_t n) {
@@ -38,8 +38,9 @@ static NSString *mfCapHex(const uint8_t *p, size_t n) {
 typedef struct {
     uint8_t *base;           // 运行期内存基址(mh 相对寻址算好, 主二进制进程内永不卸载)
     uint8_t *baseline;       // ctor 时刻快照(预触发)
+    uint8_t *absBase;        // 绝对地址(sweep 用)
     uint64_t size;
-    uint64_t vmaddr;         // unslid vmaddr(报告坐标用)
+    uint64_t vmaddr;         // 报告坐标: 主程序=unslid vmaddr, dylib 段=镜像相对偏移
     uint64_t fileoff;        // 段文件偏移(报告坐标用)
     BOOL noisy;              // __DATA = 噪声层, 只计数
     char name[20];
@@ -49,9 +50,14 @@ static mfCapSeg g_capSegs[8];
 static int g_capNSeg = 0;
 static uint32_t g_capEvents = 0;
 static uint64_t g_capNoiseBytes = 0;
+static uint64_t g_capNoiseTotal = 0;
+static uint32_t g_capSweeps = 0;
 static BOOL g_capOn = NO;
 static dispatch_source_t g_capTimer;
 static double g_capT0 = 0;
+
+// imp 基线快照: "cls|sel" -> imp(主二进制类, ctor 时拍) — diff 出任意 imp 变化
+static NSMutableDictionary *g_impSnap;
 
 static void mfCapWriteEvent(const mfCapSeg *sg, uint64_t off, uint64_t len,
                             const uint8_t *cur) {
@@ -104,11 +110,14 @@ static void mfCapRecordSwizzle(NSString *cls, NSString *sel, uintptr_t imp) {
 
 static void mfCapObjcSweep(void) {
     if (!g_capDylibBase) return;
+    NSString *mainPath = [[NSBundle mainBundle] executablePath] ?: @"";
     unsigned int ncls = 0;
     Class *classes = objc_copyClassList(&ncls);
     if (!classes) return;
     for (unsigned int i = 0; i < ncls; i++) {
         NSString *cn = NSStringFromClass(classes[i]);
+        const char *img = class_getImageName(classes[i]);
+        BOOL isMain = img && mainPath.length && strstr(img, mainPath.fileSystemRepresentation) != NULL;
         for (int pass = 0; pass < 2; pass++) {
             Class target = pass == 0 ? classes[i] : object_getClass(classes[i]); // 实例方法/类方法
             unsigned int nm = 0;
@@ -118,11 +127,61 @@ static void mfCapObjcSweep(void) {
                 if (v >= (uintptr_t)g_capDylibBase && v < (uintptr_t)g_capDylibBase + g_capDylibSize) {
                     mfCapRecordSwizzle(cn, NSStringFromSelector(method_getName(ms[j])), v);
                 }
+                // v2.27.1 imp diff: 主二进制类的 imp 任意变化都报(瞬时 swizzle 的 0.5s 窗口捕获)
+                if (isMain && g_impSnap) {
+                    NSString *key = [NSString stringWithFormat:@"%@|%@|%@", cn,
+                                     NSStringFromSelector(method_getName(ms[j])), pass ? @"+" : @"-"];
+                    NSNumber *old = g_impSnap[key];
+                    if (old && old.unsignedLongLongValue != v) {
+                        Dl_info info; const char *zone = "unknown";
+                        if (dladdr((void *)v, &info) && info.dli_fname) {
+                            const char *b = strrchr(info.dli_fname, '/');
+                            zone = b ? b + 1 : info.dli_fname;
+                        }
+                        mfLog(@"[capture] IMPCHG %s[%@%@] 0x%llx→0x%llx zone=%s",
+                              pass ? "+" : "-", cn, NSStringFromSelector(method_getName(ms[j])),
+                              (unsigned long long)old.unsignedLongLongValue, (unsigned long long)v, zone);
+                        if (g_impSnap) g_impSnap[key] = @(v);
+                        g_capEvents++;
+                    } else if (!old) {
+                        g_impSnap[key] = @(v);
+                    }
+                }
             }
             free(ms);
         }
     }
     free(classes);
+}
+
+// imp 基线: 主二进制类全方法表(ctor, 激活前) — 只建一次
+static void mfCapBuildImpBaseline(void) {
+    if (g_impSnap) return;
+    g_impSnap = [NSMutableDictionary dictionary];
+    NSString *mainPath = [[NSBundle mainBundle] executablePath] ?: @"";
+    unsigned int ncls = 0;
+    Class *classes = objc_copyClassList(&ncls);
+    if (!classes) return;
+    unsigned long cnt = 0;
+    for (unsigned int i = 0; i < ncls; i++) {
+        const char *img = class_getImageName(classes[i]);
+        if (!img || !mainPath.length || !strstr(img, mainPath.fileSystemRepresentation)) continue;
+        NSString *cn = NSStringFromClass(classes[i]);
+        for (int pass = 0; pass < 2; pass++) {
+            Class target = pass == 0 ? classes[i] : object_getClass(classes[i]);
+            unsigned int nm = 0;
+            Method *ms = class_copyMethodList(target, &nm);
+            for (unsigned int j = 0; j < nm; j++) {
+                NSString *key = [NSString stringWithFormat:@"%@|%@|%@", cn,
+                                 NSStringFromSelector(method_getName(ms[j])), pass ? @"+" : @"-"];
+                g_impSnap[key] = @((unsigned long long)method_getImplementation(ms[j]));
+                cnt++;
+            }
+            free(ms);
+        }
+    }
+    free(classes);
+    mfLog(@"[capture] imp baseline: %lu methods of main-binary classes", cnt);
 }
 
 static void mfCapLocateDylib(void) {
@@ -203,7 +262,7 @@ void mfProcCaptureStart(void) {
                     mfCapSeg *sg = &g_capSegs[g_capNSeg];
                     memset(sg, 0, sizeof(*sg));
                     strncpy(sg->name, sgp->segname, 19);
-                    sg->base = abs;
+                    sg->base = sg->absBase = abs;
                     sg->baseline = snap;
                     sg->size = sgp->vmsize;
                     sg->vmaddr = sgp->vmaddr;
@@ -231,21 +290,53 @@ void mfProcCaptureStart(void) {
         if (h) { mfLog(@"[capture] dlopened vendor dylib (fallback)"); mfCapLocateDylib(); }
         else mfLog(@"[capture] vendor dylib absent — imp sweep idle, mem-diff layer only");
     }
+    // v2.27.1: dylib 自身 __DATA/__bss 状态区快照(激活证据层)
+    if (g_capDylibBase) {
+        const uint8_t *dp = (const uint8_t *)g_capDylibBase;
+        const struct mach_header_64 *dh = (const struct mach_header_64 *)g_capDylibBase;
+        dp = (const uint8_t *)(dh + 1);
+        for (uint32_t k = 0; k < dh->ncmds && g_capNSeg < 8; k++) {
+            const struct load_command *lc = (const struct load_command *)dp;
+            if (lc->cmdsize < sizeof(*lc)) break;
+            if (lc->cmd == LC_SEGMENT_64) {
+                const struct segment_command_64 *sgp = (const struct segment_command_64 *)dp;
+                if (!strncmp(sgp->segname, "__DATA", 16) && strncmp(sgp->segname, "__DATA_CONST", 16)) {
+                    mfCapSeg *sg = &g_capSegs[g_capNSeg];
+                    memset(sg, 0, sizeof(*sg));
+                    snprintf(sg->name, 19, "dylib.%s", sgp->segname);
+                    sg->base = sg->absBase = (uint8_t *)g_capDylibBase + sgp->vmaddr;
+                    sg->vmaddr = sgp->vmaddr;       // dylib 段从 0 起 = 相对偏移
+                    sg->fileoff = sgp->fileoff;
+                    sg->size = MIN(sgp->vmsize, 2ULL * 1024 * 1024); // dylib.__DATA 0x48000 实际
+                    sg->noisy = NO;
+                    sg->baseline = malloc((size_t)sg->size);
+                    if (sg->baseline) {
+                        memcpy(sg->baseline, sg->absBase, (size_t)sg->size);
+                        g_capNSeg++;
+                        mfLog(@"[capture] dylib state watch %s off=0x%llx size=0x%llx", sg->name, sg->vmaddr, sg->size);
+                    }
+                }
+            }
+            dp += lc->cmdsize;
+        }
+        mfCapBuildImpBaseline();   // dlopen 后立即拍 imp 基线(激活前)
+    }
     g_capTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0,
                                         dispatch_get_global_queue(QOS_CLASS_UTILITY, 0));
     dispatch_source_set_timer(g_capTimer,
                               dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kCapPollSec * NSEC_PER_SEC)),
                               (uint64_t)(kCapPollSec * NSEC_PER_SEC), (uint64_t)(0.5 * NSEC_PER_SEC));
-    __block uint8_t *bbase = (uint8_t *)mh;
-    __block uint64_t btext = textVM;
 
     dispatch_source_set_event_handler(g_capTimer, ^{
         if (g_capEvents >= kCapMaxEvents) { dispatch_suspend(g_capTimer); return; }
+        g_capSweeps++;
         // 层2 优先: dylib 在进程内才巡检(被 TrollFools 移除 = 永不触发)
         if (g_capDylibBase) mfCapObjcSweep();
+        uint64_t noiseNow = 0;
         for (int s = 0; s < g_capNSeg; s++) {
             mfCapSeg *sg = &g_capSegs[s];
-            uint8_t *cur = bbase + (sg->vmaddr - btext);
+            if (!sg->baseline) continue;
+            uint8_t *cur = sg->absBase;
             uint64_t hit = 0;
             for (uint64_t i = 0; i < sg->size;) {
                 if (sg->baseline[i] == cur[i]) { i++; continue; }
@@ -262,15 +353,22 @@ void mfProcCaptureStart(void) {
                     g_capEvents++;
                 }
             }
-            if (sg->noisy) g_capNoiseBytes += hit;
+            if (sg->noisy) noiseNow += hit;
             // 基线推进: 已见变化不重报(每个 patch 点只报一次)
             memcpy(sg->baseline, cur, (size_t)sg->size);
+        }
+        // v2.27.1: __DATA 噪声可见化 — 有增量就累计, 每 40 sweep(20s)汇总一次防刷屏
+        if (noiseNow > 0) {
+            g_capNoiseTotal += noiseNow;
+            if (g_capSweeps % 40 == 0)
+                mfLog(@"[capture] __DATA noise +0x%llx this window, total 0x%llu bytes",
+                      (unsigned long long)noiseNow, (unsigned long long)g_capNoiseTotal);
         }
         if (g_capEvents >= kCapMaxEvents) {
             mfLog(@"[capture] event cap reached (%u), sweep stops", g_capEvents);
             dispatch_suspend(g_capTimer);
         }
     });
-    mfLog(@"[capture] ON segs=%d snap=%.1fMB poll=%.0fs (passive, no hooks)",
+    mfLog(@"[capture] ON segs=%d snap=%.1fMB poll=%.1fs (passive, no hooks)",
           g_capNSeg, totalSnap / 1048576.0, kCapPollSec);
 }
