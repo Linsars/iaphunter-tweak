@@ -156,11 +156,11 @@ static mach_port_t rtFindServerPort(void) {
     // 2) 解析 __DATA: 用段头 (vmaddr 相对) → 运行时地址
     const struct segment_command_64 *seg = NULL;
     const struct mach_header_64 *h64 = (const struct mach_header_64 *)mh;
-    uint8_t *cmd = (uint8_t *)mh + sizeof(mach_header_64);
+    uint8_t *cmd = (uint8_t *)mh + sizeof(struct mach_header_64);
     for (uint32_t i = 0; i < h64->ncmds; i++) {
         struct load_command *lc = (struct load_command *)cmd;
         if (lc->cmd == LC_SEGMENT_64) {
-            segment_command_64 *sc = (segment_command_64 *)cmd;
+            struct segment_command_64 *sc = (struct segment_command_64 *)cmd;
             if (strcmp(sc->segname, "__DATA") == 0) { seg = sc; break; }
         }
         cmd += lc->cmdsize;
