@@ -937,14 +937,20 @@ void mfProcCaptureStart(void) {
     g_invSeen = [NSMutableDictionary dictionary];
     mfCapInstallInvocationTap();
     mfCapInstallUDTap();
-    // v2.37.1: 被劫持符号摸底 — 写入事件 before 值(0x1de7f93c4=libsystem 函数)对号入座
+    // v2.38.0: 被劫持符号摸底 — dladdr 反查为主, CAND 扩表为辅
     {
         const char *cands[] = {"mach_msg","mach_msg2","mach_msg_overwrite","mach_msg_send",
             "mach_port_allocate","mach_port_insert_right","mach_port_deallocate",
             "task_get_special_port","task_set_special_port","task_set_exception_ports",
-            "mach_ports_register","mach_ports_lookup","sysctlbyname","strcmp","memcmp"};
+            "mach_ports_register","mach_ports_lookup","sysctlbyname","strcmp","memcmp",
+            "mach_port_get_attributes","mach_port_set_attributes","mach_port_kobject",
+            "mach_port_extract_right","mach_port_get_context","mach_port_set_context",
+            "mach_port_request_notification","mach_port_get_set_status","mach_port_space_info",
+            "task_suspend","task_resume","task_info","thread_create","thread_get_state",
+            "thread_set_state","semaphore_create","mach_reply_port","task_self_trap",
+            "host_get_special_port","task_get_exc_ports","task_swap_exception_ports"};
         void *h = dlopen("/usr/lib/libSystem.B.dylib", RTLD_NOW | RTLD_LOCAL);
-        for (int i = 0; i < 15; i++) {
+        for (int i = 0; i < 36; i++) {
             void *p = dlsym(h, cands[i]);
             mfLog(@"[capture] CAND %s = %p", cands[i], p);
         }
@@ -1071,6 +1077,30 @@ static void mfCapDoSweep(void) {
                           g_capEvents, sg->name, sg->vmaddr + start, start,
                           (unsigned long long)len,
                           mfCapHex(sg->baseline + start, 16), mfCapHex(cur + start, 16));
+                    // v2.38.0: dladdr 反查 — 4/8 字节写入=指针劫持, 直接问 dyld 被改的是谁
+                    if (len == 4 || len == 8) {
+                        uint64_t bptr = 0, aptr = 0;
+                        if (start + 8 <= sg->size) {
+                            memcpy(&bptr, sg->baseline + start, 8);
+                            memcpy(&aptr, cur + start, 8);
+                        }
+                        if (bptr > 0x100000000ULL && aptr > 0x100000000ULL) {
+                            Dl_info bi, ai;
+                            int bh = dladdr((void*)(uintptr_t)bptr, &bi);
+                            int ah = dladdr((void*)(uintptr_t)aptr, &ai);
+                            mfLog(@"[capture] TARGET b=0x%llx [%s fbase=%p %s+0x%llx] a=0x%llx [%s fbase=%p %s+0x%llx]",
+                                  (unsigned long long)bptr,
+                                  bh && bi.dli_fname ? bi.dli_fname : "?",
+                                  bh ? bi.dli_fbase : NULL,
+                                  bh && bi.dli_sname ? bi.dli_sname : "?",
+                                  (bh && bi.dli_saddr) ? (unsigned long long)(bptr - (uintptr_t)bi.dli_saddr) : (unsigned long long)0,
+                                  (unsigned long long)aptr,
+                                  ah && ai.dli_fname ? ai.dli_fname : "?",
+                                  ah ? ai.dli_fbase : NULL,
+                                  ah && ai.dli_sname ? ai.dli_sname : "?",
+                                  (ah && ai.dli_saddr) ? (unsigned long long)(aptr - (uintptr_t)ai.dli_saddr) : (unsigned long long)0);
+                        }
+                    }
                     g_capEvents++;
                 }
             }

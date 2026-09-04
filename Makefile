@@ -28,9 +28,7 @@ IAPtools_CFLAGS = -fobjc-arc -Wno-everything -DMF_BUILD_VER_S='"2.37.1"'
 IAPtools_ARCHS = arm64 arm64e
 IAPtools_INSTALL_PATH = /usr/lib/TweakInject
 
-# v2.37.0: 真品退役 — 伴侣位由 stub 占位(存在性仪式), 解锁功能已由 isActive hook 等价接管
-after-stage::
-	$(ECHO_NOTHING)cp -f $(THEOS_STAGING_DIR)/usr/local/lib/ReflixStub.dylib $(THEOS_STAGING_DIR)/usr/lib/MinisFix/ReflixPatch-3.0.5.dylib$(ECHO_END)
+# v2.38.0: after-stage stub 覆盖删除 — 捕获轮必须带真品(2.37.x 两轮误装 stub 的根因)
 
 # v2.34.0: 假说 B 判决件 — 空 stub dylib(存在性检查假说的永久替代候选)
 LIBRARY_NAME = ReflixStub
