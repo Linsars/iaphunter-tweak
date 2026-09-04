@@ -286,7 +286,7 @@ static kern_return_t mf_vVMProtectHook(vm_map_t map, vm_address_t addr, vm_size_
                              (unsigned long long)addr, (unsigned long)sz, prot); }
         }
     }
-    kern_return_t kr = g_vOrigVMProtect(map, addr, sz, prot);
+    kern_return_t kr = g_vOrigVMProtect(map, addr, sz, set_max, prot);
     // 拍 after: 同区域收回写权限 → diff 上报
     if (!(prot & VM_PROT_WRITE)) {
         for (int i = 0; i < 8; i++) {
