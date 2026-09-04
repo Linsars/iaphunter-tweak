@@ -241,6 +241,13 @@ static BOOL mfPIDLooksLifetime(NSString *pid) {
         || [p containsString:@"one-time"] || [p containsString:@"perpetual"];
 }
 
+// v2.25.0: 滚动过期时间(订阅形态) = now+周期, RFC3339 秒级(对齐定版样本日期格式)
+static NSString *mfSubISOFuture(NSTimeInterval dt) {
+    static NSISO8601DateFormatter *f = nil;
+    if (!f) { f = [NSISO8601DateFormatter new]; f.formatOptions = NSISO8601DateFormatWithInternetDateTime; }
+    return [f stringFromDate:[NSDate dateWithTimeIntervalSinceNow:dt]];
+}
+
 #pragma mark - 响应构造
 
 static NSString *mfSubJSON(NSURL *u) {
@@ -251,17 +258,36 @@ static NSString *mfSubJSON(NSURL *u) {
     __unused NSString *far = @"2099-09-09T09:09:09Z";
 
     if (mfSubIsRCHost(h)) {
-        // v2.24.1: 最小骨架 — RC SDK 源码逐字段核对(purchases-ios CustomerInfoResponse.swift):
-        //   必须: request_date, subscriber.first_seen, original_app_user_id, entitlements[x].product_identifier
-        //   可省: request_date_ms/subscriptions/non_subscriptions/other_purchases/management_url/
-        //         entitlement 内除 product_identifier 外全部(is_sandbox/store/ownership_type SDK 不解析)
-        //   RP 载荷判断: entitlements 非空 + expires_date null(lifetime) + product_identifier=lifetime 产品
+        // v2.24.1 最小骨架(RC SDK 逐字段核对) + v2.25.0 expires_date 策略化:
+        //   auto         = 有 lifetime 产品→lifetime 形态(9字段定版); 无→订阅形态(产品进 subscriptions, expires_date 按周期滚动)
+        //   lifetime_sub = 强制 lifetime 形态(订阅产品也给 expires_date null=永不过期)
+        //   year/month   = 强制订阅形态, 固定滚动 +1年/+1月
+        // 覆盖键: 进程 prefs "mfSubStrategy"(defaults write <bundleid> mfSubStrategy month), 缺省 auto
+        NSString *strategy = [[NSUserDefaults standardUserDefaults] stringForKey:@"mfSubStrategy"];
+        if (!strategy.length) strategy = @"auto";
         NSArray *ents = mfDiscoveredEntitlements();
         if (!ents.count) ents = @[@"pro"];
-        // lifetime 优先作为 entitlement 绑定产品 (Reven auto 策略)
         NSString *lifePID = nil;
         for (NSString *pid in pids) if (mfPIDLooksLifetime(pid)) { lifePID = pid; break; }
-        if (!lifePID) lifePID = pids.firstObject ?: @"com.mf.premium.lifetime";
+        // 订阅产品挑选: 周期越长优先(年>月>周), 决定 auto 滚动步长
+        NSString *subPID = nil; int subScore = -1;
+        for (NSString *pid in pids) {
+            NSString *p = pid.lowercaseString;
+            int sc = ([p containsString:@"year"] || [p containsString:@"annual"]) ? 3
+                   : ([p containsString:@"week"]) ? 1 : 2;
+            if (sc > subScore) { subScore = sc; subPID = pid; }
+        }
+        if (!subPID) subPID = pids.firstObject ?: @"com.mf.premium.monthly";
+        BOOL subShape = [strategy isEqualToString:@"year"] || [strategy isEqualToString:@"month"]
+                      || (![strategy isEqualToString:@"lifetime_sub"] && !lifePID);
+        NSTimeInterval step = [strategy isEqualToString:@"year"] ? (NSTimeInterval)366*86400
+                            : [strategy isEqualToString:@"month"] ? (NSTimeInterval)31*86400
+                            : subScore == 3 ? (NSTimeInterval)366*86400
+                            : subScore == 1 ? (NSTimeInterval)7*86400
+                            : (NSTimeInterval)31*86400;
+        NSString *bindPID = subShape ? subPID : (lifePID ?: (pids.firstObject ?: @"com.mf.premium.lifetime"));
+        mfLog(@"[subinject] strategy=%@ shape=%@ pid=%@ step=%.0fs",
+              strategy, subShape ? @"subscription" : @"lifetime", bindPID, step);
         // 回显 uid: subscribers/<uid> 路径
         NSString *uid = @"mf-user";
         NSString *path = u.path ?: @"";
@@ -278,22 +304,37 @@ static NSString *mfSubJSON(NSURL *u) {
                            (long long)([[NSDate date] timeIntervalSince1970] * 1000) % 1000];
         NSMutableString *ent = [NSMutableString string];
         for (NSString *e in ents) {
-            [ent appendFormat:@"%@\"%@\":{\"is_sandbox\":false,\"ownership_type\":\"PURCHASED\",\"store\":\"app_store\",\"original_purchase_date\":\"2021-11-21T17:32:12Z\",\"purchase_date\":\"2021-11-21T17:32:12Z\",\"expires_date\":null,\"product_identifier\":\"%@\"}",
-             ent.length ? @"," : @"", e, lifePID];
+            NSString *exp = subShape ? [NSString stringWithFormat:@"\"%@\"", mfSubISOFuture(step)] : @"null";
+            [ent appendFormat:@"%@\"%@\":{\"is_sandbox\":false,\"ownership_type\":\"PURCHASED\",\"store\":\"app_store\",\"original_purchase_date\":\"2021-11-21T17:32:12Z\",\"purchase_date\":\"2021-11-21T17:32:12Z\",\"expires_date\":%@,\"product_identifier\":\"%@\"}",
+             ent.length ? @"," : @"", e, exp, bindPID];
         }
-        // v2.24.5 Round C: Round B(实测亮) − 低嫌疑组 {request_date_ms, last_seen, subscriptions{}, other_purchases{}}
-        //   保留高嫌疑组: non_subscriptions(lifetime 交易) + entitlement 购买日期
-        //   亮 = 此即最终最小集; 不亮 = 低嫌疑组藏标记 → 回退 Round B 为定版
-        NSString *nonSubs = [NSString stringWithFormat:
-            @"\"%@\":[{\"id\":\"lifetime_%@\",\"is_sandbox\":false,\"original_purchase_date\":\"2021-11-21T17:32:12Z\",\"purchase_date\":\"2021-11-21T17:32:12Z\",\"store\":\"app_store\",\"store_transaction_id\":\"lifetime_%@\"}]",
-            lifePID, lifePID, lifePID];
-        return [NSString stringWithFormat:
-            @"{\"request_date\":\"%@\",\"subscriber\":{"
-            @"\"entitlements\":{%@},"
-            @"\"non_subscriptions\":{%@},"
-            @"\"first_seen\":\"2024-06-10T11:12:09Z\","
-            @"\"original_app_user_id\":\"%@\"}}",
-            nowMs, ent, nonSubs, uid];
+        NSString *body;
+        if (!subShape) {
+            // lifetime 形态 = v2.24.5 定版 9 字段(实测亮, 不动)
+            NSString *nonSubs = [NSString stringWithFormat:
+                @"\"%@\":[{\"id\":\"lifetime_%@\",\"is_sandbox\":false,\"original_purchase_date\":\"2021-11-21T17:32:12Z\",\"purchase_date\":\"2021-11-21T17:32:12Z\",\"store\":\"app_store\",\"store_transaction_id\":\"lifetime_%@\"}]",
+                bindPID, bindPID, bindPID];
+            body = [NSString stringWithFormat:
+                @"{\"request_date\":\"%@\",\"subscriber\":{"
+                @"\"entitlements\":{%@},"
+                @"\"non_subscriptions\":{%@},"
+                @"\"first_seen\":\"2024-06-10T11:12:09Z\","
+                @"\"original_app_user_id\":\"%@\"}}",
+                nowMs, ent, nonSubs, uid];
+        } else {
+            // 订阅形态: expires_date 滚动未来 + 产品进 subscriptions(RC 订阅规范位), 无 non_subscriptions
+            NSString *subs = [NSString stringWithFormat:
+                @"\"%@\":{\"expires_date\":\"%@\",\"original_purchase_date\":\"2021-11-21T17:32:12Z\",\"purchase_date\":\"2021-11-21T17:32:12Z\",\"store\":\"app_store\",\"is_sandbox\":false,\"ownership_type\":\"PURCHASED\",\"period_type\":\"normal\",\"auto_renew_status\":true}",
+                bindPID, mfSubISOFuture(step)];
+            body = [NSString stringWithFormat:
+                @"{\"request_date\":\"%@\",\"subscriber\":{"
+                @"\"entitlements\":{%@},"
+                @"\"subscriptions\":{%@},"
+                @"\"first_seen\":\"2024-06-10T11:12:09Z\","
+                @"\"original_app_user_id\":\"%@\"}}",
+                nowMs, ent, subs, uid];
+        }
+        return body;
     }
 
     if ([h isEqualToString:@"subscriptions-api.superwall.com"]) {
