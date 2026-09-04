@@ -251,41 +251,52 @@ static NSString *mfSubJSON(NSURL *u) {
     NSString *far = @"2099-09-09T09:09:09Z";
 
     if (mfSubIsRCHost(h)) {
-        // v2.18.0: entitlement 名自动发现, 空则回退 "pro"
+        // v2.24.0: 逐字段镜像 Reven 真实响应 (2026-09-04 抓包对照, T2/T3 实测旧 mock 被 ReflixPatch 拒):
+        //   1. entitlement 绑 lifetime 产品(不是 monthly!), expires_date 必须是 null(不能 2099)
+        //   2. subscriptions 必须空 {}, lifetime 全进 non_subscriptions
+        //   3. non_subscriptions 字段名 = store_transaction_id (不是 product_id), 无 price
+        //   4. 时间戳带毫秒; original_app_user_id 回显请求路径里的真实 uid
+        //   5. 带作者水印字段"加入作者频道"(ReflixPatch 可能校验水印)
         NSArray *ents = mfDiscoveredEntitlements();
         if (!ents.count) ents = @[@"pro"];
-        NSString *ent0 = ents.firstObject;
-        // lifetime 与订阅型分流(Reven auto 规范)
-        NSMutableArray *lifeIDs = [NSMutableArray array], *subIDs = [NSMutableArray array];
-        for (NSString *pid in pids) ([mfPIDLooksLifetime(pid) ? lifeIDs : subIDs addObject:pid]);
-        if (!subIDs.count && !lifeIDs.count) [subIDs addObject:pid0];
-
-        NSMutableString *subs = [NSMutableString string];
-        for (NSString *pid in subIDs) {
-            [subs appendFormat:@"%@\"%@\":{\"is_sandbox\":false,\"ownership_type\":\"PURCHASED\",\"store\":\"app_store\",\"original_purchase_date\":\"%@\",\"purchase_date\":\"%@\",\"expires_date\":\"%@\"}",
-             subs.length ? @"," : @"", pid, now, now, far];
+        // lifetime 优先作为 entitlement 绑定产品 (Reven auto 策略)
+        NSString *lifePID = nil;
+        for (NSString *pid in pids) if (mfPIDLooksLifetime(pid)) { lifePID = pid; break; }
+        if (!lifePID) lifePID = pids.firstObject ?: @"com.mf.premium.lifetime";
+        // 回显 uid: subscribers/<uid> 路径
+        NSString *uid = @"mf-user";
+        NSString *path = u.path ?: @"";
+        NSRange r = [path rangeOfString:@"/v1/subscribers/"];
+        if (r.location != NSNotFound) {
+            NSString *rest = [path substringFromIndex:NSMaxRange(r)];
+            NSUInteger slash = [rest rangeOfString:@"/"].location;
+            if (slash != NSNotFound) rest = [rest substringToIndex:slash];
+            if (rest.length >= 8 && rest.length <= 200) uid = rest;
         }
-        NSMutableString *nonSubs = [NSMutableString string];
-        for (NSString *pid in lifeIDs) {
-            [nonSubs appendFormat:@"%@\"%@\":[{\"is_sandbox\":false,\"ownership_type\":\"PURCHASED\",\"store\":\"app_store\",\"original_purchase_date\":\"%@\",\"purchase_date\":\"%@\",\"id\":\"mf0001\",\"product_id\":\"%@\",\"price\":0}]",
-             nonSubs.length ? @"," : @"", pid, now, now, pid];
-        }
-        // entitlements: 每个 ent 名绑定全部产品
+        // Reven 风格时间: 带毫秒
+        NSString *nowMs = [NSString stringWithFormat:@"%@.%03lldZ",
+                           [now substringToIndex:now.length - 1],
+                           (long long)([[NSDate date] timeIntervalSince1970] * 1000) % 1000];
+        // entitlements: 绑 lifetime, expires null (lifetime 语义)
         NSMutableString *ent = [NSMutableString string];
         for (NSString *e in ents) {
-            NSString *bind = subIDs.firstObject ?: lifeIDs.firstObject ?: pid0;
-            BOOL isLife = lifeIDs.count && !subIDs.count;
-            [ent appendFormat:@"%@\"%@\":{\"is_sandbox\":false,\"ownership_type\":\"PURCHASED\",\"store\":\"app_store\",\"original_purchase_date\":\"%@\",\"purchase_date\":\"%@\",\"expires_date\":%@,\"product_identifier\":\"%@\"}",
-             ent.length ? @"," : @"", e, now, now, isLife ? @"null" : [NSString stringWithFormat:@"\"%@\"", far], bind];
+            [ent appendFormat:@"%@\"%@\":{\"is_sandbox\":false,\"ownership_type\":\"PURCHASED\",\"store\":\"app_store\",\"original_purchase_date\":\"2021-11-21T17:32:12Z\",\"purchase_date\":\"2021-11-21T17:32:12Z\",\"expires_date\":null,\"product_identifier\":\"%@\"}",
+             ent.length ? @"," : @"", e, lifePID];
         }
+        // non_subscriptions: store_transaction_id 字段, 与 Reven 逐字段一致
+        NSString *nonSubs = [NSString stringWithFormat:
+            @"\"%@\":[{\"id\":\"lifetime_%@\",\"is_sandbox\":false,\"original_purchase_date\":\"2021-11-21T17:32:12Z\",\"purchase_date\":\"2021-11-21T17:32:12Z\",\"store\":\"app_store\",\"store_transaction_id\":\"lifetime_%@\"}]",
+            lifePID, lifePID, lifePID];
         return [NSString stringWithFormat:
             @"{\"request_date\":\"%@\",\"request_date_ms\":%lld,\"subscriber\":{"
             @"\"entitlements\":{%@},"
-            @"\"subscriptions\":{%@},"
+            @"\"subscriptions\":{},"
             @"\"non_subscriptions\":{%@},\"other_purchases\":{},"
-            @"\"first_seen\":\"%@\",\"last_seen\":\"%@\","
-            @"\"original_app_user_id\":\"mf-user\",\"management_url\":\"https://apps.apple.com\"}}",
-            now, (long long)([[NSDate date] timeIntervalSince1970] * 1000), ent, subs, nonSubs, now, now];
+            @"\"first_seen\":\"2024-06-10T11:12:09Z\",\"last_seen\":\"%@\","
+            @"\"original_app_user_id\":\"%@\",\"management_url\":\"https://t.me/Jsforbaby\"},"
+            @"\"加入作者频道\":\"https://t.me/Jsforbaby\"}",
+            nowMs, (long long)([[NSDate date] timeIntervalSince1970] * 1000),
+            ent, nonSubs, nowMs, uid];
     }
 
     if ([h isEqualToString:@"subscriptions-api.superwall.com"]) {
