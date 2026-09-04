@@ -116,6 +116,89 @@ static mach_msg_return_t mf_machMsg2Hook(mach_msg_header_t *msg, mach_msg_option
 extern uint8_t *g_capDylibBase;    // 定义在层2 段(下方), 前向引用
 extern uint64_t g_capDylibSize;
 
+// ===== v2.33.0: objc_msgSend 蹦床(arm64) — 保 x0-x8/x16/lr 实参, 日志后尾跳原函数 =====
+extern void mf_msgSendTramp(void);
+void *g_vOrigMsgSendPtr = NULL;
+__asm__(
+  ".text\n"
+  ".align 2\n"
+  "_mf_msgSendTramp:\n"
+  "  stp x29, x30, [sp, #-16]!\n"
+  "  sub sp, sp, #80\n"
+  "  stp x0, x1, [sp]\n"
+  "  stp x2, x3, [sp, #16]\n"
+  "  stp x4, x5, [sp, #32]\n"
+  "  stp x6, x7, [sp, #48]\n"
+  "  stp x8, x16, [sp, #64]\n"
+  "  bl _mf_msgSendLogger\n"
+  "  ldp x0, x1, [sp]\n"
+  "  ldp x2, x3, [sp, #16]\n"
+  "  ldp x4, x5, [sp, #32]\n"
+  "  ldp x6, x7, [sp, #48]\n"
+  "  ldp x8, x16, [sp, #64]\n"
+  "  add sp, sp, #80\n"
+  "  ldp x29, x30, [sp], #16\n"
+  "  adrp x16, _g_vOrigMsgSendPtr@PAGE\n"
+  "  ldr x16, [x16, _g_vOrigMsgSendPtr@PAGEOFF]\n"
+  "  br x16\n"
+);
+// 只有 dylib 镜像的 msgSend 会进蹦床(IAPtools 自己的调用不在重绑范围, 无递归)
+void mf_msgSendLogger(id rcv, SEL sel) {
+    static NSMutableDictionary *seen = nil;
+    static os_unfair_lock lk = OS_UNFAIR_LOCK_INIT;
+    static uint32_t cnt = 0;
+    if (!rcv || cnt >= 120) return;
+    Class c = object_getClass(rcv);
+    if (!c) return;
+    const char *cn = class_getName(c);
+    const char *sn = sel ? sel_getName(sel) : "?";
+    os_unfair_lock_lock(&lk);
+    if (!seen) seen = [NSMutableDictionary dictionary];
+    NSString *k = [NSString stringWithFormat:@"%s|%s", cn, sn];
+    BOOL dup = (seen[k] != nil);
+    if (!dup) { seen[k] = @YES; cnt++; }
+    os_unfair_lock_unlock(&lk);
+    if (!dup) mfLog(@"[capture] MSGSEND %s -> %s", cn, sn);
+}
+
+// ===== v2.33.0: 动态解析明文钩 — 它解密后的类名/selector 名在此现形 =====
+static Class (*g_vOrigClsFromStr)(NSString *) = NULL;
+static SEL (*g_vOrigSelFromStr)(NSString *) = NULL;
+static IMP (*g_vOrigGetImp)(Method) = NULL;
+static Method (*g_vOrigGetInstM)(Class, SEL) = NULL;
+
+static Class mf_vClsFromStrHook(NSString *s) {
+    Class c = g_vOrigClsFromStr(s);
+    if (s.length && s.length < 100) mfLog(@"[capture] vCLS %@", s);
+    return c;
+}
+static SEL mf_vSelFromStrHook(NSString *s) {
+    SEL sel = g_vOrigSelFromStr(s);
+    if (s.length && s.length < 100) mfLog(@"[capture] vSEL %@", s);
+    return sel;
+}
+static IMP mf_vGetImpHook(Method m) {
+    IMP imp = g_vOrigGetImp(m);
+    if (m) {
+        SEL s = method_getName(m);
+        const char *sn = sel_getName(s);
+        unsigned long off = 0; const char *zone = "ext";
+        uintptr_t a = (uintptr_t)imp;
+        if (g_capDylibBase && a >= (uintptr_t)g_capDylibBase && a < (uintptr_t)g_capDylibBase + g_capDylibSize) {
+            zone = "dylib"; off = a - (uintptr_t)g_capDylibBase;
+        } else if (a >= 0x100000000ULL && a < 0x103000000ULL) {
+            zone = "main"; off = a - 0x100000000ULL;
+        }
+        mfLog(@"[capture] vGETIMP %s -> %s+0x%lx", sn, zone, off);
+    }
+    return imp;
+}
+static Method mf_vGetInstMHook(Class c, SEL s) {
+    Method m = g_vOrigGetInstM(c, s);
+    if (c && s) mfLog(@"[capture] vGETM %s -> %s", class_getName(c), sel_getName(s));
+    return m;
+}
+
 static mach_msg_return_t (*g_vOrigMachMsg)(mach_msg_header_t *, mach_msg_option_t, mach_msg_size_t,
                                            mach_msg_header_t *, mach_msg_size_t, mach_port_t, mach_msg_timeout_t);
 static kern_return_t (*g_vOrigVMProtect)(vm_map_t, vm_address_t, vm_size_t, vm_prot_t);
@@ -192,17 +275,22 @@ static void *mf_vDlsymHook(void *h, const char *name) {
 }
 
 static void mfCapTapVendorDylib(void) {
-    if (!g_capDylibBase || g_vOrigMachMsg) return;
+    if (!g_capDylibBase || g_vOrigVMProtect) return;
     // dylib 镜像 slide: 段 vmaddr 从 0 起 → slide = 实际加载地址
     struct rebinding rbs[] = {
-        {"mach_msg",   (void *)mf_vMachMsgHook,   (void **)&g_vOrigMachMsg},
         {"vm_protect", (void *)mf_vVMProtectHook, (void **)&g_vOrigVMProtect},
         {"dlopen",     (void *)mf_vDlopenHook,    (void **)&g_vOrigDlopen},
         {"dlsym",      (void *)mf_vDlsymHook,     (void **)&g_vOrigDlsym},
+        // v2.33.0: 动态调用面全收 — 它的 NSClassFromString/NSSelectorFromString 解密后的明文在这层直接现形
+        {"NSClassFromString",     (void *)mf_vClsFromStrHook, (void **)&g_vOrigClsFromStr},
+        {"NSSelectorFromString",  (void *)mf_vSelFromStrHook, (void **)&g_vOrigSelFromStr},
+        {"method_getImplementation", (void *)mf_vGetImpHook,  (void **)&g_vOrigGetImp},
+        {"class_getInstanceMethod",  (void *)mf_vGetInstMHook,(void **)&g_vOrigGetInstM},
+        // 大杀器: objc_msgSend GOT 重绑(asm 蹦床保参) — 它发出的每次消息调用全可见
+        {"objc_msgSend", (void *)mf_msgSendTramp, (void **)&g_vOrigMsgSendPtr},
     };
-    int r = rebind_symbols_image((void *)g_capDylibBase, (intptr_t)g_capDylibBase, rbs, 4);
-    mfLog(@"[capture] vendor-dylib syscall tap: %d (mach_msg=%p vm_protect=%p)",
-          r, g_vOrigMachMsg, g_vOrigVMProtect);
+    int r = rebind_symbols_image((void *)g_capDylibBase, (intptr_t)g_capDylibBase, rbs, 8);
+    mfLog(@"[capture] vendor-dylib tap v2: %d (vm_protect=%p msgSend=%p)", r, g_vOrigVMProtect, g_vOrigMsgSendPtr);
 }
 
 static NSString *const kCapBID = @"com.magicgroot.gooby";
