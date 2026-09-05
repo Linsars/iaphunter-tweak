@@ -152,8 +152,12 @@ static void mfCapInstallTgsChain(struct mach_header_64 *mh, intptr_t slide) {
             mfLog(@"[capture] EXCPORTS none (kr=%d cnt=%u)", krx, mCnt);
         }
     }
+    // v2.39.7: MITM 手搓 MIG 4 连崩 dead end — 门控退役, 仅 mfMitmCapture=1 实验时启用
+    if (![[NSUserDefaults standardUserDefaults] boolForKey:@"mfMitmCapture"]) return;
     // v2.39.4: 终局 MITM — swap EXC_BREAKPOINT 处理器到自己, 录 Q/A 后转发 vendor
     //   ★ 2.39.3 翻案: mask=0x40 = 1<<6 = EXC_BREAKPOINT(不是 EXC_SYSCALL!)
+    //   ★ 2.39.7 终判: 手搓 MIG 转发 4 连崩(2406/2506/规范尺寸/穿透全试) — 协议录制路线 dead end
+    //   替代品转向客户端侧逆向: 主二进制 wrapper(0x11d527c→brk 0x14211bc) 反汇编出答案消费逻辑, 本地造答案
     //   app 查询 = brk #0x965/0x966/0x967/0x9c9/0x9ca/0x9cb(立即数=请求码, v2.29.1 六个数=BRK imm)
     //   → EXC_BREAKPOINT(6) → 内核 mach_exception_raise_state(code=EXC_ARM_BREAKPOINT|imm<<16) 直投 vendor
     {
