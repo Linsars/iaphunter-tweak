@@ -1248,6 +1248,38 @@ void mfProcCaptureStart(void) {
         mfLog(@"[mfkill] exception: %@", e);
     }
     } // mfKillIsActive gate
+    // v2.39.8: 运行时 __TEXT trap 扫描 — brk 是 vendor ctor 暗窗写进 app __TEXT 的(解密 dump 无此指令)
+    //   原生 C 循环毫秒级: 扫全部 brk(imm>=0x100) 与 udf(imm>=0x100), 与文件对照 = 完整 patch 图
+    {
+        uint64_t t0 = mach_absolute_time();
+        struct mach_header_64 *mh2 = (struct mach_header_64 *)mh;
+        uint8_t *text = (uint8_t *)mh2 + 0;   // __TEXT 从镜像头开始, vm offset==file offset
+        uint64_t tsize = 0x2e30000;
+        uint32_t *w = (uint32_t *)text;
+        uint64_t n = tsize / 4;
+        uint32_t found = 0;
+        for (uint64_t i = 4; i < n; i++) {
+            uint32_t insn = w[i];
+            uint32_t imm = 0;
+            if ((insn & 0xFFE0001F) == 0xD4200000) imm = (insn >> 5) & 0xFFFF;          // brk
+            else if ((insn & 0xFFFF0000) == 0 && (insn & 0xF800) != 0) imm = insn & 0xFFFF; // udf
+            if (imm >= 0x100) {
+                if (found < 40)
+                    mfLog(@"[capture] TRAP %s #%#x @main+0x%llx", (insn & 0xFFE0001F) == 0xD4200000 ? "brk" : "udf",
+                          imm, (unsigned long long)(i * 4));
+                found++;
+            }
+        }
+        // 崩溃四坐标原始字节
+        for (int k = 0; k < 4; k++) {
+            static const uint64_t cos[4] = {0x14211bc, 0x11d527c, 0x11d6d4c, 0x11d727c};
+            uint64_t o = cos[k];
+            mfLog(@"[capture] LIVE 0x%llx: %02x%02x%02x%02x", (unsigned long long)o,
+                  text[o], text[o+1], text[o+2], text[o+3]);
+        }
+        mfLog(@"[capture] TRAPSCAN done found=%u (dt=%llums)", found,
+              (unsigned long long)((mach_absolute_time() - t0) / 1000000));
+    }
     // v2.34.0 核心: add_image 回调 — dyld 映射完镜像、initializer 执行之前触发
     //   回调里武装 vendor 全套 GOT 钩 + 预 ctor 段快照 → 它 ctor 的每一步都在监视下
     _dyld_register_func_for_add_image(mf_vendorAddImageCB);
