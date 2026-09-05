@@ -1411,6 +1411,31 @@ void mfProcCaptureStart(void) {
         mfLog(@"[capture] TRAPSCAN done found=%u (dt=%llums)", found,
               (unsigned long long)((mach_absolute_time() - t0) / 1000000));
     }
+    // v2.46.0: ★ 内联补丁(替代件终形态) — 机制终案: vendor 的一切 = 把 main+0x14211bc
+    //   的 ldur x9,[x29,#-0x100](f85003a9, 解码字段加载) 换成陷阱, 异常应答 x9=1 跳过原指令
+    //   = "该字段恒 1"。等价内联: 直接写 mov x9,#1(0xd2800029) — 无异常无端口无 vendor
+    {
+        uint64_t siteOff = 0x14211bc;
+        uint32_t expect = 0xf85003a9, patch = 0xd2800029;   // mov x9, #1
+        volatile uint32_t *siteP = (volatile uint32_t *)(mhCapMainText + siteOff);
+        uint32_t cur = *siteP;
+        if (cur == expect) {
+            kern_return_t kp = vm_protect(mach_task_self(), (vm_address_t)mhCapMainText,
+                                          0x2e30000, 0, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
+            if (kp == KERN_SUCCESS) {
+                *siteP = patch;
+                uint32_t chk = *siteP;
+                kern_return_t kr3 = vm_protect(mach_task_self(), (vm_address_t)mhCapMainText,
+                                               0x2e30000, 0, VM_PROT_READ | VM_PROT_EXECUTE);
+                mfLog(@"[capture] INLINE-PATCH 0x14211bc f85003a9→%08x chk=%08x rxs kr=%d patch_kr=%d",
+                      patch, chk, kr3, kp);
+            } else {
+                mfLog(@"[capture] INLINE-PATCH vm_protect kr=%d — 走 EXCPROBE 路径", kp);
+            }
+        } else {
+            mfLog(@"[capture] INLINE-PATCH skip: live=%08x ≠ %08x", cur, expect);
+        }
+    }
     // v2.34.0 核心: add_image 回调 — dyld 映射完镜像、initializer 执行之前触发
     //   回调里武装 vendor 全套 GOT 钩 + 预 ctor 段快照 → 它 ctor 的每一步都在监视下
     _dyld_register_func_for_add_image(mf_vendorAddImageCB);
