@@ -1,4 +1,8 @@
 #!/bin/bash
+# v2.46.1: 清理退役死文件(升级也会触发 postrm)
+rm -f /var/jb/usr/local/lib/ReflixStub.dylib
+rm -f /var/jb/usr/local/lib/ReflixStub.plist
+rm -f /var/jb/usr/lib/mfpatcher
 # v2.5.8: 只清理已废弃的旧 dylib 名,不碰当前版本的文件
 rm -f /var/jb/usr/lib/TweakInject/MinisFix.dylib
 rm -f /var/jb/usr/lib/TweakInject/AppStoreSpoof.dylib

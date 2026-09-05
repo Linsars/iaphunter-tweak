@@ -42,18 +42,6 @@ jobs:
           ls -la layout-rootless/usr/bin/
           echo "=== minisfixd built and entitled ==="
 
-      - name: Build mfpatcher binary (imports pool weakifier)
-        run: |
-          mkdir -p layout-rootless/usr/lib
-          xcrun -sdk iphoneos clang -arch arm64 -arch arm64e \
-            -isysroot "$THEOS/sdks/iPhoneOS14.5.sdk" \
-            -miphoneos-version-min=14.5 \
-            -O2 -Wall \
-            -o layout-rootless/usr/lib/mfpatcher mfpatcher.c
-          ldid -S layout-rootless/usr/lib/mfpatcher
-          ls -la layout-rootless/usr/lib/mfpatcher
-          echo "=== mfpatcher built and signed ==="
-
       - name: Build package
         run: make package
 

@@ -1,2 +1,0 @@
-// ReflixStub.plist — stub 是纯库(非 tweak), 不注入任何进程, 只为满足 theos tweak 构建模板
-{ Filter = { Bundles = ( "com.mf.never.matches" ); }; }
