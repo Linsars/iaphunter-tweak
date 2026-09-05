@@ -126,6 +126,8 @@ static kern_return_t mf_tgsHook(thread_act_t thread, thread_state_flavor_t flavo
 }
 static uint8_t *mhCapMainText = NULL;   // v2.39.10: 主 __TEXT 运行时基址(ctor 记录)
 static mach_port_t g_mitmVendorPort = MACH_PORT_NULL;
+static exception_behavior_t g_mitmOldBeh = 0;    // v2.44.0: swap 时捕获 vendor 原注册行为
+static thread_state_flavor_t g_mitmOldFlv = 0;
 static os_unfair_lock g_mitmLock = OS_UNFAIR_LOCK_INIT;
 static uint32_t g_mitmCount = 0;
 static void *mf_mitmServer(void *arg);
@@ -181,6 +183,8 @@ static void mfCapInstallTgsChain(struct mach_header_64 *mh, intptr_t slide) {
                 for (uint32_t j = 0; j < oldCnt && j < 32; j++) {
                     if (oldMasks[j] & EXC_MASK_BREAKPOINT) {
                         g_mitmVendorPort = oldPorts[j];   // vendor 端口 send right 落到我们手里
+                        g_mitmOldBeh = oldBehs[j];        // ★ 原注册行为(restore 必须原样, 否则真实 brk 格式错位→vendor 拒答→悬空)
+                        g_mitmOldFlv = oldFlvs[j];
                         mfLog(@"[capture] MITM swap ok: old[%u] mask=0x%x vendor_port=0x%x beh=%d flv=%d",
                               j, oldMasks[j], oldPorts[j], oldBehs[j], oldFlvs[j]);
                     }
@@ -309,7 +313,7 @@ static void *mf_mitmServer(void *arg) {
     uint64_t ns[68];
     memcpy(ns, st, sizeof(ns));
     int emulated = 0;
-    if ((origInsn & 0xFFE00C00) == 0xF8200000 || (origInsn & 0xFFE00C00) == 0xF8000000) {
+    if ((origInsn & 0xFFE00C00) == 0xF8400000 || (origInsn & 0xFFE00C00) == 0xF8000000) {   // LDUR64=0xF840..., STUR64=0xF800...(2.43 掩码错)
         int64_t simm = (int64_t)((origInsn >> 12) & 0x1FF); if (simm & 0x100) simm -= 0x200;
         uint32_t Rn = (origInsn >> 5) & 0x1F, Rt = origInsn & 0x1F;
         uint64_t base = ns[Rn];
@@ -340,7 +344,9 @@ static void *mf_mitmServer(void *arg) {
     }
     // v2.43.0: 三模式 — mfExcProxy: 2=替代应答(回显+判定), 1=转发录制(vendor 在场), 0=纯观察
     uint64_t qaNonce = st[1];
-    NSInteger proxyMode = [[NSUserDefaults standardUserDefaults] integerForKey:@"mfExcProxy"];
+    NSInteger proxyMode = 2;   // 默认=替代应答(vendor 出局)
+    id pmObj = [[NSUserDefaults standardUserDefaults] objectForKey:@"mfExcProxy"];
+    if (pmObj) proxyMode = [pmObj integerValue];   // 1=转发录制, 0=观察
     if (proxyMode == 2) {
         // ★ 替代件: 回显 nonce + x9=1(通过) + x4 自增 + pc+=4, 不需要 vendor
         //   (从三组 Q/A 实测归纳: x1/x15=nonce 回显, x0/x16=app 缓冲原样, x9=1=通过)
@@ -445,7 +451,7 @@ reply_now:
     }
     // 单发即还 vendor(后续查询归它, app 照常解锁)
     kern_return_t kr2 = task_set_exception_ports(mach_task_self(), EXC_MASK_BREAKPOINT, g_mitmVendorPort,
-                                                 MACH_EXCEPTION_CODES | EXCEPTION_STATE_IDENTITY, ARM_THREAD_STATE64);
+                                                 g_mitmOldBeh, g_mitmOldFlv);
     mfLog(@"[capture] EXCPROBE port restored kr=%d", kr2);
     } // for
     return NULL;
