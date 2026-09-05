@@ -58,6 +58,7 @@ void mfInstallNetworkCapture(void);     // 安装 NSURLProtocol（ctor 调用）
 // Product（IAPHunter）（MFPanel.m）
 void mfShowProductPage(void);          // 扫描购买 / 手动购买 / 图标解锁
 void mfShowScanPage(void);
+void mfShowLabPage(void);              // 🧪 实验模拟(订阅注入/收据伪造)
 void mfShowManualBuyPage(void);
 void mfShowIconPage(void);
 

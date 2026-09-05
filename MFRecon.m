@@ -90,34 +90,39 @@ NSDictionary *mfReconFingerprint(void) {
         }
     }
 
-    // ---- F4 网络捕获域命中 ----
+    // ---- F4 网络捕获域命中(自家探针流量剔除 — mfprobe offerings 是我们发的, 算自证) ----
     {
         NSArray *recs = mfCapturedRecordsSnapshot();
-        unsigned hits = 0;
+        unsigned hits = 0, selfHits = 0;
+        NSMutableSet *seenUrl = [NSMutableSet set];
         for (MFNetRecord *r in recs) {
-            NSString *u = r.url.lowercaseString;
-            if (!u) continue;
+            NSString *u = r.url;
+            if (!u.length) continue;
+            if ([u containsString:@"mfprobe"]) { selfHits++; continue; }
+            if (![seenUrl addObject:u]) continue;   // 同 URL 去重
+            NSString *lu = u.lowercaseString;
             for (NSDictionary *b in mfRecCloudBrands()) {
                 for (NSString *pat in b[@"pats"]) {
-                    if ([u containsString:pat.lowercaseString]) {
+                    if ([lu containsString:pat.lowercaseString]) {
                         hits++;
                         [cloudBrands addObject:b[@"name"]];
-                        if (hits <= 3) [lines addObject:[NSString stringWithFormat:@"网络捕获命中: %@", r.url]];
+                        if (hits <= 3) [lines addObject:[NSString stringWithFormat:@"网络捕获命中: %@", u]];
                     }
                 }
             }
         }
-        if (hits > 3) [lines addObject:[NSString stringWithFormat:@"…网络捕获共 %u 条云验证域请求", hits]];
+        if (selfHits) [lines addObject:[NSString stringWithFormat:@"网络捕获含自家 offerings 探针流量 %u 条(mfprobe uid), 已剔除", selfHits]];
+        if (hits > 3) [lines addObject:[NSString stringWithFormat:@"…网络捕获共 %u 条独立云验证域请求", hits]];
         if (!hits) [lines addObject:[NSString stringWithFormat:@"网络捕获 %lu 条记录, 无云验证域(未开捕获或纯本地)", (unsigned long)recs.count]];
     }
 
     // ---- 判定(动态拼接, 可叠加: Reflix = 云+mach 双面) ----
     BOOL cloud = cloudBrands.count > 0;
     NSString *verdict;
-    if (cloud && mach)      verdict = [NSString stringWithFormat:@"%@ 云端订阅验证 + 本地许可服务器(异常端口) — 先 mock 直试, 不亮走录制战役", cloudBrands.allObjects.firstObject];
-    else if (cloud)         verdict = [NSString stringWithFormat:@"%@ 云端订阅验证 — mock 直达, 扫描购买→点按即可", cloudBrands.allObjects.firstObject];
-    else if (mach)          verdict = @"本地许可服务器(异常端口 MIG) — 需录制破译战役, 拉日志给管理员";
-    else                    verdict = @"未发现订阅验证 SDK — 逛购买页+开捕获后重扫";
+    if (cloud && mach)      verdict = [NSString stringWithFormat:@"%@ 云端订阅验证 + 本地许可服务器(异常端口) — 双面, 先 mock 直试", cloudBrands.allObjects.firstObject];
+    else if (cloud)         verdict = [NSString stringWithFormat:@"%@ 云端订阅验证 — mock 可直达", cloudBrands.allObjects.firstObject];
+    else if (mach)          verdict = @"本地许可服务器(异常端口 MIG) — 需录制破译战役";
+    else                    verdict = @"未发现订阅验证 SDK";
     if (cloudBrands.count > 1) {
         NSString *names = [[cloudBrands.allObjects sortedArrayUsingSelector:@selector(compare)] componentsJoinedByString:@"/"];
         verdict = [verdict stringByReplacingOccurrencesOfString:cloudBrands.allObjects.firstObject
@@ -129,6 +134,19 @@ NSDictionary *mfReconFingerprint(void) {
 }
 
 // ===== 详情页(面板导航, 可滚动可长按选中复制) =====
+static void mfReconShowDetailPage(NSDictionary *recon);   // 前置
+@interface UIView (MFReconNav)
+@end
+@implementation UIView (MFReconNav)
+- (void)mfReconGoLab {
+    mfPopPage();          // 回扫描页
+    mfShowLabPage();      // 跳实验模拟
+}
+- (void)mfReconGoCapture {
+    mfPopPage();
+    mfShowNetworkCapturePage();
+}
+@end
 static void mfReconShowDetailPage(NSDictionary *recon) {
     UIView *page = mfMakePage(@"侦查详情", YES);
     UILabel *v = [[UILabel alloc] initWithFrame:CGRectMake(16, 46, g_mfCardW - 32, 40)];
@@ -139,7 +157,32 @@ static void mfReconShowDetailPage(NSDictionary *recon) {
                   [recon[@"mach"] boolValue] ? [UIColor systemPurpleColor] : [UIColor secondaryLabelColor];
     [page addSubview:v];
 
-    UITextView *tv = [[UITextView alloc] initWithFrame:CGRectMake(12, 92, g_mfCardW - 24, g_mfCardH - 104)];
+    CGFloat tvY = 96;
+    if (cloud) {
+        UIButton *lab = [UIButton buttonWithType:UIButtonTypeSystem];
+        lab.frame = CGRectMake(16, 92, g_mfCardW - 32, 38);
+        lab.backgroundColor = [UIColor systemGreenColor];
+        lab.layer.cornerRadius = 9;
+        [lab setTitle:@"🧪 去实验模拟(开订阅注入)" forState:UIControlStateNormal];
+        [lab setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        lab.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+        [lab addTarget:page action:NSSelectorFromString(@"mfReconGoLab") forControlEvents:UIControlEventTouchUpInside];
+        objc_setAssociatedObject(page, "reconGoLab", @(1), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        [page addSubview:lab];
+        tvY = 142;
+    } else if (![recon[@"mach"] boolValue]) {
+        UIButton *cap = [UIButton buttonWithType:UIButtonTypeSystem];
+        cap.frame = CGRectMake(16, 92, g_mfCardW - 32, 38);
+        cap.backgroundColor = [UIColor systemBlueColor];
+        cap.layer.cornerRadius = 9;
+        [cap setTitle:@"🕸 开网络捕获 → 逛购买页 → 回来重扫" forState:UIControlStateNormal];
+        [cap setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        cap.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+        [cap addTarget:page action:NSSelectorFromString(@"mfReconGoCapture") forControlEvents:UIControlEventTouchUpInside];
+        [page addSubview:cap];
+        tvY = 142;
+    }
+    UITextView *tv = [[UITextView alloc] initWithFrame:CGRectMake(12, tvY, g_mfCardW - 24, g_mfCardH - tvY - 12)];
     tv.backgroundColor = UIColor.clearColor;
     tv.editable = NO;
     tv.selectable = YES;   // 长按选中复制
