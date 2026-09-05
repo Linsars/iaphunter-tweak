@@ -338,10 +338,28 @@ static void *mf_mitmServer(void *arg) {
         ns[9] = (uint64_t)fake;
         mfLog(@"[capture] EXCFAKE x9 <- %#llx", (unsigned long long)(uint64_t)fake);
     }
+    // v2.43.0: 三模式 — mfExcProxy: 2=替代应答(回显+判定), 1=转发录制(vendor 在场), 0=纯观察
+    uint64_t qaNonce = st[1];
+    NSInteger proxyMode = [[NSUserDefaults standardUserDefaults] integerForKey:@"mfExcProxy"];
+    if (proxyMode == 2) {
+        // ★ 替代件: 回显 nonce + x9=1(通过) + x4 自增 + pc+=4, 不需要 vendor
+        //   (从三组 Q/A 实测归纳: x1/x15=nonce 回显, x0/x16=app 缓冲原样, x9=1=通过)
+        uint64_t cnt4 = ns[4] + 1;
+        memcpy(ns, st, sizeof(ns));       // 现场原样(含 x0/x16 指针回显)
+        ns[1] = st[1];                    // nonce 回显
+        ns[15] = st[1];                   // x15 同 nonce
+        ns[4] = cnt4;                     // 查询计数
+        ns[9] = 1;                        // ★ 判定位: 通过
+        ns[32] = pc + 4;                  // 越过查询点
+        mfLog(@"[capture] PROXY ans nonce=%#llx x4=%llu x9=1 pc=%llx->%llx",
+              (unsigned long long)qaNonce, (unsigned long long)cnt4,
+              (unsigned long long)pc, (unsigned long long)(pc + 4));
+        emulated = 3;   // 3 = 替代模式
+        goto reply_now;
+    }
     // v2.42.0: 终局 — 转发 vendor 录 Q/A, app 无感
     //   app 自造 2406 (336B simple msg, bits=0x1112, x1=nonce) → 我们 → vendor(mach_msg_server) → 2506 → app
     //   转发 = 字节复制改两端口字段; audit token 同 task 天然一致
-    uint64_t qaNonce = st[1];
     uint64_t vendReply[68];
     int gotVend = 0;
     if (g_mitmVendorPort != MACH_PORT_NULL && h->msgh_size <= 4096) {
@@ -403,6 +421,7 @@ static void *mf_mitmServer(void *arg) {
             mach_port_mod_refs(mach_task_self(), frp, MACH_PORT_RIGHT_RECEIVE, -1);
         }
     }
+reply_now:
     // 应答: ★ MOVE_SEND_ONCE 到 remote(回复权在 remote), 316B MIG 2506 形状
     mfExcRep_t out;
     memset(&out, 0, sizeof(out));
