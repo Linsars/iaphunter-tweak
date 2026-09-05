@@ -77,9 +77,10 @@ NSDictionary *mfReconFingerprint(void) {
     if (probes.count >= 2) {
         mach = YES;
         NSArray *ks = probes.allKeys;
+        NSString *joined = [ks componentsJoinedByString:@","];
         NSString *sample = [ks count] > 5 ?
-            [NSString stringWithFormat:@"%@ 等 %lu 种", [ks componentsJoinedByString:@","].substringToIndex(40), (unsigned long)ks.count] :
-            [NSString stringWithFormat:@"imm=%@ (%lu 种)", [ks componentsJoinedByString:@","], (unsigned long)ks.count];
+            [NSString stringWithFormat:@"%@ 等 %lu 种", [joined substringToIndex:MIN(40, joined.length)], (unsigned long)ks.count] :
+            [NSString stringWithFormat:@"imm=%@ (%lu 种)", joined, (unsigned long)ks.count];
         [lines addObject:[NSString stringWithFormat:@"brk 探针 %lu 处大立即数(%@) — 异常端口客户端特征", (unsigned long)ks.count, sample]];
     } else {
         [lines addObject:[NSString stringWithFormat:@"brk 探针: 无大立即数站(总 brk %lu 处均为编译器常规)", (unsigned long)[brk[@"total"] unsignedIntegerValue]]];
