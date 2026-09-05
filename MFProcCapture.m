@@ -277,7 +277,7 @@ static void *mf_mitmServer(void *arg) {
             mfLog(@"[capture] EXCEMU ldur x%u,[x%u,%#llx] = %#llx", Rt, Rn, (unsigned long long)simm, (unsigned long long)v);
         } else {
             uint64_t v = (&ns.__x[0])[Rt];
-            vm_write_overwrite(mach_task_self(), (vm_address_t)(base + simm), &v, 8);
+            vm_write(mach_task_self(), (vm_address_t)(base + simm), (vm_offset_t)&v, 8);
             mfLog(@"[capture] EXCEMU stur x%u,[x%u,%#llx] <- %#llx", Rt, Rn, (unsigned long long)simm, (unsigned long long)v);
         }
         emulated = 1;
