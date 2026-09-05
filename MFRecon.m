@@ -16,6 +16,7 @@
 
 extern CGFloat g_mfCardW;
 extern UIViewController *g_mfPanelRootVC;
+extern mach_port_t g_mitmMyPort;   // 自家 EXCPROBE 端口(0=未武装)
 
 // ---- 品牌串 → SDK 名映射(判定报告用具体名字, 不打抽象标签) ----
 static NSArray *mfRecCloudBrands(void) {
@@ -57,11 +58,15 @@ NSDictionary *mfReconFingerprint(void) {
             }
         }
     }
+    if (binHits) [lines addObject:@"（二进制串 = 静态指纹, 不受任何开关影响 — 判定以此为准）"];
 
     // ---- F2 RC 缓存(云响应已到过本机) ----
     if ([[NSUserDefaults standardUserDefaults] objectForKey:@"com.revenuecat.userdefaults.productEntitlementMapping"]) {
         [cloudBrands addObject:@"RevenueCat"];
-        [lines addObject:@"RC 缓存 productEntitlementMapping 在场(云响应已过手)"];
+        BOOL inj = [[NSUserDefaults standardUserDefaults] boolForKey:@"mfSubInjectEnabled"];
+        [lines addObject:inj ?
+            @"RC 缓存在场（⚠ 订阅注入开启中, 此缓存可能是 mock 伪造响应写入的 — 弱证据）" :
+            @"RC 缓存 productEntitlementMapping 在场"];
     }
 
     // ---- F3 EXCPORTS 实况 — mach 类唯一判据(独立 BREAKPOINT 条目才算) ----
@@ -77,11 +82,15 @@ NSDictionary *mfReconFingerprint(void) {
                 if (ports[i] == MACH_PORT_NULL) continue;
                 found = YES;
                 // Reflix 型强指纹: 独立 BREAKPOINT 条目 + MACH_EXCEPTION_CODES|EXCEPTION_STATE + ARM_THREAD_STATE64
+                if (g_mitmMyPort != MACH_PORT_NULL && ports[i] == g_mitmMyPort) {
+                    [lines addObject:@"EXCPORTS: 自家 EXCPROBE 端口(本插件侦查系统自身), 已剔除"];
+                    continue;
+                }
                 if (masks[i] == EXC_MASK_BREAKPOINT && behs[i] == (MACH_EXCEPTION_CODES | EXCEPTION_STATE) && flvs[i] == 6) {
                     mach = YES;
-                    [lines addObject:[NSString stringWithFormat:@"EXCPORTS[%u] mask=0x40 beh=MACH|STATE flv=6 ← 本地许可服务器(Reflix 型指纹)", (unsigned)i]];
+                    [lines addObject:[NSString stringWithFormat:@"EXCPORTS[%u] 独立 BREAKPOINT 条目(MACH|STATE flv=6) → 本地许可服务器注册（mach 协议型内购特征）", (unsigned)i]];
                 } else if (masks[i] & EXC_MASK_BREAKPOINT) {
-                    [lines addObject:[NSString stringWithFormat:@"EXCPORTS[%u] mask=0x%x beh=%#x flv=%d → 系统级注册(混合 mask, 非 Reflix 型)", (unsigned)i, masks[i], behs[i], flvs[i]]];
+                    [lines addObject:[NSString stringWithFormat:@"EXCPORTS[%u] mask=0x%x beh=%#x flv=%d → 系统级注册（crash handler, 每个进程都有, 与内购无关）", (unsigned)i, masks[i], behs[i], flvs[i]]];
                 } else {
                     [lines addObject:[NSString stringWithFormat:@"EXCPORTS[%u] mask=0x%x beh=%#x flv=%d", (unsigned)i, masks[i], behs[i], flvs[i]]];
                 }
@@ -112,9 +121,10 @@ NSDictionary *mfReconFingerprint(void) {
                 }
             }
         }
-        if (selfHits) [lines addObject:[NSString stringWithFormat:@"网络捕获含自家 offerings 探针流量 %u 条(mfprobe uid), 已剔除", selfHits]];
-        if (hits > 3) [lines addObject:[NSString stringWithFormat:@"…网络捕获共 %u 条独立云验证域请求", hits]];
-        if (!hits) [lines addObject:[NSString stringWithFormat:@"网络捕获 %lu 条记录, 无云验证域(未开捕获或纯本地)", (unsigned long)recs.count]];
+        if (selfHits) [lines addObject:[NSString stringWithFormat:@"网络捕获含自家探针流量 %u 条(mfprobe uid), 已剔除", selfHits]];
+        if (hits > 3) [lines addObject:[NSString stringWithFormat:@"…网络捕获共 %u 条 App 自身云验证域请求", hits]];
+        if (hits) [lines addObject:@"（网络捕获为辅助证据: 受捕获/注入开关影响, 判定以二进制静态指纹为准）"];
+        if (!hits) [lines addObject:[NSString stringWithFormat:@"网络捕获 %lu 条记录, 无 App 云验证域(未开捕获或纯本地)", (unsigned long)recs.count]];
     }
 
     // ---- 判定(动态拼接, 可叠加: Reflix = 云+mach 双面) ----
