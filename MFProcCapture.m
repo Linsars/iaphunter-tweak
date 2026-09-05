@@ -18,7 +18,6 @@
 #import <mach/exception.h>
 #import <pthread.h>
 
-        mach_msg_type_number_t *new_stateCnt);
 
 #import "fishhook.h"
 
