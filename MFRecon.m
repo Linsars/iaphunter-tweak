@@ -119,8 +119,9 @@ NSDictionary *mfReconFingerprint(void) {
     else if (mach)          verdict = @"本地许可服务器(异常端口 MIG) — 需录制破译战役, 拉日志给管理员";
     else                    verdict = @"未发现订阅验证 SDK — 逛购买页+开捕获后重扫";
     if (cloudBrands.count > 1) {
+        NSString *names = [[cloudBrands.allObjects sortedArrayUsingSelector:@selector(compare)] componentsJoinedByString:@"/"];
         verdict = [verdict stringByReplacingOccurrencesOfString:cloudBrands.allObjects.firstObject
-                                                     withString:[NSString stringWithFormat:@"%@(疑似多 SDK)", [cloudBrands.allObjects sortedArrayUsingSelector:@selector(compare)] componentsJoinedByString:@"/"]];
+                                                     withString:[NSString stringWithFormat:@"%@(疑似多 SDK)", names]];
     }
 
     return @{@"verdict": verdict, @"lines": lines,
