@@ -15,6 +15,7 @@
 #import <os/object.h>
 #import <os/lock.h>
 #import <mach/mach.h>
+#import <mach/exception.h>
 
 #import "fishhook.h"
 
@@ -126,6 +127,51 @@ static void mfCapInstallTgsChain(struct mach_header_64 *mh, intptr_t slide) {
     struct rebinding rb = {"thread_get_state", (void *)mf_tgsHook, (void **)&g_origTgs};
     int r = rebind_symbols_image((void *)mh, slide, &rb, 1);
     mfLog(@"[capture] TGS chain armed: rebind=%d hook=%p (t+3s, slot→0x2a0a0 已稳定)", r, g_origTgs);
+    // v2.38.4: 异常端口侦查 — dylib vDLSYM task_set_exception_ports/thread_set_state + mach_msg_server
+    //   异常端口通道: dylib 注册自己为 app 异常处理器, app 触发异常 → 内核直投(绕开一切 GOT/mach_msg 导入)
+    //   → dylib 在 handler 里 thread_set_state 写寄存器交答案。若 task 异常端口非空 = 实锤。
+    {
+        exception_mask_t masks[32];
+        mach_msg_type_number_t mCnt = 32;
+        mach_port_t ports[32];
+        exception_behavior_t behs[32];
+        thread_state_flavor_t flvs[32];
+        kern_return_t krx = task_get_exception_ports(mach_task_self(), EXC_MASK_ALL, masks, &mCnt,
+                                                     ports, behs, flvs);
+        if (krx == KERN_SUCCESS && mCnt > 0) {
+            for (uint32_t j = 0; j < mCnt && j < 32; j++)
+                mfLog(@"[capture] EXCPORTS[%u] mask=0x%x port=0x%x beh=%d flv=%d",
+                      j, masks[j], ports[j], behs[j], flvs[j]);
+        } else {
+            mfLog(@"[capture] EXCPORTS none (kr=%d cnt=%u)", krx, mCnt);
+        }
+    }
+}
+// v2.38.4: mach_msg_send / mach_msg_overwrite — 被漏掉的 MIG 客户端面(主镜像 rebind)
+static kern_return_t (*g_origMachMsgSend)(mach_msg_header_t *);
+static uint32_t g_msendLog = 0;
+static kern_return_t mf_machMsgSendHook(mach_msg_header_t *msg) {
+    kern_return_t kr = g_origMachMsgSend(msg);
+    if (msg && g_msendLog < 100) {
+        g_msendLog++;
+        mfLog(@"[capture] MSEND id=0x%x size=%u to=0x%x remote=0x%x kr=%d",
+              msg->msgh_id, msg->msgh_size, msg->msgh_remote_port, msg->msgh_remote_port, kr);
+    }
+    return kr;
+}
+static kern_return_t (*g_origMachMsgOverwrite)(mach_msg_header_t *, mach_msg_option_t, mach_msg_size_t,
+                                               mach_msg_header_t *, mach_msg_size_t, mach_port_t, mach_msg_timeout_t);
+static uint32_t g_moverLog = 0;
+static kern_return_t mf_machMsgOverwriteHook(mach_msg_header_t *msg, mach_msg_option_t option,
+                                             mach_msg_size_t send_size, mach_msg_header_t *rcv_msg,
+                                             mach_msg_size_t rcv_limit, mach_port_t notify,
+                                             mach_msg_timeout_t timeout) {
+    kern_return_t kr = g_origMachMsgOverwrite(msg, option, send_size, rcv_msg, rcv_limit, notify, timeout);
+    if (msg && (msg->msgh_bits & MACH_SEND_MSG) && g_moverLog < 100) {
+        g_moverLog++;
+        mfLog(@"[capture] MOVER id=0x%x size=%u to=0x%x kr=%d", msg->msgh_id, send_size, msg->msgh_remote_port, kr);
+    }
+    return kr;
 }
 static mach_msg_return_t mf_machMsgHook(mach_msg_header_t *msg, mach_msg_option_t option,
         mach_msg_size_t send_size, mach_msg_header_t *rcv_msg, mach_msg_size_t rcv_limit,
@@ -1086,6 +1132,16 @@ void mfProcCaptureStart(void) {
     //   → dlopen 同步返回 = ctor 已写完槽位, 立即上链, 赶在 app main 之前。
     //   2.38.2 已验证: hook 精确抓到拦截器(0x10bcd20a0 = dylib+0x2a0a0, 与基址 0x10bca8000 对号)。
     if (mh) mfCapInstallTgsChain((struct mach_header_64 *)mh, mainSlide);
+    // v2.38.4: 补漏 MIG 客户端面 — mach_msg_send / mach_msg_overwrite
+    {
+        struct rebinding rbs[2] = {
+            {"mach_msg_send", (void *)mf_machMsgSendHook, (void **)&g_origMachMsgSend},
+            {"mach_msg_overwrite", (void *)mf_machMsgOverwriteHook, (void **)&g_origMachMsgOverwrite},
+        };
+        int r34 = rebind_symbols_image((void *)mh, mainSlide, rbs, 2);
+        mfLog(@"[capture] main-image send/overwrite rebind: %d send=%p overwrite=%p",
+              r34, g_origMachMsgSend, g_origMachMsgOverwrite);
+    }
     g_capTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0,
                                         dispatch_get_global_queue(QOS_CLASS_UTILITY, 0));
     dispatch_source_set_timer(g_capTimer,
