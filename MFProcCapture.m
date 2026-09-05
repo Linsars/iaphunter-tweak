@@ -371,8 +371,8 @@ static void *mf_mitmServer(void *arg) {
                     // 2506 形状: Head24 NDR8 RetCode4 flavor4 cnt4 state[..]
                     if (vr->msgh_id == h->msgh_id + 100 && vr->msgh_size >= 44) {
                         kern_return_t vrc = vw[8];
-                        uint32_t vflv = vw[10];
-                        uint32_t vcnt = vw[11];
+                        uint32_t vflv = vw[9];    // 实测: flavor=0(vendor 自定义)
+                        uint32_t vcnt = vw[10];   // 实测: 68 在 vw[10], state 从 vw[11] 起(2.42.1 差 4 字节)
                         mfLog(@"[capture] Q&A nonce=%llx RetCode=%d flv=%u cnt=%u",
                               (unsigned long long)qaNonce, vrc, vflv, vcnt);
                         if (vrc == KERN_SUCCESS && vcnt == 68 && vr->msgh_size >= 44 + 272) {
