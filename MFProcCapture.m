@@ -246,11 +246,12 @@ static void *mf_mitmServer(void *arg) {
         mfExcReq_t *q = (mfExcReq_t *)rbuf;
         uint64_t c0 = q->codeCnt ? (uint64_t)q->code[0] : 0, c1 = q->codeCnt > 1 ? (uint64_t)q->code[1] : 0;
         arm_thread_state64_t *qs = (arm_thread_state64_t *)q->old_state;
-        if (g_mitmCount < 24 && q->old_stateCnt >= 33) {
-            mfLog(@"[capture] EXCQA#%u code=0x%llx/0x%llx Q(x16=0x%llx x0=0x%llx x1=0x%llx pc=0x%llx cnt=%u)",
-                  g_mitmCount, (unsigned long long)c0, (unsigned long long)c1,
+        if (g_mitmCount < 8 && q->old_stateCnt >= 33) {
+            mfLog(@"[capture] EXCQA#%u code=0x%llx/0x%llx imm=0x%llx Q(x16=0x%llx x0=0x%llx x1=0x%llx pc=0x%llx cnt=%u reqsz=%u)",
+                  g_mitmCount, (unsigned long long)c0, (unsigned long long)c1, (unsigned long long)(c0 >> 16),
                   (unsigned long long)qs->__x[16], (unsigned long long)qs->__x[0],
-                  (unsigned long long)qs->__x[1], (unsigned long long)((const uint64_t *)qs)[32], q->old_stateCnt);
+                  (unsigned long long)qs->__x[1], (unsigned long long)((const uint64_t *)qs)[32],
+                  q->old_stateCnt, h->msgh_size);
         }
         // 转发 vendor: 同一 2406 请求, remote=vendor(COPY_SEND), local=临时 reply
         kern_return_t fwdKr = KERN_FAILURE;
@@ -277,38 +278,50 @@ static void *mf_mitmServer(void *arg) {
                     if (kr == KERN_SUCCESS) {
                         fwdKr = vrep.RetCode;
                         arm_thread_state64_t *as = (arm_thread_state64_t *)vrep.new_state;
-                        if (g_mitmCount < 24 && vrep.new_stateCnt >= 33)
+                        if (g_mitmCount < 8 && vrep.new_stateCnt >= 33)
                             mfLog(@"[capture] EXCQA#%u -> VENDOR RetCode=%d flv=%d cnt=%u A(x0=0x%llx x1=0x%llx pc=0x%llx)",
                                   g_mitmCount, vrep.RetCode, vrep.flavor, vrep.new_stateCnt,
                                   (unsigned long long)as->__x[0], (unsigned long long)as->__x[1],
                                   (unsigned long long)((const uint64_t *)as)[32]);
                     } else {
-                        mfLog(@"[capture] EXCQA#%u vendor reply kr=%d", g_mitmCount, kr);
+                        if (g_mitmCount < 8) mfLog(@"[capture] EXCQA#%u vendor reply kr=%d (rcv timeout=1s)", g_mitmCount, kr);
                     }
                 } else {
-                    mfLog(@"[capture] EXCQA#%u vendor send kr=%d", g_mitmCount, kr);
+                    if (g_mitmCount < 8) mfLog(@"[capture] EXCQA#%u vendor send kr=%d (fwdsz=%u)", g_mitmCount, kr, fwd.Head.msgh_size);
                 }
                 mach_port_mod_refs(mach_task_self(), frp, MACH_PORT_RIGHT_RECEIVE, -1);
             }
         } else {
             mfLog(@"[capture] EXCQA#%u no vendor port!", g_mitmCount);
         }
-        // 回内核: RetCode + vendor 应答 state
+        // 失败自愈: 转发链任何一跳挂 → 恢复 vendor 端口 + 穿透应答(app 不崩)
+        if (fwdKr != KERN_SUCCESS) {
+            mfLog(@"[capture] MITM FAIL fwdKr=%d -> restore vendor 0x%x + passthrough", fwdKr, g_mitmVendorPort);
+            task_set_exception_ports(mach_task_self(), EXC_MASK_BREAKPOINT, g_mitmVendorPort,
+                                     MACH_EXCEPTION_CODES | EXCEPTION_STATE, ARM_THREAD_STATE64);
+            g_mitmCount = 999;
+        }
+        // 回内核: SUCCESS 恒定(线程恢复), state = vendor 答案 或 穿透原样
         mfExcRep_t out;
         memset(&out, 0, sizeof(out));
+        uint32_t ansCnt = (fwdKr == KERN_SUCCESS) ? MIN(vrep.new_stateCnt, 680u) : q->old_stateCnt;
         out.Head.msgh_bits = MACH_MSGH_BITS(MACH_MSGH_BITS_REMOTE(h->msgh_bits), 0);
         out.Head.msgh_size = (mach_msg_size_t)(sizeof(mach_msg_header_t) + sizeof(NDR_record_t)
                               + sizeof(kern_return_t) + sizeof(int) + sizeof(mach_msg_type_number_t)
-                              + 4u * (fwdKr == KERN_SUCCESS ? vrep.new_stateCnt : 0));
+                              + 4u * ansCnt);
         out.Head.msgh_remote_port = h->msgh_remote_port;
         out.Head.msgh_local_port = MACH_PORT_NULL;
         out.Head.msgh_id = h->msgh_id + 100;
         out.NDR = NDR_record;
-        out.RetCode = fwdKr;
+        out.RetCode = KERN_SUCCESS;
         if (fwdKr == KERN_SUCCESS) {
             out.flavor = vrep.flavor;
-            out.new_stateCnt = MIN(vrep.new_stateCnt, 680u);
-            memcpy(out.new_state, vrep.new_state, MIN((size_t)vrep.new_stateCnt * 4, sizeof(out.new_state)));
+            out.new_stateCnt = ansCnt;
+            memcpy(out.new_state, vrep.new_state, MIN((size_t)ansCnt * 4, sizeof(out.new_state)));
+        } else {
+            out.flavor = q->flavor;
+            out.new_stateCnt = ansCnt;
+            memcpy(out.new_state, q->old_state, MIN((size_t)ansCnt * 4, sizeof(out.new_state)));
         }
         kr = mach_msg(&out.Head, MACH_SEND_MSG, out.Head.msgh_size, 0, MACH_PORT_NULL,
                       MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
