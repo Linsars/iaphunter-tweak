@@ -99,9 +99,9 @@ static uint32_t g_tgsCount = 0;
 static kern_return_t mf_tgsHook(thread_act_t thread, thread_state_flavor_t flavor,
                                 thread_state_t st, mach_msg_type_number_t *cnt) {
     kern_return_t kr = g_origTgs(thread, flavor, st, cnt);
-    if (g_tgsCount < 8) {
+    if (g_tgsCount < 32) {
         os_unfair_lock_lock(&g_tgsLock);
-        if (g_tgsCount < 8) {
+        if (g_tgsCount < 32) {
             uint32_t sz = st && cnt ? (*cnt * 4) : 0;
             if (sz > 3400) sz = 3400;
             uint8_t *buf = (uint8_t *)st;
@@ -1082,13 +1082,10 @@ void mfProcCaptureStart(void) {
     // v2.38.2: 层9 — thread_get_state 链式捕获(定案 0x2a0a0 拦截器语义)
     //   dladdr 实锤: dylib ctor 把主二进制 GOT 的 thread_get_state 槽(__DATA_CONST+0x8ce8)
     //   改写到 dylib+0x2a0a0 拦截器 — app 的 license 查询走这条走私通道。
-    //   延迟 3s 后 rebind 主镜像: 我们插入链条最前(app→我们→dylib拦截器→orig),
-    //   记录每次调用的 flavor + 返回的 680B 线程状态缓冲 = 拦截器塞入的 license 字节。
-    //   链式设计: dylib 若再踩槽位只是把我们挤出链头, 解锁路径无恙。
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)),
-                   dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-        if (mh) mfCapInstallTgsChain((struct mach_header_64 *)mh, mainSlide);
-    });
+    //   ★ v2.38.3: 3s 延迟实测错过全部查询(app 的查询在启动头 3s 内跑完, TGS# 0 条)
+    //   → dlopen 同步返回 = ctor 已写完槽位, 立即上链, 赶在 app main 之前。
+    //   2.38.2 已验证: hook 精确抓到拦截器(0x10bcd20a0 = dylib+0x2a0a0, 与基址 0x10bca8000 对号)。
+    if (mh) mfCapInstallTgsChain((struct mach_header_64 *)mh, mainSlide);
     g_capTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0,
                                         dispatch_get_global_queue(QOS_CLASS_UTILITY, 0));
     dispatch_source_set_timer(g_capTimer,
