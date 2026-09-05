@@ -222,7 +222,9 @@ void mfReconApplySKResult(NSDictionary *recon, UIView *page, NSString *topPid, B
     if (!card) return;
     NSMutableArray *lines = [recon[@"lines"] mutableCopy];
     [lines addObject:[NSString stringWithFormat:@"SK 验证通过: %@ (%@) — 无云验证 SDK/mach 端口 → 纯 StoreKit 本地校验型", topPid, isLifetime ? @"lifetime" : @"消耗型/订阅"]];
-    recon[@"lines"] = lines;
+    NSMutableDictionary *upd = [recon mutableCopy];
+    upd[@"lines"] = lines;
+    recon = upd;
     objc_setAssociatedObject(card, "recon", recon, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     UILabel *v = [card viewWithTag:901], *sub = [card viewWithTag:902];
     v.text = [NSString stringWithFormat:@"侦查: 纯 StoreKit 本地验证 — %@", topPid];
