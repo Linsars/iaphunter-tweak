@@ -299,7 +299,7 @@ static void *mf_mitmServer(void *arg) {
     }
     uint32_t imm = ((liveInsn & 0xFFE0001F) == 0xD4200000) ? ((liveInsn >> 5) & 0xFFFF) : 0;
     mfLog(@"[capture] EXCSITE id=%#llx main+0x%llx live=%08x(orig=%08x) brk_imm=%#x",
-          (unsigned long long)((q->codeCnt > 0) ? (uint64_t)q->code[0] : 0),
+          (unsigned long long)((nWords > 12) ? mw[12] : 0),
           (unsigned long long)site, liveInsn, origInsn, imm);
     mfLog(@"[capture] EXCREGS x0=%llx x1=%llx x2=%llx x3=%llx x8=%llx x9=%llx x16=%llx x29=%llx pc=%llx",
           (unsigned long long)st[0], (unsigned long long)st[1], (unsigned long long)st[2],
