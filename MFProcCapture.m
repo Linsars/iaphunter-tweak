@@ -256,7 +256,6 @@ static void *mf_mitmServer(void *arg) {
         if (++served >= 24) break;
         continue;
     }
-    mach_msg_header_t *h = (mach_msg_header_t *)rbuf;
     mfExcReq_t *q = (mfExcReq_t *)rbuf;
     uint64_t c0 = q->codeCnt ? (uint64_t)q->code[0] : 0, c1 = q->codeCnt > 1 ? (uint64_t)q->code[1] : 0;
     arm_thread_state64_t *qs = (arm_thread_state64_t *)q->old_state;
