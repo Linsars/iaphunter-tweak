@@ -297,12 +297,13 @@ static void *mf_mitmServer(void *arg) {
     kern_return_t kr2 = task_set_exception_ports(mach_task_self(), EXC_MASK_BREAKPOINT, g_mitmVendorPort,
                                                  MACH_EXCEPTION_CODES | EXCEPTION_STATE, ARM_THREAD_STATE64);
     mfLog(@"[capture] EXCPROBE port restored kr=%d", kr2);
-    // 应答内核
+    // 应答内核 — ★ 五轮连崩总根因: 内核异常 RPC 的应答口在 msgh_local_port(send-once),
+    //   不是 remote(那是我们的异常端口, 发过去=自言自语, 内核收不到→异常未消费→重抛 SIGTRAP)
     mfExcRep_t out;
     memset(&out, 0, sizeof(out));
-    out.Head.msgh_bits = MACH_MSGH_BITS(MACH_MSGH_BITS_REMOTE(h->msgh_bits), 0);
+    out.Head.msgh_bits = MACH_MSGH_BITS(MACH_MSGH_BITS_LOCAL(h->msgh_bits), 0);
     out.Head.msgh_size = (mach_msg_size_t)(40 + 4u * ansCnt);
-    out.Head.msgh_remote_port = h->msgh_remote_port;
+    out.Head.msgh_remote_port = h->msgh_local_port;
     out.Head.msgh_id = h->msgh_id + 100;
     out.NDR = NDR_record;
     out.RetCode = KERN_SUCCESS;
