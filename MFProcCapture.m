@@ -144,6 +144,10 @@ static kern_return_t mf_tgsHook(thread_act_t thread, thread_state_flavor_t flavo
     }
     return kr;
 }
+static mach_port_t g_mitmVendorPort = MACH_PORT_NULL;
+static os_unfair_lock g_mitmLock = OS_UNFAIR_LOCK_INIT;
+static uint32_t g_mitmCount = 0;
+static void *mf_mitmServer(void *arg);
 static void mfCapInstallTgsChain(struct mach_header_64 *mh, intptr_t slide) {
     if (g_origTgs) return;
     struct rebinding rb = {"thread_get_state", (void *)mf_tgsHook, (void **)&g_origTgs};
@@ -212,9 +216,6 @@ static void mfCapInstallTgsChain(struct mach_header_64 *mh, intptr_t slide) {
 }
 
 // v2.39.0: MITM Q/A — catch_ 由系统 mach_exc_server 分发调用, 我们录 Q 并转发 vendor
-static mach_port_t g_mitmVendorPort = MACH_PORT_NULL;
-static os_unfair_lock g_mitmLock = OS_UNFAIR_LOCK_INIT;
-static uint32_t g_mitmCount = 0;
 kern_return_t catch_mach_exception_raise_state(mach_port_t exception_port,
         exception_type_t exception, const mach_exception_data_t code,
         mach_msg_type_number_t codeCnt, int *flavor,
