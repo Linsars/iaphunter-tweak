@@ -18,25 +18,6 @@
 #import <mach/exception.h>
 #import <pthread.h>
 
-// mach_exc.h 在 iPhoneOS14.5 SDK 不存在 — 手工声明 MIG 64 位异常接口(libsystem_kernel 导出同名符号)
-extern boolean_t mach_exc_server(mach_msg_header_t *InHeadP, mach_msg_header_t *OutHeadP);
-extern kern_return_t mach_exception_raise_state(mach_port_t exception_port,
-        exception_type_t exception, const mach_exception_data_t code,
-        mach_msg_type_number_t codeCnt, int *flavor,
-        const thread_state_t old_state, mach_msg_type_number_t old_stateCnt,
-        thread_state_t new_state, mach_msg_type_number_t *new_stateCnt);
-kern_return_t catch_mach_exception_raise_state(mach_port_t exception_port,
-        exception_type_t exception, const mach_exception_data_t code,
-        mach_msg_type_number_t codeCnt, int *flavor,
-        const thread_state_t old_state, mach_msg_type_number_t old_stateCnt,
-        thread_state_t new_state, mach_msg_type_number_t *new_stateCnt);
-kern_return_t catch_mach_exception_raise(mach_port_t exception_port, mach_port_t thread,
-        mach_port_t task, exception_type_t exception, mach_exception_data_t code,
-        mach_msg_type_number_t codeCnt);
-kern_return_t catch_mach_exception_raise_state_identity(mach_port_t exception_port,
-        mach_port_t thread, mach_port_t task, exception_type_t exception,
-        mach_msg_type_number_t codeCnt, int *flavor, thread_state_t old_state,
-        mach_msg_type_number_t old_stateCnt, thread_state_t new_state,
         mach_msg_type_number_t *new_stateCnt);
 
 #import "fishhook.h"
@@ -215,47 +196,110 @@ static void mfCapInstallTgsChain(struct mach_header_64 *mh, intptr_t slide) {
     }
 }
 
-// v2.39.0: MITM Q/A — catch_ 由系统 mach_exc_server 分发调用, 我们录 Q 并转发 vendor
-kern_return_t catch_mach_exception_raise_state(mach_port_t exception_port,
-        exception_type_t exception, const mach_exception_data_t code,
-        mach_msg_type_number_t codeCnt, int *flavor,
-        const thread_state_t old_state, mach_msg_type_number_t old_stateCnt,
-        thread_state_t new_state, mach_msg_type_number_t *new_stateCnt) {
-    arm_thread_state64_t *q = (arm_thread_state64_t *)old_state;
-    uint64_t q16 = q ? q->__x[16] : 0, q0 = q ? q->__x[0] : 0, q1 = q ? q->__x[1] : 0;
-    uint64_t c0 = (codeCnt > 0) ? (uint64_t)code[0] : 0;
-    kern_return_t kr = mach_exception_raise_state(g_mitmVendorPort, exception, code, codeCnt,
-            flavor, old_state, old_stateCnt, new_state, new_stateCnt);
-    arm_thread_state64_t *a = (arm_thread_state64_t *)new_state;
-    os_unfair_lock_lock(&g_mitmLock);
-    if (g_mitmCount < 24) {
-        if (kr == KERN_SUCCESS && a)
-            mfLog(@"[capture] EXCQA#%u code=0x%llx Q(x16=0x%llx x0=0x%llx x1=0x%llx) → A(x0=0x%llx x1=0x%llx pc=0x%llx cnt=%u)",
-                  g_mitmCount, (unsigned long long)c0, (unsigned long long)q16, (unsigned long long)q0,
-                  (unsigned long long)q1, (unsigned long long)a->__x[0], (unsigned long long)a->__x[1],
-                  (unsigned long long)a->__pc, *new_stateCnt);
-        else
-            mfLog(@"[capture] EXCQA#%u code=0x%llx Q(x16=0x%llx) → fwd kr=%d (fail)", g_mitmCount,
-                  (unsigned long long)c0, (unsigned long long)q16, kr);
+// v2.39.2: 手搓 64 位 MIG 异常交换(iOS SDK 无 mach_exc 头/导出, 布局照 xnu MIG, 4B pack)
+#pragma pack(4)
+typedef struct { mach_port_t name; mach_msg_size_t pad1; uint16_t pad2; uint8_t disp; uint8_t type; } mfPortDesc_t;
+typedef struct {
+    mach_msg_header_t Head;
+    mach_msg_body_t body;
+    mfPortDesc_t thread;
+    mfPortDesc_t task;
+    NDR_record_t NDR;
+    exception_type_t exception;
+    mach_msg_type_number_t codeCnt;
+    int64_t code[2];
+    int flavor;
+    mach_msg_type_number_t old_stateCnt;
+    uint32_t old_state[680];
+} mfExcReq_t;
+typedef struct {
+    mach_msg_header_t Head;
+    NDR_record_t NDR;
+    kern_return_t RetCode;
+    int flavor;
+    mach_msg_type_number_t new_stateCnt;
+    uint32_t new_state[680];
+} mfExcRep_t;
+#pragma pack()
+static void *mf_mitmServer(void *arg) {
+    mach_port_t rcv = (mach_port_t)(uintptr_t)arg;
+    mfLog(@"[capture] MITM server up rcv=0x%x vendor=0x%x", rcv, g_mitmVendorPort);
+    static uint8_t rbuf[8192] __attribute__((aligned(8)));
+    for (;;) {
+        kern_return_t kr = mach_msg((mach_msg_header_t *)rbuf, MACH_RCV_MSG | MACH_RCV_LARGE,
+                                    0, sizeof(rbuf), rcv, MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
+        if (kr != KERN_SUCCESS) continue;
+        mach_msg_header_t *h = (mach_msg_header_t *)rbuf;
+        if (h->msgh_id != 2406) { mfLog(@"[capture] MITM skip id=%u", h->msgh_id); continue; }
+        mfExcReq_t *q = (mfExcReq_t *)rbuf;
+        uint64_t c0 = q->codeCnt ? (uint64_t)q->code[0] : 0, c1 = q->codeCnt > 1 ? (uint64_t)q->code[1] : 0;
+        arm_thread_state64_t *qs = (arm_thread_state64_t *)q->old_state;
+        if (g_mitmCount < 24 && q->old_stateCnt >= 33) {
+            mfLog(@"[capture] EXCQA#%u code=0x%llx/0x%llx Q(x16=0x%llx x0=0x%llx x1=0x%llx pc=0x%llx cnt=%u)",
+                  g_mitmCount, (unsigned long long)c0, (unsigned long long)c1,
+                  (unsigned long long)qs->__x[16], (unsigned long long)qs->__x[0],
+                  (unsigned long long)qs->__x[1], (unsigned long long)qs->__pc, q->old_stateCnt);
+        }
+        // 转发 vendor: 同一 2406 请求, remote=vendor(COPY_SEND), local=临时 reply
+        kern_return_t fwdKr = KERN_FAILURE;
+        mfExcRep_t vrep;
+        memset(&vrep, 0, sizeof(vrep));
+        if (g_mitmVendorPort != MACH_PORT_NULL) {
+            mfExcReq_t fwd = *q;
+            mach_port_t frp = MACH_PORT_NULL;
+            if (mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &frp) == KERN_SUCCESS) {
+                fwd.Head.msgh_bits = MACH_MSGH_BITS_COMPLEX |
+                                     MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND, MACH_MSG_TYPE_MAKE_SEND_ONCE);
+                fwd.Head.msgh_remote_port = g_mitmVendorPort;
+                fwd.Head.msgh_local_port = frp;
+                fwd.Head.msgh_voucher_port = MACH_PORT_NULL;
+                fwd.Head.msgh_id = 2406;
+                kr = mach_msg(&fwd.Head, MACH_SEND_MSG, fwd.Head.msgh_size, 0, MACH_PORT_NULL,
+                              MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
+                if (kr == KERN_SUCCESS) {
+                    kr = mach_msg(&vrep.Head, MACH_RCV_MSG | MACH_RCV_TIMEOUT, 0, sizeof(vrep), frp,
+                                  1000, MACH_PORT_NULL);
+                    if (kr == KERN_SUCCESS) {
+                        fwdKr = vrep.RetCode;
+                        arm_thread_state64_t *as = (arm_thread_state64_t *)vrep.new_state;
+                        if (g_mitmCount < 24 && vrep.new_stateCnt >= 33)
+                            mfLog(@"[capture] EXCQA#%u -> VENDOR RetCode=%d flv=%d cnt=%u A(x0=0x%llx x1=0x%llx pc=0x%llx)",
+                                  g_mitmCount, vrep.RetCode, vrep.flavor, vrep.new_stateCnt,
+                                  (unsigned long long)as->__x[0], (unsigned long long)as->__x[1],
+                                  (unsigned long long)as->__pc);
+                    } else {
+                        mfLog(@"[capture] EXCQA#%u vendor reply kr=%d", g_mitmCount, kr);
+                    }
+                } else {
+                    mfLog(@"[capture] EXCQA#%u vendor send kr=%d", g_mitmCount, kr);
+                }
+                mach_port_mod_refs(mach_task_self(), frp, MACH_PORT_RIGHT_RECEIVE, -1);
+            }
+        } else {
+            mfLog(@"[capture] EXCQA#%u no vendor port!", g_mitmCount);
+        }
+        // 回内核: RetCode + vendor 应答 state
+        mfExcRep_t out;
+        memset(&out, 0, sizeof(out));
+        out.Head.msgh_bits = MACH_MSGH_BITS(MACH_MSGH_BITS_REMOTE(h->msgh_bits), 0);
+        out.Head.msgh_size = (mach_msg_size_t)(sizeof(mach_msg_header_t) + sizeof(NDR_record_t)
+                              + sizeof(kern_return_t) + sizeof(int) + sizeof(mach_msg_type_number_t)
+                              + 4u * (fwdKr == KERN_SUCCESS ? vrep.new_stateCnt : 0));
+        out.Head.msgh_remote_port = h->msgh_remote_port;
+        out.Head.msgh_local_port = MACH_PORT_NULL;
+        out.Head.msgh_id = h->msgh_id + 100;
+        out.NDR = NDR_record;
+        out.RetCode = fwdKr;
+        if (fwdKr == KERN_SUCCESS) {
+            out.flavor = vrep.flavor;
+            out.new_stateCnt = vrep.new_stateCnt;
+            memcpy(out.new_state, vrep.new_state, MIN((size_t)vrep.new_stateCnt * 4, sizeof(out.new_state)));
+        }
+        kr = mach_msg(&out.Head, MACH_SEND_MSG, out.Head.msgh_size, 0, MACH_PORT_NULL,
+                      MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
+        if (kr != KERN_SUCCESS) mfLog(@"[capture] MITM kernel reply kr=%d", kr);
         g_mitmCount++;
     }
-    os_unfair_lock_unlock(&g_mitmLock);
-    return kr;
-}
-kern_return_t catch_mach_exception_raise(mach_port_t ep, mach_port_t thread, mach_port_t task,
-        exception_type_t exception, mach_exception_data_t code, mach_msg_type_number_t codeCnt) {
-    return KERN_FAILURE;
-}
-kern_return_t catch_mach_exception_raise_state_identity(mach_port_t ep, mach_port_t thread,
-        mach_port_t task, exception_type_t exception, mach_msg_type_number_t codeCnt, int *flavor,
-        thread_state_t old_state, mach_msg_type_number_t old_stateCnt, thread_state_t new_state,
-        mach_msg_type_number_t *new_stateCnt) {
-    return KERN_FAILURE;
-}
-static void *mf_mitmServer(void *arg) {
-    mach_port_t p = (mach_port_t)(uintptr_t)arg;
-    mfLog(@"[capture] MITM server up port=0x%x vendor=0x%x", p, g_mitmVendorPort);
-    for (;;) mach_msg_server(mach_exc_server, 8192, p, 0);
     return NULL;
 }
 // v2.38.4: mach_msg_send / mach_msg_overwrite — 被漏掉的 MIG 客户端面(主镜像 rebind)
