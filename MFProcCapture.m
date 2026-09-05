@@ -237,7 +237,7 @@ static void *mf_mitmServer(void *arg) {
             mfLog(@"[capture] EXCQA#%u code=0x%llx/0x%llx Q(x16=0x%llx x0=0x%llx x1=0x%llx pc=0x%llx cnt=%u)",
                   g_mitmCount, (unsigned long long)c0, (unsigned long long)c1,
                   (unsigned long long)qs->__x[16], (unsigned long long)qs->__x[0],
-                  (unsigned long long)qs->__x[1], (unsigned long long)qs->__pc, q->old_stateCnt);
+                  (unsigned long long)qs->__x[1], (unsigned long long)((const uint64_t *)qs)[32], q->old_stateCnt);
         }
         // 转发 vendor: 同一 2406 请求, remote=vendor(COPY_SEND), local=临时 reply
         kern_return_t fwdKr = KERN_FAILURE;
@@ -265,7 +265,7 @@ static void *mf_mitmServer(void *arg) {
                             mfLog(@"[capture] EXCQA#%u -> VENDOR RetCode=%d flv=%d cnt=%u A(x0=0x%llx x1=0x%llx pc=0x%llx)",
                                   g_mitmCount, vrep.RetCode, vrep.flavor, vrep.new_stateCnt,
                                   (unsigned long long)as->__x[0], (unsigned long long)as->__x[1],
-                                  (unsigned long long)as->__pc);
+                                  (unsigned long long)((const uint64_t *)as)[32]);
                     } else {
                         mfLog(@"[capture] EXCQA#%u vendor reply kr=%d", g_mitmCount, kr);
                     }
