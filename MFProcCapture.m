@@ -446,8 +446,8 @@ reply_now:
     mfLog(@"[capture] EXCPROBE reply kr=%d (%#x) emu=%d(0=pw,1=emu,2=vend) site=%#llx", kr, kr, emulated, (unsigned long long)site);
     if (kr != KERN_SUCCESS) {
         task_set_exception_ports(mach_task_self(), EXC_MASK_BREAKPOINT, g_mitmVendorPort,
-                                 MACH_EXCEPTION_CODES | EXCEPTION_STATE_IDENTITY, ARM_THREAD_STATE64);
-        mfLog(@"[capture] EXCPROBE reply FAIL -> vendor restored");
+                                 g_mitmOldBeh, g_mitmOldFlv);
+        mfLog(@"[capture] EXCPROBE reply FAIL -> vendor restored (beh=%d)", g_mitmOldBeh);
     }
     // 单发即还 vendor(后续查询归它, app 照常解锁)
     kern_return_t kr2 = task_set_exception_ports(mach_task_self(), EXC_MASK_BREAKPOINT, g_mitmVendorPort,
