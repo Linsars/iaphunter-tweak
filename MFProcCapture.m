@@ -229,7 +229,20 @@ static void *mf_mitmServer(void *arg) {
                                     0, sizeof(rbuf), rcv, MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
         if (kr != KERN_SUCCESS) continue;
         mach_msg_header_t *h = (mach_msg_header_t *)rbuf;
-        if (h->msgh_id != 2406) { mfLog(@"[capture] MITM skip id=%u", h->msgh_id); continue; }
+        if (h->msgh_id != 2406) {   // 非 raise_state — 也要回内核, 否则 send-once 挂死
+            mfLog(@"[capture] MITM skip id=%u (reply failure)", h->msgh_id);
+            mfExcRep_t nf;
+            memset(&nf, 0, sizeof(nf));
+            nf.Head.msgh_bits = MACH_MSGH_BITS(MACH_MSGH_BITS_REMOTE(h->msgh_bits), 0);
+            nf.Head.msgh_size = sizeof(mach_msg_header_t) + sizeof(NDR_record_t) + sizeof(kern_return_t);
+            nf.Head.msgh_remote_port = h->msgh_remote_port;
+            nf.Head.msgh_id = h->msgh_id + 100;
+            nf.NDR = NDR_record;
+            nf.RetCode = KERN_FAILURE;
+            mach_msg(&nf.Head, MACH_SEND_MSG, nf.Head.msgh_size, 0, MACH_PORT_NULL,
+                     MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
+            continue;
+        }
         mfExcReq_t *q = (mfExcReq_t *)rbuf;
         uint64_t c0 = q->codeCnt ? (uint64_t)q->code[0] : 0, c1 = q->codeCnt > 1 ? (uint64_t)q->code[1] : 0;
         arm_thread_state64_t *qs = (arm_thread_state64_t *)q->old_state;
@@ -253,6 +266,9 @@ static void *mf_mitmServer(void *arg) {
                 fwd.Head.msgh_local_port = frp;
                 fwd.Head.msgh_voucher_port = MACH_PORT_NULL;
                 fwd.Head.msgh_id = 2406;
+                // ★ 收到的 msgh_size 含 trailer — 发送必须是规范请求尺寸, 否则 vendor 侧 MIG 校验拒答
+                fwd.Head.msgh_size = (mach_msg_size_t)((uint8_t *)q->old_state - (uint8_t *)q
+                                      + 4u * q->old_stateCnt);
                 kr = mach_msg(&fwd.Head, MACH_SEND_MSG, fwd.Head.msgh_size, 0, MACH_PORT_NULL,
                               MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
                 if (kr == KERN_SUCCESS) {
@@ -291,7 +307,7 @@ static void *mf_mitmServer(void *arg) {
         out.RetCode = fwdKr;
         if (fwdKr == KERN_SUCCESS) {
             out.flavor = vrep.flavor;
-            out.new_stateCnt = vrep.new_stateCnt;
+            out.new_stateCnt = MIN(vrep.new_stateCnt, 680u);
             memcpy(out.new_state, vrep.new_state, MIN((size_t)vrep.new_stateCnt * 4, sizeof(out.new_state)));
         }
         kr = mach_msg(&out.Head, MACH_SEND_MSG, out.Head.msgh_size, 0, MACH_PORT_NULL,
