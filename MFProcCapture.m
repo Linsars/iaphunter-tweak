@@ -153,8 +153,9 @@ static void mfCapInstallTgsChain(struct mach_header_64 *mh, intptr_t slide) {
             mfLog(@"[capture] EXCPORTS none (kr=%d cnt=%u)", krx, mCnt);
         }
     }
-    // v2.39.7: MITM 手搓 MIG 4 连崩 dead end — 门控退役, 仅 mfMitmCapture=1 实验时启用
-    if (![[NSUserDefaults standardUserDefaults] boolForKey:@"mfMitmCapture"]) return;
+    // v2.40.0: 采样应答器(透明单发) — 守 BREAKPOINT 端口, 异常来了本地仿真原指令(基线快照有原字节),
+    //   PC+=4(★ 4 连崩真因: 此前应答从不推进 PC), 答完即还 vendor 端口。门控 mfExcProbe 默认 ON(透明+单发+即还=安全)
+    if ([[NSUserDefaults standardUserDefaults] boolForKey:@"mfExcProbeOff"]) return;   // 默认 ON, mfExcProbeOff=1 关
     // v2.39.4: 终局 MITM — swap EXC_BREAKPOINT 处理器到自己, 录 Q/A 后转发 vendor
     //   ★ 2.39.3 翻案: mask=0x40 = 1<<6 = EXC_BREAKPOINT(不是 EXC_SYSCALL!)
     //   ★ 2.39.7 终判: 手搓 MIG 转发 4 连崩(2406/2506/规范尺寸/穿透全试) — 协议录制路线 dead end
@@ -227,112 +228,88 @@ typedef struct {
 #pragma pack()
 static void *mf_mitmServer(void *arg) {
     mach_port_t rcv = (mach_port_t)(uintptr_t)arg;
-    mfLog(@"[capture] MITM server up rcv=0x%x vendor=0x%x", rcv, g_mitmVendorPort);
+    mfLog(@"[capture] EXCPROBE up rcv=0x%x vendor=0x%x", rcv, g_mitmVendorPort);
     static uint8_t rbuf[8192] __attribute__((aligned(8)));
-    for (;;) {
-        kern_return_t kr = mach_msg((mach_msg_header_t *)rbuf, MACH_RCV_MSG | MACH_RCV_LARGE,
-                                    0, sizeof(rbuf), rcv, MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
-        if (kr != KERN_SUCCESS) continue;
-        mach_msg_header_t *h = (mach_msg_header_t *)rbuf;
-        if (h->msgh_id != 2406) {   // 非 raise_state — 也要回内核, 否则 send-once 挂死
-            mfLog(@"[capture] MITM skip id=%u (reply failure)", h->msgh_id);
-            mfExcRep_t nf;
-            memset(&nf, 0, sizeof(nf));
-            nf.Head.msgh_bits = MACH_MSGH_BITS(MACH_MSGH_BITS_REMOTE(h->msgh_bits), 0);
-            nf.Head.msgh_size = sizeof(mach_msg_header_t) + sizeof(NDR_record_t) + sizeof(kern_return_t);
-            nf.Head.msgh_remote_port = h->msgh_remote_port;
-            nf.Head.msgh_id = h->msgh_id + 100;
-            nf.NDR = NDR_record;
-            nf.RetCode = KERN_FAILURE;
-            mach_msg(&nf.Head, MACH_SEND_MSG, nf.Head.msgh_size, 0, MACH_PORT_NULL,
-                     MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
-            continue;
-        }
-        mfExcReq_t *q = (mfExcReq_t *)rbuf;
-        uint64_t c0 = q->codeCnt ? (uint64_t)q->code[0] : 0, c1 = q->codeCnt > 1 ? (uint64_t)q->code[1] : 0;
-        arm_thread_state64_t *qs = (arm_thread_state64_t *)q->old_state;
-        if (g_mitmCount < 8 && q->old_stateCnt >= 33) {
-            mfLog(@"[capture] EXCQA#%u code=0x%llx/0x%llx imm=0x%llx Q(x16=0x%llx x0=0x%llx x1=0x%llx pc=0x%llx cnt=%u reqsz=%u)",
-                  g_mitmCount, (unsigned long long)c0, (unsigned long long)c1, (unsigned long long)(c0 >> 16),
-                  (unsigned long long)qs->__x[16], (unsigned long long)qs->__x[0],
-                  (unsigned long long)qs->__x[1], (unsigned long long)((const uint64_t *)qs)[32],
-                  q->old_stateCnt, h->msgh_size);
-        }
-        // 转发 vendor: 同一 2406 请求, remote=vendor(COPY_SEND), local=临时 reply
-        kern_return_t fwdKr = KERN_FAILURE;
-        mfExcRep_t vrep;
-        memset(&vrep, 0, sizeof(vrep));
-        if (g_mitmVendorPort != MACH_PORT_NULL) {
-            mfExcReq_t fwd = *q;
-            mach_port_t frp = MACH_PORT_NULL;
-            if (mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &frp) == KERN_SUCCESS) {
-                fwd.Head.msgh_bits = MACH_MSGH_BITS_COMPLEX |
-                                     MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND, MACH_MSG_TYPE_MAKE_SEND_ONCE);
-                fwd.Head.msgh_remote_port = g_mitmVendorPort;
-                fwd.Head.msgh_local_port = frp;
-                fwd.Head.msgh_voucher_port = MACH_PORT_NULL;
-                fwd.Head.msgh_id = 2406;
-                // ★ 收到的 msgh_size 含 trailer — 发送必须是规范请求尺寸, 否则 vendor 侧 MIG 校验拒答
-                fwd.Head.msgh_size = (mach_msg_size_t)((uint8_t *)q->old_state - (uint8_t *)q
-                                      + 4u * q->old_stateCnt);
-                kr = mach_msg(&fwd.Head, MACH_SEND_MSG, fwd.Head.msgh_size, 0, MACH_PORT_NULL,
-                              MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
-                if (kr == KERN_SUCCESS) {
-                    kr = mach_msg(&vrep.Head, MACH_RCV_MSG | MACH_RCV_TIMEOUT, 0, sizeof(vrep), frp,
-                                  1000, MACH_PORT_NULL);
-                    if (kr == KERN_SUCCESS) {
-                        fwdKr = vrep.RetCode;
-                        arm_thread_state64_t *as = (arm_thread_state64_t *)vrep.new_state;
-                        if (g_mitmCount < 8 && vrep.new_stateCnt >= 33)
-                            mfLog(@"[capture] EXCQA#%u -> VENDOR RetCode=%d flv=%d cnt=%u A(x0=0x%llx x1=0x%llx pc=0x%llx)",
-                                  g_mitmCount, vrep.RetCode, vrep.flavor, vrep.new_stateCnt,
-                                  (unsigned long long)as->__x[0], (unsigned long long)as->__x[1],
-                                  (unsigned long long)((const uint64_t *)as)[32]);
-                    } else {
-                        if (g_mitmCount < 8) mfLog(@"[capture] EXCQA#%u vendor reply kr=%d (rcv timeout=1s)", g_mitmCount, kr);
-                    }
-                } else {
-                    if (g_mitmCount < 8) mfLog(@"[capture] EXCQA#%u vendor send kr=%d (fwdsz=%u)", g_mitmCount, kr, fwd.Head.msgh_size);
-                }
-                mach_port_mod_refs(mach_task_self(), frp, MACH_PORT_RIGHT_RECEIVE, -1);
-            }
-        } else {
-            mfLog(@"[capture] EXCQA#%u no vendor port!", g_mitmCount);
-        }
-        // 失败自愈: 转发链任何一跳挂 → 恢复 vendor 端口 + 穿透应答(app 不崩)
-        if (fwdKr != KERN_SUCCESS) {
-            mfLog(@"[capture] MITM FAIL fwdKr=%d -> restore vendor 0x%x + passthrough", fwdKr, g_mitmVendorPort);
-            task_set_exception_ports(mach_task_self(), EXC_MASK_BREAKPOINT, g_mitmVendorPort,
-                                     MACH_EXCEPTION_CODES | EXCEPTION_STATE, ARM_THREAD_STATE64);
-            g_mitmCount = 999;
-        }
-        // 回内核: SUCCESS 恒定(线程恢复), state = vendor 答案 或 穿透原样
-        mfExcRep_t out;
-        memset(&out, 0, sizeof(out));
-        uint32_t ansCnt = (fwdKr == KERN_SUCCESS) ? MIN(vrep.new_stateCnt, 680u) : q->old_stateCnt;
-        out.Head.msgh_bits = MACH_MSGH_BITS(MACH_MSGH_BITS_REMOTE(h->msgh_bits), 0);
-        out.Head.msgh_size = (mach_msg_size_t)(sizeof(mach_msg_header_t) + sizeof(NDR_record_t)
-                              + sizeof(kern_return_t) + sizeof(int) + sizeof(mach_msg_type_number_t)
-                              + 4u * ansCnt);
-        out.Head.msgh_remote_port = h->msgh_remote_port;
-        out.Head.msgh_local_port = MACH_PORT_NULL;
-        out.Head.msgh_id = h->msgh_id + 100;
-        out.NDR = NDR_record;
-        out.RetCode = KERN_SUCCESS;
-        if (fwdKr == KERN_SUCCESS) {
-            out.flavor = vrep.flavor;
-            out.new_stateCnt = ansCnt;
-            memcpy(out.new_state, vrep.new_state, MIN((size_t)ansCnt * 4, sizeof(out.new_state)));
-        } else {
-            out.flavor = q->flavor;
-            out.new_stateCnt = ansCnt;
-            memcpy(out.new_state, q->old_state, MIN((size_t)ansCnt * 4, sizeof(out.new_state)));
-        }
-        kr = mach_msg(&out.Head, MACH_SEND_MSG, out.Head.msgh_size, 0, MACH_PORT_NULL,
-                      MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
-        if (kr != KERN_SUCCESS) mfLog(@"[capture] MITM kernel reply kr=%d", kr);
-        g_mitmCount++;
+    // 收第一条异常消息(阻塞), 采样后立即还端口
+    kern_return_t kr = mach_msg((mach_msg_header_t *)rbuf, MACH_RCV_MSG | MACH_RCV_LARGE,
+                                0, sizeof(rbuf), rcv, MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
+    if (kr != KERN_SUCCESS) { mfLog(@"[capture] EXCPROBE rcv kr=%d", kr); return NULL; }
+    mach_msg_header_t *h = (mach_msg_header_t *)rbuf;
+    mfExcReq_t *q = (mfExcReq_t *)rbuf;
+    uint64_t c0 = q->codeCnt ? (uint64_t)q->code[0] : 0, c1 = q->codeCnt > 1 ? (uint64_t)q->code[1] : 0;
+    arm_thread_state64_t *qs = (arm_thread_state64_t *)q->old_state;
+    uint64_t pc = (q->old_stateCnt >= 33) ? ((const uint64_t *)qs)[32] : 0;
+    uint64_t site = pc ? (pc - (uint64_t)(uintptr_t)mhCapMainText) : 0;
+    // 读当前指令(可能是 brk) + 原字节(ctor 基线快照)
+    uint32_t liveInsn = 0, origInsn = 0;
+    vm_read_overwrite(mach_task_self(), (vm_address_t)pc, 4, (vm_address_t)&liveInsn, &(vm_size_t){4});
+    if (mhCapMainText && site + 4 <= 0x2e30000) {
+        // 基线 __TEXT 快照 = g_capSegs[0](ctor 首段)
+        if (g_capNSeg > 0 && g_capSegs[0].baseline) memcpy(&origInsn, g_capSegs[0].baseline + site, 4);
     }
+    uint32_t imm = ((liveInsn & 0xFFE0001F) == 0xD4200000) ? ((liveInsn >> 5) & 0xFFFF) : 0;
+    mfLog(@"[capture] EXCSITE#0 main+0x%llx live=%08x(orig=%08x) brk_imm=%#x code=%llx/%llx",
+          (unsigned long long)site, liveInsn, origInsn, imm,
+          (unsigned long long)c0, (unsigned long long)c1);
+    if (q->old_stateCnt >= 33)
+        mfLog(@"[capture] EXCREGS x0=%llx x1=%llx x8=%llx x9=%llx x16=%llx x29=%llx pc=%llx",
+              (unsigned long long)qs->__x[0], (unsigned long long)qs->__x[1],
+              (unsigned long long)qs->__x[8], (unsigned long long)qs->__x[9],
+              (unsigned long long)qs->__x[16], (unsigned long long)qs->__x[29],
+              (unsigned long long)pc);
+    // 透明仿真: 解码原指令(LDUR/STUR 64b imm9), 用本 task 内存读写模拟, PC+=4
+    arm_thread_state64_t ns = *qs;
+    uint32_t ansCnt = q->old_stateCnt;
+    int emulated = 0;
+    uint32_t op = origInsn & 0xFFE00C00, sz = (origInsn >> 30) & 3;
+    if ((origInsn & 0xFFE00C00) == 0xF8200000 || (origInsn & 0xFFE00C00) == 0xF8000000) {
+        // LDUR/STUR 64b: opc bit22, imm9 sign, Rn, Rt
+        int64_t simm = (int64_t)((origInsn >> 12) & 0x1FF); if (simm & 0x100) simm -= 0x200;
+        uint32_t Rn = (origInsn >> 5) & 0x1F, Rt = origInsn & 0x1F;
+        uint64_t base = (&ns.__x[0])[Rn];
+        int isLoad = ((origInsn >> 22) & 1) == 1;
+        if (isLoad) {
+            uint64_t v = 0;
+            vm_read_overwrite(mach_task_self(), (vm_address_t)(base + simm), 8, (vm_address_t)&v, &(vm_size_t){8});
+            (&ns.__x[0])[Rt] = v;
+            mfLog(@"[capture] EXCEMU ldur x%u,[x%u,%#llx] = %#llx", Rt, Rn, (unsigned long long)simm, (unsigned long long)v);
+        } else {
+            uint64_t v = (&ns.__x[0])[Rt];
+            vm_write_overwrite(mach_task_self(), (vm_address_t)(base + simm), &v, 8);
+            mfLog(@"[capture] EXCEMU stur x%u,[x%u,%#llx] <- %#llx", Rt, Rn, (unsigned long long)simm, (unsigned long long)v);
+        }
+        emulated = 1;
+    } else {
+        mfLog(@"[capture] EXCEMU unsupported orig=%08x (passthrough x9)", origInsn);
+    }
+    ((uint64_t *)&ns)[32] = pc + 4;   // ★ 推进 PC 越过 brk
+    // 伪造值钩子: mfExcFakeX9 >= 0 时覆盖仿真结果(枚举器)
+    double fake = -1;
+    id fakeObj = [[NSUserDefaults standardUserDefaults] objectForKey:@"mfExcFakeX9"];
+    if (fakeObj) fake = [fakeObj doubleValue];
+    if (fake >= 0) {
+        (&ns.__x[0])[9] = (uint64_t)fake;
+        mfLog(@"[capture] EXCFAKE x9 <- %#llx", (unsigned long long)(uint64_t)fake);
+    }
+    // 立即还端口给 vendor(后续异常全归它)
+    kern_return_t kr2 = task_set_exception_ports(mach_task_self(), EXC_MASK_BREAKPOINT, g_mitmVendorPort,
+                                                 MACH_EXCEPTION_CODES | EXCEPTION_STATE, ARM_THREAD_STATE64);
+    mfLog(@"[capture] EXCPROBE port restored kr=%d", kr2);
+    // 应答内核
+    mfExcRep_t out;
+    memset(&out, 0, sizeof(out));
+    out.Head.msgh_bits = MACH_MSGH_BITS(MACH_MSGH_BITS_REMOTE(h->msgh_bits), 0);
+    out.Head.msgh_size = (mach_msg_size_t)(40 + 4u * ansCnt);
+    out.Head.msgh_remote_port = h->msgh_remote_port;
+    out.Head.msgh_id = h->msgh_id + 100;
+    out.NDR = NDR_record;
+    out.RetCode = KERN_SUCCESS;
+    out.flavor = q->flavor;
+    out.new_stateCnt = ansCnt;
+    memcpy(out.new_state, &ns, MIN((size_t)ansCnt * 4, sizeof(ns)));
+    kr = mach_msg(&out.Head, MACH_SEND_MSG, out.Head.msgh_size, 0, MACH_PORT_NULL,
+                  MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
+    mfLog(@"[capture] EXCPROBE reply kr=%d (emulated=%d)", kr, emulated);
     return NULL;
 }
 // v2.38.4: mach_msg_send / mach_msg_overwrite — 被漏掉的 MIG 客户端面(主镜像 rebind)
