@@ -277,14 +277,14 @@ static void *mf_mitmServer(void *arg) {
         // 上面步长错了 — 正确: u32 数组两两拼 u64
         for (int k = 0; k < 68; k++) st[k] = (uint64_t)mw[16 + 2*k] | ((uint64_t)mw[17 + 2*k] << 32);
         // 状态 hex 全量(两行)
-        char hx[2 * 68 + 2];
+        static char hx[2 * 68 * 4 + 2];   // 68 u64 × 16 hex + NUL(2.41.2 写成 138B → 栈溢出)
         static const char *H = "0123456789abcdef";
         for (int k = 0; k < 68; k++) {
-            uint32_t lo = (uint32_t)st[k], hi = (uint32_t)(st[k] >> 32);
-            hx[4*k] = H[(hi >> 4) & 15]; hx[4*k+1] = H[hi & 15];
-            hx[4*k+2] = H[(lo >> 4) & 15]; hx[4*k+3] = H[lo & 15];
+            uint64_t v = st[k];
+            for (int b = 0; b < 16; b++)
+                hx[16*k + b] = H[(v >> (60 - 4*b)) & 15];
         }
-        hx[4*68] = 0;
+        hx[16*68] = 0;
         mfLog(@"[capture] EXCSTATE %s", hx);
     }
     uint64_t pc = st[32];
@@ -298,7 +298,8 @@ static void *mf_mitmServer(void *arg) {
         if (b0 && site + 4 <= sz0) memcpy(&origInsn, b0 + site, 4);
     }
     uint32_t imm = ((liveInsn & 0xFFE0001F) == 0xD4200000) ? ((liveInsn >> 5) & 0xFFFF) : 0;
-    mfLog(@"[capture] EXCSITE main+0x%llx live=%08x(orig=%08x) brk_imm=%#x",
+    mfLog(@"[capture] EXCSITE id=%#llx main+0x%llx live=%08x(orig=%08x) brk_imm=%#x",
+          (unsigned long long)((q->codeCnt > 0) ? (uint64_t)q->code[0] : 0),
           (unsigned long long)site, liveInsn, origInsn, imm);
     mfLog(@"[capture] EXCREGS x0=%llx x1=%llx x2=%llx x3=%llx x8=%llx x9=%llx x16=%llx x29=%llx pc=%llx",
           (unsigned long long)st[0], (unsigned long long)st[1], (unsigned long long)st[2],
@@ -351,8 +352,8 @@ static void *mf_mitmServer(void *arg) {
     memcpy(out.new_state, ns, sizeof(ns));
     mfLog(@"[capture] EXCPROBE replying size=%u to remote=%#x", out.Head.msgh_size, out.Head.msgh_remote_port);
     kr = mach_msg(&out.Head, MACH_SEND_MSG | MACH_SEND_TIMEOUT, out.Head.msgh_size, 0, MACH_PORT_NULL,
-                  1000, MACH_PORT_NULL);
-    mfLog(@"[capture] EXCPROBE reply kr=%d (%#x) emulated=%d", kr, kr, emulated);
+                  100, MACH_PORT_NULL);   // 100ms: send-once 无接收者则 TIMEOUT, 绝不挂线程
+    mfLog(@"[capture] EXCPROBE reply kr=%d (%#x) emulated=%d site=%#llx", kr, kr, emulated, (unsigned long long)site);
     if (kr != KERN_SUCCESS) {
         task_set_exception_ports(mach_task_self(), EXC_MASK_BREAKPOINT, g_mitmVendorPort,
                                  MACH_EXCEPTION_CODES | EXCEPTION_STATE_IDENTITY, ARM_THREAD_STATE64);
