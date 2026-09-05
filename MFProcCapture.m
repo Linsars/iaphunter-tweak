@@ -124,6 +124,7 @@ static kern_return_t mf_tgsHook(thread_act_t thread, thread_state_flavor_t flavo
     }
     return kr;
 }
+static uint8_t *mhCapMainText = NULL;   // v2.39.10: 主 __TEXT 运行时基址(ctor 记录)
 static mach_port_t g_mitmVendorPort = MACH_PORT_NULL;
 static os_unfair_lock g_mitmLock = OS_UNFAIR_LOCK_INIT;
 static uint32_t g_mitmCount = 0;
@@ -1253,6 +1254,7 @@ void mfProcCaptureStart(void) {
     {
         uint64_t t0 = mach_absolute_time();
         struct mach_header_64 *mh2 = (struct mach_header_64 *)mh;
+        mhCapMainText = (uint8_t *)mh2;
         uint8_t *text = (uint8_t *)mh2 + 0;   // __TEXT 从镜像头开始, vm offset==file offset
         uint64_t tsize = 0x2e30000;
         uint32_t *w = (uint32_t *)text;
@@ -1394,6 +1396,30 @@ static void mfCapDoSweep(void) {
     {
         if (g_capEvents >= kCapMaxEvents) return;
         g_capSweeps++;
+        // v2.39.10: 瞬时 brk 猎捕 — vendor JIT 打 brk 进 __TEXT 又自清, 常驻扫描不可见
+        //   每 sweep(0.5s) 原生全扫, 新 brk(imm>=0x100) 上报(位置+imm+当前字节); 基线集合去重
+        {
+            static uint8_t *seen = NULL;
+            static uint64_t seenN = 0;
+            uint64_t n = 0x2e30000 / 4;
+            if (!seen) { seen = calloc(n, 1); seenN = n; }
+            if (seen && seenN == n) {
+                uint32_t *w = (uint32_t *)mhCapMainText;
+                for (uint64_t i = 4; i < n; i++) {
+                    uint32_t insn = w[i];
+                    if ((insn & 0xFFE0001F) == 0xD4200000) {
+                        uint32_t imm = (insn >> 5) & 0xFFFF;
+                        if (imm >= 0x100 && !seen[i]) {
+                            seen[i] = 1;
+                            mfLog(@"[capture] JITBRK brk #%#x @main+0x%llx bytes=%02x%02x%02x%02x",
+                                  imm, (unsigned long long)(i * 4),
+                                  ((uint8_t *)w)[i*4], ((uint8_t *)w)[i*4+1],
+                                  ((uint8_t *)w)[i*4+2], ((uint8_t *)w)[i*4+3]);
+                        }
+                    }
+                }
+            }
+        }
         // 层2 优先: dylib 在进程内才巡检(被 TrollFools 移除 = 永不触发)
         if (g_capDylibBase) mfCapObjcSweep();
         uint64_t noiseNow = 0;
