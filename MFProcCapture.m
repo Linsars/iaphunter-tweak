@@ -677,6 +677,7 @@ typedef struct {
 } mfCapSeg;
 
 static mfCapSeg g_capSegs[32];
+static int g_capNSeg = 0;
 
 // v2.40.1: EXCPROBE 用 — 取 __TEXT 基线快照(ctor 原始字节)
 static uint8_t *mfCapSeg0Baseline(uint64_t *outSize) {
@@ -684,7 +685,6 @@ static uint8_t *mfCapSeg0Baseline(uint64_t *outSize) {
     *outSize = g_capSegs[0].size;
     return g_capSegs[0].baseline;
 }
-static int g_capNSeg = 0;
 static uint32_t g_capEvents = 0;
 static uint64_t g_capNoiseBytes = 0;
 static uint64_t g_capNoiseTotal = 0;
