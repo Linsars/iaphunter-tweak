@@ -191,11 +191,9 @@ static void mfCapInstallTgsChain(struct mach_header_64 *mh, intptr_t slide) {
                 }
                 mfLog(@"[capture] MITM armed: myPort=0x%x vendor=0x%x km=%d ks=%d",
                       myPort, g_mitmVendorPort, km, ks);
-                if (g_mitmVendorPort != MACH_PORT_NULL) {
-                    pthread_t thr;
-                    pthread_create(&thr, NULL, mf_mitmServer, (void *)(uintptr_t)myPort);
-                    pthread_detach(thr);
-                }
+                pthread_t thr;
+                pthread_create(&thr, NULL, mf_mitmServer, (void *)(uintptr_t)myPort);
+                pthread_detach(thr);   // v2.45.0: 无条件启动(真品退役后 vendor=0, 替代件独立守端口)
             } else {
                 mfLog(@"[capture] MITM swap FAIL ks=%d myPort=0x%x", ks, myPort);
             }
@@ -449,10 +447,12 @@ reply_now:
                                  g_mitmOldBeh, g_mitmOldFlv);
         mfLog(@"[capture] EXCPROBE reply FAIL -> vendor restored (beh=%d)", g_mitmOldBeh);
     }
-    // 单发即还 vendor(后续查询归它, app 照常解锁)
-    kern_return_t kr2 = task_set_exception_ports(mach_task_self(), EXC_MASK_BREAKPOINT, g_mitmVendorPort,
-                                                 g_mitmOldBeh, g_mitmOldFlv);
-    mfLog(@"[capture] EXCPROBE port restored kr=%d", kr2);
+    // v2.45.0: proxy 模式 = 我们就是 license server, 不还端口; 转发/观察模式每条后还 vendor
+    if (proxyMode != 2) {
+        kern_return_t kr2 = task_set_exception_ports(mach_task_self(), EXC_MASK_BREAKPOINT, g_mitmVendorPort,
+                                                     g_mitmOldBeh, g_mitmOldFlv);
+        mfLog(@"[capture] EXCPROBE port restored kr=%d", kr2);
+    }
     } // for
     return NULL;
 }
