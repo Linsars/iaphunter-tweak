@@ -1207,6 +1207,22 @@ void mfShowScanPage(void) {
         for (NSString *pid in netPIDs) [toVerify addObject:pid];                 // 网络提取
         for (NSString *pid in rcPIDs) [toVerify addObject:pid];                  // RC offerings(v2.6.4)
         for (NSString *pid in guessPIDs) [toVerify addObject:pid];               // 商品名猜测(v2.6.7)
+        // v2.47.5: protobuf/CoreML descriptor 字段名噪声过滤(AllPic 实测 470/471 候选是 byok_*/pro_* 编译器符号)
+        NSMutableIndexSet *noiseIdx = [NSMutableIndexSet indexSet];
+        [toVerify enumerateObjectsUsingBlock:^(NSString *pid, NSUInteger i, BOOL *stop) {
+            NSString *lp = pid.lowercaseString;
+            if ([lp hasPrefix:@"byok_"] || [lp hasPrefix:@"pro_allow"] ||
+                [lp containsString:@"_package"] || [lp containsString:@"oneof_decl"] ||
+                [lp containsString:@"source_code_info"] || [lp containsString:@"tensor_names"] ||
+                [lp containsString:@"profiler_config"] || [lp containsString:@"_rhs_"] ||
+                [lp containsString:@"_imatmul_"] || [lp containsString:@"serialization_dir"] ||
+                [lp containsString:@"cache_writing_behavior"] || [lp containsString:@"use_async_create_calls"])
+                [noiseIdx addIndex:i];
+        }];
+        if (noiseIdx.count) {
+            mfLog(@"[iap] 噪声过滤: %lu 个 protobuf/CoreML 符号排除", (unsigned long)noiseIdx.count);
+            [toVerify removeObjectsAtIndexes:noiseIdx];
+        }
         for (NSString *pid in comboPIDs) [toVerify addObject:pid];               // 片段组合(v2.6.8)
         for (NSString *pid in localCandidates) [toVerify addObject:pid];
         NSString *bid2 = [[NSBundle mainBundle] bundleIdentifier] ?: @"";
@@ -1230,7 +1246,9 @@ void mfShowScanPage(void) {
             mfContributeToArchive(ctid, verifiedPrices.allKeys);
             dispatch_async(dispatch_get_main_queue(), ^{
                 [st removeFromSuperview];
-                [page addSubview:mfReconMakeCard(recon)];   // v2.47.0: 置顶侦查卡
+                UIView *reconCard = mfReconMakeCard(recon);
+                objc_setAssociatedObject(page, "reconCard", reconCard, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                [page addSubview:reconCard];   // v2.47.0: 置顶侦查卡
 
                 NSMutableArray *merged = [NSMutableArray array];
                 NSSet *hookSet = [NSSet setWithArray:hookedPIDs];
@@ -1289,6 +1307,14 @@ void mfShowScanPage(void) {
                 [page addSubview:sv];
                 mfLog(@"scan done: verified=%lu total=%lu",
                     (unsigned long)verifiedPrices.count, (unsigned long)merged.count);
+                // v2.47.5: 第三类判定回填 — 无云/mach 指纹时 SK 产品名就是形态答案(纯 StoreKit 本地型)
+                if (merged.count > 0) {
+                    NSString *topPid = merged[0][@"pid"];
+                    BOOL isLife = [topPid.lowercaseString containsString:@"lifetime"] ||
+                                  [topPid.lowercaseString containsString:@"forever"] ||
+                                  [topPid.lowercaseString containsString:@"once"];
+                    mfReconApplySKResult(recon, page, topPid, isLife);
+                }
                 });
         });
     });

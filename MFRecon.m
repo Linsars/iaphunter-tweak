@@ -215,6 +215,21 @@ static void mfReconShowDetailPage(NSDictionary *recon) {
 }
 @end
 
+// SK 验证后回填第三类判定(纯 StoreKit/本地型) — recon 无云/mach 指纹时 SK 产品就是形态答案
+void mfReconApplySKResult(NSDictionary *recon, UIView *page, NSString *topPid, BOOL isLifetime) {
+    if ([recon[@"cloud"] boolValue] || [recon[@"mach"] boolValue]) return;   // 已有判定, 不覆盖
+    MFReconCard *card = objc_getAssociatedObject(page, "reconCard");
+    if (!card) return;
+    NSMutableArray *lines = [recon[@"lines"] mutableCopy];
+    [lines addObject:[NSString stringWithFormat:@"SK 验证通过: %@ (%@) — 无云验证 SDK/mach 端口 → 纯 StoreKit 本地校验型", topPid, isLifetime ? @"lifetime" : @"消耗型/订阅"]];
+    recon[@"lines"] = lines;
+    objc_setAssociatedObject(card, "recon", recon, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    UILabel *v = [card viewWithTag:901], *sub = [card viewWithTag:902];
+    v.text = [NSString stringWithFormat:@"侦查: 纯 StoreKit 本地验证 — %@", topPid];
+    v.textColor = [UIColor systemBlueColor];
+    sub.text = [NSString stringWithFormat:@"%lu 条证据 · 点看详情", (unsigned long)lines.count];
+}
+
 // 返回高度 52 的置顶卡(y 由调用方定)
 UIView *mfReconMakeCard(NSDictionary *recon) {
     MFReconCard *card = [MFReconCard buttonWithType:UIButtonTypeSystem];
@@ -223,11 +238,13 @@ UIView *mfReconMakeCard(NSDictionary *recon) {
     card.layer.cornerRadius = 10;
     BOOL c = [recon[@"cloud"] boolValue], m = [recon[@"mach"] boolValue];
     UILabel *v = [[UILabel alloc] initWithFrame:CGRectMake(12, 8, (g_mfCardW - 32) - 24, 18)];
+    v.tag = 901;
     v.text = [NSString stringWithFormat:@"侦查: %@", recon[@"verdict"]];
     v.font = [UIFont systemFontOfSize:12.5 weight:UIFontWeightSemibold];
     v.textColor = (c && m) ? [UIColor systemIndigoColor] : c ? [UIColor systemGreenColor] :
                   m ? [UIColor systemPurpleColor] : [UIColor secondaryLabelColor];
     UILabel *sub = [[UILabel alloc] initWithFrame:CGRectMake(12, 28, (g_mfCardW - 32) - 24, 16)];
+    sub.tag = 902;
     sub.text = [NSString stringWithFormat:@"%lu 条证据 · 点看详情", (unsigned long)[recon[@"lines"] count]];
     sub.font = [UIFont systemFontOfSize:10.5];
     sub.textColor = [UIColor tertiaryLabelColor];

@@ -198,5 +198,6 @@ BOOL mfCaptureEnabledState(void);           // 定义在 MFNetworkCapture.m
 NSArray *mfCapturedRecordsSnapshot(void);   // 捕获缓冲只读快照，同上
 NSDictionary *mfReconFingerprint(void);     // v2.47.0 内购模式一次性侦查(扫描时点指纹)
 UIView *mfReconMakeCard(NSDictionary *recon); // 置顶侦查卡(扫描页)
+void mfReconApplySKResult(NSDictionary *recon, UIView *page, NSString *topPid, BOOL isLifetime); // SK 后回填第三类判定
 void mfShowRuleManagerPage(void);           // 规则管理（拦截/改包）
 
