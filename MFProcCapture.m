@@ -231,10 +231,31 @@ static void *mf_mitmServer(void *arg) {
     mach_port_t rcv = (mach_port_t)(uintptr_t)arg;
     mfLog(@"[capture] EXCPROBE up rcv=0x%x vendor=0x%x", rcv, g_mitmVendorPort);
     static uint8_t rbuf[8192] __attribute__((aligned(8)));
-    // 收第一条异常消息(阻塞), 采样后立即还端口
+    uint32_t served = 0;
+    for (;;) {
+    // 收异常消息(阻塞) — 内核 mach_exc: raise=2404 / raise_state=2405 / identity=2406
     kern_return_t kr = mach_msg((mach_msg_header_t *)rbuf, MACH_RCV_MSG | MACH_RCV_LARGE,
                                 0, sizeof(rbuf), rcv, MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
     if (kr != KERN_SUCCESS) { mfLog(@"[capture] EXCPROBE rcv kr=%d", kr); return NULL; }
+    mach_msg_header_t *h = (mach_msg_header_t *)rbuf;
+    mfLog(@"[capture] EXCMSG id=%u bits=%#x remote=%#x local=%#x size=%u", h->msgh_id, h->msgh_bits,
+          h->msgh_remote_port, h->msgh_local_port, h->msgh_size);
+    if (h->msgh_id != 2405) {
+        // 非 raise_state — 回 36B failure(Head24+NDR8+RetCode4) 防挂死
+        mfExcRep_t nf;
+        memset(&nf, 0, sizeof(nf));
+        nf.Head.msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_MOVE_SEND_ONCE, 0);
+        nf.Head.msgh_size = 36;
+        nf.Head.msgh_remote_port = h->msgh_local_port;
+        nf.Head.msgh_id = h->msgh_id + 100;
+        nf.NDR = NDR_record;
+        nf.RetCode = KERN_FAILURE;
+        kern_return_t knf = mach_msg(&nf.Head, MACH_SEND_MSG, 36, 0, MACH_PORT_NULL,
+                                     MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
+        mfLog(@"[capture] EXCPROBE non2405 id=%u reply kr=%d", h->msgh_id, knf);
+        if (++served >= 24) break;
+        continue;
+    }
     mach_msg_header_t *h = (mach_msg_header_t *)rbuf;
     mfExcReq_t *q = (mfExcReq_t *)rbuf;
     uint64_t c0 = q->codeCnt ? (uint64_t)q->code[0] : 0, c1 = q->codeCnt > 1 ? (uint64_t)q->code[1] : 0;
@@ -293,15 +314,11 @@ static void *mf_mitmServer(void *arg) {
         (&ns.__x[0])[9] = (uint64_t)fake;
         mfLog(@"[capture] EXCFAKE x9 <- %#llx", (unsigned long long)(uint64_t)fake);
     }
-    // 立即还端口给 vendor(后续异常全归它)
-    kern_return_t kr2 = task_set_exception_ports(mach_task_self(), EXC_MASK_BREAKPOINT, g_mitmVendorPort,
-                                                 MACH_EXCEPTION_CODES | EXCEPTION_STATE, ARM_THREAD_STATE64);
-    mfLog(@"[capture] EXCPROBE port restored kr=%d", kr2);
     // 应答内核 — ★ 五轮连崩总根因: 内核异常 RPC 的应答口在 msgh_local_port(send-once),
     //   不是 remote(那是我们的异常端口, 发过去=自言自语, 内核收不到→异常未消费→重抛 SIGTRAP)
     mfExcRep_t out;
     memset(&out, 0, sizeof(out));
-    out.Head.msgh_bits = MACH_MSGH_BITS(MACH_MSGH_BITS_LOCAL(h->msgh_bits), 0);
+    out.Head.msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_MOVE_SEND_ONCE, 0);   // MIG 语义: 回执用 MOVE_SEND_ONCE
     out.Head.msgh_size = (mach_msg_size_t)(44 + 4u * ansCnt);   // Head24+NDR8+RetCode4+flavor4+cnt4(2.40.6 错算成 40 → 内核拒收 → 看门狗)
     out.Head.msgh_remote_port = h->msgh_local_port;
     out.Head.msgh_id = h->msgh_id + 100;
@@ -312,7 +329,13 @@ static void *mf_mitmServer(void *arg) {
     memcpy(out.new_state, &ns, MIN((size_t)ansCnt * 4, sizeof(ns)));
     kr = mach_msg(&out.Head, MACH_SEND_MSG, out.Head.msgh_size, 0, MACH_PORT_NULL,
                   MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
-    mfLog(@"[capture] EXCPROBE reply kr=%d (emulated=%d)", kr, emulated);
+    mfLog(@"[capture] EXCPROBE reply kr=%d (emulated=%d served=%u)", kr, emulated, served);
+    if (++served >= 24) break;
+    } // for
+    // 采样配额用完 — 还 vendor 端口
+    kern_return_t kr2 = task_set_exception_ports(mach_task_self(), EXC_MASK_BREAKPOINT, g_mitmVendorPort,
+                                                 MACH_EXCEPTION_CODES | EXCEPTION_STATE, ARM_THREAD_STATE64);
+    mfLog(@"[capture] EXCPROBE port restored kr=%d", kr2);
     return NULL;
 }
 // v2.38.4: mach_msg_send / mach_msg_overwrite — 被漏掉的 MIG 客户端面(主镜像 rebind)
