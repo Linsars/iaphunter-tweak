@@ -99,7 +99,8 @@ NSDictionary *mfReconFingerprint(void) {
             NSString *u = r.url;
             if (!u.length) continue;
             if ([u containsString:@"mfprobe"]) { selfHits++; continue; }
-            if (![seenUrl addObject:u]) continue;   // 同 URL 去重
+            if ([seenUrl containsObject:u]) continue;   // 同 URL 去重
+            [seenUrl addObject:u];
             NSString *lu = u.lowercaseString;
             for (NSDictionary *b in mfRecCloudBrands()) {
                 for (NSString *pat in b[@"pats"]) {
@@ -158,7 +159,7 @@ static void mfReconShowDetailPage(NSDictionary *recon) {
     [page addSubview:v];
 
     CGFloat tvY = 96;
-    if (cloud) {
+    if ([recon[@"cloud"] boolValue]) {
         UIButton *lab = [UIButton buttonWithType:UIButtonTypeSystem];
         lab.frame = CGRectMake(16, 92, g_mfCardW - 32, 38);
         lab.backgroundColor = [UIColor systemGreenColor];
