@@ -338,6 +338,71 @@ static void *mf_mitmServer(void *arg) {
         ns[9] = (uint64_t)fake;
         mfLog(@"[capture] EXCFAKE x9 <- %#llx", (unsigned long long)(uint64_t)fake);
     }
+    // v2.42.0: 终局 — 转发 vendor 录 Q/A, app 无感
+    //   app 自造 2406 (336B simple msg, bits=0x1112, x1=nonce) → 我们 → vendor(mach_msg_server) → 2506 → app
+    //   转发 = 字节复制改两端口字段; audit token 同 task 天然一致
+    uint64_t qaNonce = st[1];
+    uint64_t vendReply[68];
+    int gotVend = 0;
+    if (g_mitmVendorPort != MACH_PORT_NULL && h->msgh_size <= 4096) {
+        mach_port_t frp = MACH_PORT_NULL;
+        if (mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &frp) == KERN_SUCCESS) {
+            static uint8_t fbuf[4096] __attribute__((aligned(8)));
+            memcpy(fbuf, rbuf, h->msgh_size);
+            mach_msg_header_t *f = (mach_msg_header_t *)fbuf;
+            f->msgh_remote_port = g_mitmVendorPort;
+            f->msgh_local_port = frp;
+            f->msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND, MACH_MSG_TYPE_MAKE_SEND_ONCE);
+            f->msgh_voucher_port = MACH_PORT_NULL;
+            f->msgh_id = h->msgh_id;
+            kern_return_t kf = mach_msg(&f->Head, MACH_SEND_MSG | MACH_SEND_TIMEOUT, h->msgh_size, 0,
+                                        MACH_PORT_NULL, 1000, MACH_PORT_NULL);
+            mfLog(@"[capture] FWD send kr=%d to vendor=%#x", kf, g_mitmVendorPort);
+            if (kf == KERN_SUCCESS) {
+                static uint8_t vrep[8192] __attribute__((aligned(8)));
+                kern_return_t kv = mach_msg((mach_msg_header_t *)vrep, MACH_RCV_MSG | MACH_RCV_LARGE | MACH_RCV_TIMEOUT,
+                                            0, sizeof(vrep), frp, 2000, MACH_PORT_NULL);
+                mfLog(@"[capture] FWD rcv kr=%d id=%u size=%u", kv,
+                      (kv == KERN_SUCCESS) ? ((mach_msg_header_t *)vrep)->msgh_id : 0,
+                      (kv == KERN_SUCCESS) ? ((mach_msg_header_t *)vrep)->msgh_size : 0);
+                if (kv == KERN_SUCCESS) {
+                    mach_msg_header_t *vr = (mach_msg_header_t *)vrep;
+                    uint32_t *vw = (uint32_t *)vrep;
+                    // 2506 形状: Head24 NDR8 RetCode4 flavor4 cnt4 state[..]
+                    if (vr->msgh_id == h->msgh_id + 100 && vr->msgh_size >= 44) {
+                        kern_return_t vrc = vw[8];
+                        uint32_t vflv = vw[10];
+                        uint32_t vcnt = vw[11];
+                        mfLog(@"[capture] Q&A nonce=%llx RetCode=%d flv=%u cnt=%u",
+                              (unsigned long long)qaNonce, vrc, vflv, vcnt);
+                        if (vrc == KERN_SUCCESS && vcnt == 68 && vr->msgh_size >= 44 + 272) {
+                            uint32_t *vst = vw + 11;
+                            gotVend = 1;
+                            memcpy(vendReply, vst, 272);
+                            // 答案全量 hex (68 u64, 544 hex chars, 分两行)
+                            static char ahx[2 * 68 * 4 + 2];
+                            static const char *H = "0123456789abcdef";
+                            for (int k = 0; k < 68; k++) {
+                                uint64_t v = vst[2*k] | ((uint64_t)vst[2*k+1] << 32);
+                                for (int b = 0; b < 16; b++)
+                                    ahx[16*k + b] = H[(v >> (60 - 4*b)) & 15];
+                            }
+                            ahx[16*68] = 0;
+                            mfLog(@"[capture] ANS1 %s", ahx);
+                            mfLog(@"[capture] ANS2 %s", ahx + 272);
+                            // 直接采用 vendor 答案
+                            memcpy(ns, vendReply, sizeof(ns));
+                            ns[32] = pc + 4;   // 保险: PC 越过查询点(vendor 或已推, 兜底)
+                            emulated = 2;      // 2 = vendor 转发模式
+                        }
+                    } else {
+                        mfLog(@"[capture] FWD unexpected reply id=%u", vr->msgh_id);
+                    }
+                }
+            }
+            mach_port_mod_refs(mach_task_self(), frp, MACH_PORT_RIGHT_RECEIVE, -1);
+        }
+    }
     // 应答: ★ MOVE_SEND_ONCE 到 remote(回复权在 remote), 316B MIG 2506 形状
     mfExcRep_t out;
     memset(&out, 0, sizeof(out));
@@ -353,7 +418,7 @@ static void *mf_mitmServer(void *arg) {
     mfLog(@"[capture] EXCPROBE replying size=%u to remote=%#x", out.Head.msgh_size, out.Head.msgh_remote_port);
     kr = mach_msg(&out.Head, MACH_SEND_MSG | MACH_SEND_TIMEOUT, out.Head.msgh_size, 0, MACH_PORT_NULL,
                   100, MACH_PORT_NULL);   // 100ms: send-once 无接收者则 TIMEOUT, 绝不挂线程
-    mfLog(@"[capture] EXCPROBE reply kr=%d (%#x) emulated=%d site=%#llx", kr, kr, emulated, (unsigned long long)site);
+    mfLog(@"[capture] EXCPROBE reply kr=%d (%#x) emu=%d(0=pw,1=emu,2=vend) site=%#llx", kr, kr, emulated, (unsigned long long)site);
     if (kr != KERN_SUCCESS) {
         task_set_exception_ports(mach_task_self(), EXC_MASK_BREAKPOINT, g_mitmVendorPort,
                                  MACH_EXCEPTION_CODES | EXCEPTION_STATE_IDENTITY, ARM_THREAD_STATE64);
