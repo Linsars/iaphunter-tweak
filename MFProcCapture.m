@@ -126,6 +126,7 @@ static kern_return_t mf_tgsHook(thread_act_t thread, thread_state_flavor_t flavo
 }
 static uint8_t *mhCapMainText = NULL;   // v2.39.10: 主 __TEXT 运行时基址(ctor 记录)
 static mach_port_t g_mitmVendorPort = MACH_PORT_NULL;
+static mach_port_t g_mitmMyPort = MACH_PORT_NULL;   // v2.47.3: 自家端口(侦查卡自证剔除)
 static exception_behavior_t g_mitmOldBeh = 0;    // v2.44.0: swap 时捕获 vendor 原注册行为
 static thread_state_flavor_t g_mitmOldFlv = 0;
 static os_unfair_lock g_mitmLock = OS_UNFAIR_LOCK_INIT;
@@ -189,6 +190,7 @@ static void mfCapInstallTgsChain(struct mach_header_64 *mh, intptr_t slide) {
                               j, oldMasks[j], oldPorts[j], oldBehs[j], oldFlvs[j]);
                     }
                 }
+                g_mitmMyPort = myPort;
                 mfLog(@"[capture] MITM armed: myPort=0x%x vendor=0x%x km=%d ks=%d",
                       myPort, g_mitmVendorPort, km, ks);
                 pthread_t thr;
