@@ -246,7 +246,7 @@ static void *mf_mitmServer(void *arg) {
         uint32_t nb = h->msgh_size < 96 ? h->msgh_size : 96;
         for (uint32_t j = 0; j < nb; j++) { hx[2*j] = H[rb[j] >> 4]; hx[2*j+1] = H[rb[j] & 15]; }
         hx[2*nb] = 0;
-        mfLog(@"[capture] EXCDATA %s", @(hx));
+        mfLog(@"[capture] EXCDATA %s", hx);   // char 数组直接 %s(@(hx)=对象指针是乱码根源)
     }
     if (h->msgh_id != 2405 && h->msgh_id != 2406) {
         mfExcRep_t nf;
@@ -310,21 +310,27 @@ static void *mf_mitmServer(void *arg) {
         mfLog(@"[capture] EXCEMU unsupported orig=%08x (passthrough)", origInsn);
     }
     ((uint64_t *)&ns)[32] = pc + 4;   // ★ 推 PC 越过 brk
-    // 应答: ★ MOVE_SEND_ONCE 到 remote(回复权 0x6907 在 remote, 七轮连崩的最终答案)
+    // 应答: ★ MOVE_SEND_ONCE 到 remote(回复权在 remote)
     mfExcRep_t out;
     memset(&out, 0, sizeof(out));
     out.Head.msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_MOVE_SEND_ONCE, 0);
     out.Head.msgh_size = (mach_msg_size_t)(44 + 4u * ARM_THREAD_STATE64_COUNT);
     out.Head.msgh_remote_port = h->msgh_remote_port;
     out.Head.msgh_id = h->msgh_id + 100;
+    mfLog(@"[capture] EXCPROBE replying size=%u to remote=%#x", out.Head.msgh_size, out.Head.msgh_remote_port);
     out.NDR = NDR_record;
     out.RetCode = KERN_SUCCESS;
     out.flavor = ARM_THREAD_STATE64;
     out.new_stateCnt = ARM_THREAD_STATE64_COUNT;
     memcpy(out.new_state, &ns, sizeof(ns));
-    kr = mach_msg(&out.Head, MACH_SEND_MSG, out.Head.msgh_size, 0, MACH_PORT_NULL,
-                  MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
+    kr = mach_msg(&out.Head, MACH_SEND_MSG | MACH_SEND_TIMEOUT, out.Head.msgh_size, 0, MACH_PORT_NULL,
+                  1000, MACH_PORT_NULL);   // 1s 超时: 永不阻塞(上轮死在无超时的 send)
     mfLog(@"[capture] EXCPROBE reply kr=%d (%#x) emulated=%d", kr, kr, emulated);
+    if (kr != KERN_SUCCESS) {
+        task_set_exception_ports(mach_task_self(), EXC_MASK_BREAKPOINT, g_mitmVendorPort,
+                                 MACH_EXCEPTION_CODES | EXCEPTION_STATE_IDENTITY, ARM_THREAD_STATE64);
+        mfLog(@"[capture] EXCPROBE reply FAIL -> vendor restored");
+    }
     // 单发即还 vendor(后续查询归它, app 照常解锁)
     kern_return_t kr2 = task_set_exception_ports(mach_task_self(), EXC_MASK_BREAKPOINT, g_mitmVendorPort,
                                                  MACH_EXCEPTION_CODES | EXCEPTION_STATE_IDENTITY, ARM_THREAD_STATE64);
