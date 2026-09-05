@@ -121,7 +121,7 @@ static kern_return_t mf_tgsHook(thread_act_t thread, thread_state_flavor_t flavo
     }
     return kr;
 }
-static void mfCapInstallTgsChain(mach_header_t *mh, intptr_t slide) {
+static void mfCapInstallTgsChain(struct mach_header_64 *mh, intptr_t slide) {
     if (g_origTgs) return;
     struct rebinding rb = {"thread_get_state", (void *)mf_tgsHook, (void **)&g_origTgs};
     int r = rebind_symbols_image((void *)mh, slide, &rb, 1);
@@ -1087,7 +1087,7 @@ void mfProcCaptureStart(void) {
     //   链式设计: dylib 若再踩槽位只是把我们挤出链头, 解锁路径无恙。
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)),
                    dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-        mh && mfCapInstallTgsChain(mh, mainSlide);
+        mh && mfCapInstallTgsChain((struct mach_header_64 *)mh, mainSlide);
     });
     g_capTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0,
                                         dispatch_get_global_queue(QOS_CLASS_UTILITY, 0));
