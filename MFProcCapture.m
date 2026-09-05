@@ -91,6 +91,42 @@ static void mf_machIdSeen(uint32_t id, uint32_t size) {
         mfLog(@"[capture] MACHID id=0x%x size=%u (first seen)", id, size);
     } else os_unfair_lock_unlock(&g_idLock);
 }
+// v2.38.2: thread_get_state 链式捕获 — 拦截器(0x2a0a0)的 Q/A 黑匣子
+kern_return_t thread_get_state(thread_act_t, thread_state_flavor_t, thread_state_t, mach_msg_type_number_t *);
+static kern_return_t (*g_origTgs)(thread_act_t, thread_state_flavor_t, thread_state_t, mach_msg_type_number_t *);
+static os_unfair_lock g_tgsLock = OS_UNFAIR_LOCK_INIT;
+static uint32_t g_tgsCount = 0;
+static kern_return_t mf_tgsHook(thread_act_t thread, thread_state_flavor_t flavor,
+                                thread_state_t st, mach_msg_type_number_t *cnt) {
+    kern_return_t kr = g_origTgs(thread, flavor, st, cnt);
+    if (g_tgsCount < 8) {
+        os_unfair_lock_lock(&g_tgsLock);
+        if (g_tgsCount < 8) {
+            uint32_t sz = st && cnt ? (*cnt * 4) : 0;
+            if (sz > 3400) sz = 3400;
+            uint8_t *buf = (uint8_t *)st;
+            if (buf && sz) {
+                char hx[2 * 3400 + 2];
+                static const char *H = "0123456789abcdef";
+                for (uint32_t j = 0; j < sz; j++) { hx[2*j] = H[buf[j] >> 4]; hx[2*j+1] = H[buf[j] & 15]; }
+                hx[2*sz] = 0;
+                mfLog(@"[capture] TGS#%u th=%p flavor=%u cnt=%u kr=%d state=%s",
+                      g_tgsCount, (void *)thread, flavor, cnt ? *cnt : 0, kr, hx);
+            } else {
+                mfLog(@"[capture] TGS#%u th=%p flavor=%u cnt=null kr=%d (no buf)", g_tgsCount, (void *)thread, flavor, kr);
+            }
+            g_tgsCount++;
+        }
+        os_unfair_lock_unlock(&g_tgsLock);
+    }
+    return kr;
+}
+static void mfCapInstallTgsChain(mach_header_t *mh, intptr_t slide) {
+    if (g_origTgs) return;
+    struct rebinding rb = {"thread_get_state", (void *)mf_tgsHook, (void **)&g_origTgs};
+    int r = rebind_symbols_image((void *)mh, slide, &rb, 1);
+    mfLog(@"[capture] TGS chain armed: rebind=%d hook=%p (t+3s, slot→0x2a0a0 已稳定)", r, g_origTgs);
+}
 static mach_msg_return_t mf_machMsgHook(mach_msg_header_t *msg, mach_msg_option_t option,
         mach_msg_size_t send_size, mach_msg_header_t *rcv_msg, mach_msg_size_t rcv_limit,
         mach_port_t notify, mach_msg_timeout_t timeout) {
@@ -1043,6 +1079,16 @@ void mfProcCaptureStart(void) {
     }
     // v2.32.0: 层7 — vendor dylib 自身 syscall 窃听(服务端循环视角)
     mfCapTapVendorDylib();
+    // v2.38.2: 层9 — thread_get_state 链式捕获(定案 0x2a0a0 拦截器语义)
+    //   dladdr 实锤: dylib ctor 把主二进制 GOT 的 thread_get_state 槽(__DATA_CONST+0x8ce8)
+    //   改写到 dylib+0x2a0a0 拦截器 — app 的 license 查询走这条走私通道。
+    //   延迟 3s 后 rebind 主镜像: 我们插入链条最前(app→我们→dylib拦截器→orig),
+    //   记录每次调用的 flavor + 返回的 680B 线程状态缓冲 = 拦截器塞入的 license 字节。
+    //   链式设计: dylib 若再踩槽位只是把我们挤出链头, 解锁路径无恙。
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)),
+                   dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        mh && mfCapInstallTgsChain(mh, mainSlide);
+    });
     g_capTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0,
                                         dispatch_get_global_queue(QOS_CLASS_UTILITY, 0));
     dispatch_source_set_timer(g_capTimer,
