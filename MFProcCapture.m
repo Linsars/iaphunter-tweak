@@ -302,7 +302,7 @@ static void *mf_mitmServer(void *arg) {
     mfExcRep_t out;
     memset(&out, 0, sizeof(out));
     out.Head.msgh_bits = MACH_MSGH_BITS(MACH_MSGH_BITS_LOCAL(h->msgh_bits), 0);
-    out.Head.msgh_size = (mach_msg_size_t)(40 + 4u * ansCnt);
+    out.Head.msgh_size = (mach_msg_size_t)(44 + 4u * ansCnt);   // Head24+NDR8+RetCode4+flavor4+cnt4(2.40.6 错算成 40 → 内核拒收 → 看门狗)
     out.Head.msgh_remote_port = h->msgh_local_port;
     out.Head.msgh_id = h->msgh_id + 100;
     out.NDR = NDR_record;
