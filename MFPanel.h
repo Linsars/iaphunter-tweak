@@ -195,5 +195,7 @@ void mfObjCHookPersist(NSString *cls, NSString *sel, int mode, id val);
 void mfShowNetAnalyzerPage(void);           // 网络功能统一入口（含捕获开关）
 BOOL mfCaptureEnabledState(void);           // 定义在 MFNetworkCapture.m
 NSArray *mfCapturedRecordsSnapshot(void);   // 捕获缓冲只读快照，同上
+NSDictionary *mfReconFingerprint(void);     // v2.47.0 内购模式一次性侦查(扫描时点指纹)
+UIView *mfReconMakeCard(NSDictionary *recon); // 置顶侦查卡(扫描页)
 void mfShowRuleManagerPage(void);           // 规则管理（拦截/改包）
 

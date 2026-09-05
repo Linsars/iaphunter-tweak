@@ -1130,6 +1130,9 @@ void mfShowScanPage(void) {
     mfPushPage(page);
 
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        // v2.47.0: 内购模式一次性侦查(零 hook 纯读, 判据沉淀自 Reflix 战役终案) — 结果进置顶卡
+        NSDictionary *recon = mfReconFingerprint();
+        for (NSString *rl in recon[@"lines"]) mfLog(@"[recon] %@", rl);
         // 1.0 运行时截获回流(v2.6.11): SK1 hook 历史截获的 app 自查 ID——app 亲口报的,最高优先级
         // 依据: 任何 app 要展示/购买商品必发 SKProductsRequest(init 参数含全部 ID),打开一次购买页即现形
         NSArray *hookedPIDs = [[NSUserDefaults standardUserDefaults] objectForKey:@"SavedIAPIDs"] ?: @[];
@@ -1227,6 +1230,7 @@ void mfShowScanPage(void) {
             mfContributeToArchive(ctid, verifiedPrices.allKeys);
             dispatch_async(dispatch_get_main_queue(), ^{
                 [st removeFromSuperview];
+                [page addSubview:mfReconMakeCard(recon)];   // v2.47.0: 置顶侦查卡
 
                 NSMutableArray *merged = [NSMutableArray array];
                 NSSet *hookSet = [NSSet setWithArray:hookedPIDs];
@@ -1266,7 +1270,7 @@ void mfShowScanPage(void) {
                     return;
                 }
 
-                UILabel *countLb = [[UILabel alloc] initWithFrame:CGRectMake(16, 46, g_mfCardW - 32, 20)];
+                UILabel *countLb = [[UILabel alloc] initWithFrame:CGRectMake(16, 106, g_mfCardW - 32, 20)];
                 countLb.text = [NSString stringWithFormat:@"验证通过 %lu / 候选 %lu（左划复制 · 点按购买）",
                     (unsigned long)merged.count, (unsigned long)toVerify.count];
                 countLb.font = [UIFont systemFontOfSize:11];
@@ -1274,7 +1278,7 @@ void mfShowScanPage(void) {
                 [page addSubview:countLb];
 
                 // v2.6.16: UITableView 三行 cell + 系统 swipe actions(对标捕获列表)
-                UITableView *sv = [[UITableView alloc] initWithFrame:CGRectMake(0, 70, g_mfCardW, g_mfCardH - 70) style:UITableViewStylePlain];
+                UITableView *sv = [[UITableView alloc] initWithFrame:CGRectMake(0, 126, g_mfCardW, g_mfCardH - 126) style:UITableViewStylePlain];
                 sv.backgroundColor = UIColor.clearColor;
                 sv.separatorStyle = UITableViewCellSeparatorStyleNone;
                 MFScanList *scanCtl = [MFScanList new];
