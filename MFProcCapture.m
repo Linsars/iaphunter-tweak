@@ -1261,11 +1261,12 @@ void mfProcCaptureStart(void) {
         for (uint64_t i = 4; i < n; i++) {
             uint32_t insn = w[i];
             uint32_t imm = 0;
-            if ((insn & 0xFFE0001F) == 0xD4200000) imm = (insn >> 5) & 0xFFFF;          // brk
-            else if ((insn & 0xFFFF0000) == 0 && (insn & 0xF800) != 0) imm = insn & 0xFFFF; // udf
-            if (imm >= 0x100) {
-                if (found < 40)
-                    mfLog(@"[capture] TRAP %s #%#x @main+0x%llx", (insn & 0xFFE0001F) == 0xD4200000 ? "brk" : "udf",
+            int isBrk = (insn & 0xFFE0001F) == 0xD4200000;   // brk: imm 在 bits5-20
+            int isUdf = (insn & 0xFFFF0000) == 0x00000000;   // udf: 编码 0x00000000, imm 恒 0
+            if (isBrk) imm = (insn >> 5) & 0xFFFF;
+            if ((isBrk && imm >= 0x100) || isUdf) {
+                if (found < 60)
+                    mfLog(@"[capture] TRAP %s #%#x @main+0x%llx", isBrk ? "brk" : "udf",
                           imm, (unsigned long long)(i * 4));
                 found++;
             }
