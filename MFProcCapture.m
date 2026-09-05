@@ -1123,6 +1123,20 @@ void mfProcCaptureStart(void) {
         int r2 = rebind_symbols_image((void *)mh, mainSlide, &rb2, 1);
         mfLog(@"[capture] main-image mach_msg2 rebind: %d (hook=%p)", r2, g_origMachMsg2);
     }
+    // v2.38.5: EXCPORTS 基线(dlopen 前) — ctor 前后对比实锤 dylib 注册行为
+    {
+        exception_mask_t bm[32]; mach_msg_type_number_t bc = 32;
+        mach_port_t bp[32]; exception_behavior_t bb[32]; thread_state_flavor_t bf[32];
+        kern_return_t krb = task_get_exception_ports(mach_task_self(), EXC_MASK_ALL, bm, &bc,
+                                                     bp, bb, bf);
+        uint32_t live = 0;
+        for (uint32_t j = 0; krb == KERN_SUCCESS && j < bc && j < 32; j++)
+            if (bp[j] != MACH_PORT_NULL) {
+                mfLog(@"[capture] EXCPORTS-PRE[%u] mask=0x%x port=0x%x beh=%d flv=%d", j, bm[j], bp[j], bb[j], bf[j]);
+                live++;
+            }
+        if (!live) mfLog(@"[capture] EXCPORTS-PRE none (kr=%d)", krb);
+    }
     // v2.32.0: 层7 — vendor dylib 自身 syscall 窃听(服务端循环视角)
     mfCapTapVendorDylib();
     // v2.38.2: 层9 — thread_get_state 链式捕获(定案 0x2a0a0 拦截器语义)
