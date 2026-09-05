@@ -152,10 +152,10 @@ static void mfCapInstallTgsChain(struct mach_header_64 *mh, intptr_t slide) {
             mfLog(@"[capture] EXCPORTS none (kr=%d cnt=%u)", krx, mCnt);
         }
     }
-    // v2.39.0: 终局 MITM — swap EXC_SYSCALL 处理器到自己, 录 Q/A 后转发 vendor
-    //   2.38.4/5 实锤: EXCPORTS[1] mask=0x40(EXC_SYSCALL) port(本轮 0x2107/0x2307) beh=MACH_EXCEPTION_CODES
-    //   app 执行未定义 SVC(x16=0x965/0x966/0x967/0x9c9/0x9ca/0x9cb=syscall 号) → 异常直投 → thread_set_state 交答案
-    //   swap 后: app→我们(录 x16/x0)→mach_exception_raise_state 转发 vendor(0x2107 send right 在本 task 可用)→回填
+    // v2.39.4: 终局 MITM — swap EXC_BREAKPOINT 处理器到自己, 录 Q/A 后转发 vendor
+    //   ★ 2.39.3 翻案: mask=0x40 = 1<<6 = EXC_BREAKPOINT(不是 EXC_SYSCALL!)
+    //   app 查询 = brk #0x965/0x966/0x967/0x9c9/0x9ca/0x9cb(立即数=请求码, v2.29.1 六个数=BRK imm)
+    //   → EXC_BREAKPOINT(6) → 内核 mach_exception_raise_state(code=EXC_ARM_BREAKPOINT|imm<<16) 直投 vendor
     {
         mach_port_t self_ = mach_task_self();
         mach_port_t myPort = MACH_PORT_NULL;
@@ -167,13 +167,13 @@ static void mfCapInstallTgsChain(struct mach_header_64 *mh, intptr_t slide) {
             exception_behavior_t oldBehs[32];
             thread_state_flavor_t oldFlvs[32];
             mach_msg_type_number_t oldCnt = 32;
-            kern_return_t ks = task_swap_exception_ports(self_, EXC_MASK_SYSCALL, myPort,
+            kern_return_t ks = task_swap_exception_ports(self_, EXC_MASK_BREAKPOINT, myPort,
                     MACH_EXCEPTION_CODES | EXCEPTION_STATE, ARM_THREAD_STATE64,
                     oldMasks, &oldCnt, oldPorts, oldBehs, oldFlvs);
             if (ks == KERN_SUCCESS) {
                 g_mitmVendorPort = MACH_PORT_NULL;
                 for (uint32_t j = 0; j < oldCnt && j < 32; j++) {
-                    if (oldMasks[j] & EXC_MASK_SYSCALL) {
+                    if (oldMasks[j] & EXC_MASK_BREAKPOINT) {
                         g_mitmVendorPort = oldPorts[j];   // vendor 端口 send right 落到我们手里
                         mfLog(@"[capture] MITM swap ok: old[%u] mask=0x%x vendor_port=0x%x beh=%d flv=%d",
                               j, oldMasks[j], oldPorts[j], oldBehs[j], oldFlvs[j]);
