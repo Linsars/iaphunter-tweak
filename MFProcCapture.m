@@ -262,69 +262,96 @@ static void *mf_mitmServer(void *arg) {
         mfLog(@"[capture] EXCPROBE skip id=%u reply kr=%d", h->msgh_id, knf);
         continue;
     }
-    // thread/task 端口在 complex body: Head24+body4 → desc1@28(name@28) desc2@40(name@40)
-    mfExcReq_t *q = (mfExcReq_t *)rbuf;
-    mach_port_t exThread = q->thread.name;
-    uint64_t c0 = q->codeCnt ? (uint64_t)q->code[0] : 0, c1 = q->codeCnt > 1 ? (uint64_t)q->code[1] : 0;
-    // 寄存器: 2406 不带 state, 从线程端口自取
-    arm_thread_state64_t qs;
-    memset(&qs, 0, sizeof(qs));
-    mach_msg_type_number_t qsCnt = ARM_THREAD_STATE64_COUNT;
-    kern_return_t krg = thread_get_state(exThread, ARM_THREAD_STATE64, (thread_state_t)&qs, &qsCnt);
-    uint64_t pc = ((const uint64_t *)&qs)[32];
-    uint64_t site = (mhCapMainText && pc > (uint64_t)(uintptr_t)mhCapMainText) ? pc - (uint64_t)(uintptr_t)mhCapMainText : 0;
+    // ★ 机制终案: 这不是内核异常 — 是 app 自造的 2406 MIG 请求(简单消息无 COMPLEX 位,
+    //   线程端口内联非描述符, thread_get_state 必败), state 内联在消息里:
+    //   w14=flavor(6) w15=cnt(0x44) w16..w83=68 词寄存器现场(pc=w[48])
+    uint32_t *mw = (uint32_t *)rbuf;
+    uint32_t nWords = h->msgh_size / 4;
+    uint32_t flavor = (nWords > 14) ? mw[14] : 0;
+    uint32_t cnt = (nWords > 15) ? mw[15] : 0;
+    mfLog(@"[capture] EXCPARSE flavor=%u cnt=%u w8=%u w10=%u w12=%#x w13=%u", flavor, cnt, mw[8], mw[10], mw[12], mw[13]);
+    uint64_t st[68];
+    memset(st, 0, sizeof(st));
+    if (cnt == 68 && nWords >= 84) {
+        for (int k = 0; k < 68; k++) st[k] = mw[16 + k] | ((uint64_t)mw[17 + 2*k] << 32);
+        // 上面步长错了 — 正确: u32 数组两两拼 u64
+        for (int k = 0; k < 68; k++) st[k] = (uint64_t)mw[16 + 2*k] | ((uint64_t)mw[17 + 2*k] << 32);
+        // 状态 hex 全量(两行)
+        char hx[2 * 68 + 2];
+        static const char *H = "0123456789abcdef";
+        for (int k = 0; k < 68; k++) {
+            uint32_t lo = (uint32_t)st[k], hi = (uint32_t)(st[k] >> 32);
+            hx[4*k] = H[(hi >> 4) & 15]; hx[4*k+1] = H[hi & 15];
+            hx[4*k+2] = H[(lo >> 4) & 15]; hx[4*k+3] = H[lo & 15];
+        }
+        hx[4*68] = 0;
+        mfLog(@"[capture] EXCSTATE %s", hx);
+    }
+    uint64_t pc = st[32];
+    uint64_t site = (mhCapMainText && pc > (uint64_t)(uintptr_t)mhCapMainText && pc - (uint64_t)(uintptr_t)mhCapMainText < 0x2e30000)
+                    ? pc - (uint64_t)(uintptr_t)mhCapMainText : 0;
     uint32_t liveInsn = 0, origInsn = 0;
-    vm_read_overwrite(mach_task_self(), (vm_address_t)pc, 4, (vm_address_t)&liveInsn, &(vm_size_t){4});
+    if (pc) vm_read_overwrite(mach_task_self(), (vm_address_t)pc, 4, (vm_address_t)&liveInsn, &(vm_size_t){4});
     if (site && site + 4 <= 0x2e30000) {
         uint64_t sz0 = 0;
         uint8_t *b0 = mfCapSeg0Baseline(&sz0);
         if (b0 && site + 4 <= sz0) memcpy(&origInsn, b0 + site, 4);
     }
     uint32_t imm = ((liveInsn & 0xFFE0001F) == 0xD4200000) ? ((liveInsn >> 5) & 0xFFFF) : 0;
-    mfLog(@"[capture] EXCSITE main+0x%llx live=%08x(orig=%08x) brk_imm=%#x code=%llx/%llx gkrs=%d",
-          (unsigned long long)site, liveInsn, origInsn, imm,
-          (unsigned long long)c0, (unsigned long long)c1, krg);
-    mfLog(@"[capture] EXCREGS x0=%llx x1=%llx x8=%llx x9=%llx x16=%llx x29=%llx pc=%llx",
-          (unsigned long long)qs.__x[0], (unsigned long long)qs.__x[1],
-          (unsigned long long)qs.__x[8], (unsigned long long)qs.__x[9],
-          (unsigned long long)qs.__x[16], (unsigned long long)qs.__x[29], (unsigned long long)pc);
-    // 透明仿真原指令(LDUR/STUR 64b)
-    arm_thread_state64_t ns = qs;
+    mfLog(@"[capture] EXCSITE main+0x%llx live=%08x(orig=%08x) brk_imm=%#x",
+          (unsigned long long)site, liveInsn, origInsn, imm);
+    mfLog(@"[capture] EXCREGS x0=%llx x1=%llx x2=%llx x3=%llx x8=%llx x9=%llx x16=%llx x29=%llx pc=%llx",
+          (unsigned long long)st[0], (unsigned long long)st[1], (unsigned long long)st[2],
+          (unsigned long long)st[3], (unsigned long long)st[8], (unsigned long long)st[9],
+          (unsigned long long)st[16], (unsigned long long)st[29], (unsigned long long)pc);
+    // 透明仿真原指令(LDUR/STUR 64b imm9)
+    uint64_t ns[68];
+    memcpy(ns, st, sizeof(ns));
     int emulated = 0;
     if ((origInsn & 0xFFE00C00) == 0xF8200000 || (origInsn & 0xFFE00C00) == 0xF8000000) {
         int64_t simm = (int64_t)((origInsn >> 12) & 0x1FF); if (simm & 0x100) simm -= 0x200;
         uint32_t Rn = (origInsn >> 5) & 0x1F, Rt = origInsn & 0x1F;
-        uint64_t base = (&ns.__x[0])[Rn];
+        uint64_t base = ns[Rn];
         if ((origInsn >> 22) & 1) {
             uint64_t v = 0;
             vm_read_overwrite(mach_task_self(), (vm_address_t)(base + simm), 8, (vm_address_t)&v, &(vm_size_t){8});
-            (&ns.__x[0])[Rt] = v;
+            ns[Rt] = v;
             mfLog(@"[capture] EXCEMU ldur x%u,[x%u,%#llx] = %#llx", Rt, Rn, (unsigned long long)simm, (unsigned long long)v);
         } else {
-            uint64_t v = (&ns.__x[0])[Rt];
+            uint64_t v = ns[Rt];
             vm_write(mach_task_self(), (vm_address_t)(base + simm), (vm_offset_t)&v, 8);
             mfLog(@"[capture] EXCEMU stur x%u,[x%u,%#llx] <- %#llx", Rt, Rn, (unsigned long long)simm, (unsigned long long)v);
         }
         emulated = 1;
-    } else {
+    } else if (origInsn) {
         mfLog(@"[capture] EXCEMU unsupported orig=%08x (passthrough)", origInsn);
+    } else {
+        mfLog(@"[capture] EXCEMU no site (passthrough)");
     }
-    ((uint64_t *)&ns)[32] = pc + 4;   // ★ 推 PC 越过 brk
-    // 应答: ★ MOVE_SEND_ONCE 到 remote(回复权在 remote)
+    ns[32] = pc + 4;   // ★ 推 PC 越过 brk/查询点
+    // 伪造值钩子: mfExcFakeX9 >= 0 覆盖 x9(枚举器)
+    double fake = -1;
+    id fakeObj = [[NSUserDefaults standardUserDefaults] objectForKey:@"mfExcFakeX9"];
+    if (fakeObj) fake = [fakeObj doubleValue];
+    if (fake >= 0) {
+        ns[9] = (uint64_t)fake;
+        mfLog(@"[capture] EXCFAKE x9 <- %#llx", (unsigned long long)(uint64_t)fake);
+    }
+    // 应答: ★ MOVE_SEND_ONCE 到 remote(回复权在 remote), 316B MIG 2506 形状
     mfExcRep_t out;
     memset(&out, 0, sizeof(out));
     out.Head.msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_MOVE_SEND_ONCE, 0);
     out.Head.msgh_size = (mach_msg_size_t)(44 + 4u * ARM_THREAD_STATE64_COUNT);
     out.Head.msgh_remote_port = h->msgh_remote_port;
     out.Head.msgh_id = h->msgh_id + 100;
-    mfLog(@"[capture] EXCPROBE replying size=%u to remote=%#x", out.Head.msgh_size, out.Head.msgh_remote_port);
     out.NDR = NDR_record;
     out.RetCode = KERN_SUCCESS;
     out.flavor = ARM_THREAD_STATE64;
     out.new_stateCnt = ARM_THREAD_STATE64_COUNT;
-    memcpy(out.new_state, &ns, sizeof(ns));
+    memcpy(out.new_state, ns, sizeof(ns));
+    mfLog(@"[capture] EXCPROBE replying size=%u to remote=%#x", out.Head.msgh_size, out.Head.msgh_remote_port);
     kr = mach_msg(&out.Head, MACH_SEND_MSG | MACH_SEND_TIMEOUT, out.Head.msgh_size, 0, MACH_PORT_NULL,
-                  1000, MACH_PORT_NULL);   // 1s 超时: 永不阻塞(上轮死在无超时的 send)
+                  1000, MACH_PORT_NULL);
     mfLog(@"[capture] EXCPROBE reply kr=%d (%#x) emulated=%d", kr, kr, emulated);
     if (kr != KERN_SUCCESS) {
         task_set_exception_ports(mach_task_self(), EXC_MASK_BREAKPOINT, g_mitmVendorPort,
