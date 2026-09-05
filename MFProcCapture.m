@@ -355,7 +355,7 @@ static void *mf_mitmServer(void *arg) {
             f->msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND, MACH_MSG_TYPE_MAKE_SEND_ONCE);
             f->msgh_voucher_port = MACH_PORT_NULL;
             f->msgh_id = h->msgh_id;
-            kern_return_t kf = mach_msg(&f->Head, MACH_SEND_MSG | MACH_SEND_TIMEOUT, h->msgh_size, 0,
+            kern_return_t kf = mach_msg(f, MACH_SEND_MSG | MACH_SEND_TIMEOUT, h->msgh_size, 0,
                                         MACH_PORT_NULL, 1000, MACH_PORT_NULL);
             mfLog(@"[capture] FWD send kr=%d to vendor=%#x", kf, g_mitmVendorPort);
             if (kf == KERN_SUCCESS) {
